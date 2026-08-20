@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b1220">
+<title>Frontline — MVP</title>
+<link rel="stylesheet" href="css/style.css" id="mainStyle">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="topbar">
+  <div id="leaderboard"></div>
+</div>
+
+<div id="debugPanel" class="hidden">
+  <div id="debugLabel">Debug</div>
+  <button data-gold="50000">+50k gold</button>
+  <button data-gold="500000">+500k gold</button>
+  <button data-gold="5000000">+5M gold</button>
+</div>
+
+<div id="hoverPanel" class="hidden">
+  <div id="hpTop">
+    <div id="hpSwatch"></div>
+    <div id="hpMain">
+      <div id="hpName"></div>
+      <div id="hpSub"></div>
+    </div>
+    <div class="hpStat"><span class="hpIcon">▦</span><span id="hpTiles"></span></div>
+  </div>
+  <div id="hpPopRow">
+    <span id="hpPopValue"></span>
+    <div id="hpPopBar">
+      <div id="hpPopHome"></div>
+      <div id="hpPopMarch"></div>
+    </div>
+    <span id="hpPopMax"></span>
+  </div>
+  <div id="hpGoldRow">
+    <span class="hpIcon">🪙</span>
+    <span id="hpGoldValue"></span>
+    <span id="hpGoldRate"></span>
+  </div>
+</div>
+
+<div id="spawnBanner" class="hidden">
+  <span id="spawnBannerText"></span>
+</div>
+
+<div id="radial" class="hidden"><div id="radialMenu"></div></div>
+
+<div id="hud">
+  <div id="diploBanner" class="hidden">
+    <span id="diploText"></span>
+    <button id="diploYes">Accept</button>
+    <button id="diploNo">Reject</button>
+    <div id="diploBar"><div id="diploBarFill"></div></div>
+  </div>
+  <div id="troopRow">
+    <span id="troopLabel">Troops</span>
+    <span id="troopValue">0</span>
+    <span id="troopCap">/ 0</span>
+    <span id="troopGrowth"></span>
+    <span id="troopMarching"></span>
+    <span id="traitorChip"></span>
+    <span id="tileValue"></span>
+  </div>
+  <div id="frontsRow" class="hidden"></div>
+  <div id="popBar"><div id="popBarFill"></div><div id="popBarMarch"></div><div id="popBarPeak"></div></div>
+  <div id="goldRow">
+    <span id="goldLabel">Gold</span>
+    <span id="goldValue">0</span>
+    <span id="goldRate"></span>
+  </div>
+  <div id="sliderRow">
+    <input id="ratio" type="range" min="5" max="100" step="5" value="20">
+    <span id="ratioValue">20%</span>
+  </div>
+  <div id="buildBar"></div>
+  <div id="hint">Tap land to attack · right-click or hold a nation for diplomacy · drag to pan</div>
+</div>
+
+<div id="overlay">
+  <div class="panel">
+    <h1>Frontline</h1>
+    <p>Expand across the map. Tap neutral land or an enemy nation to send troops along your border.</p>
+    <label>Map
+      <select id="mapSize">
+        <option value="small">Small</option>
+        <option value="medium" selected>Medium</option>
+        <option value="large">Large</option>
+        <option value="xlarge">Extra Large</option>
+      </select>
+    </label>
+    <label>Bots <input id="botCount" type="number" min="2" max="31" value="9"></label>
+    <label>Tribes <input id="tribeCount" type="number" min="0" max="80" value="16"></label>
+    <button id="startBtn">Start Game</button>
+  </div>
+</div>
+
+<div id="endOverlay" class="hidden">
+  <div class="panel">
+    <h1 id="endTitle">Defeated</h1>
+    <p id="endText"></p>
+    <button id="restartBtn">Play Again</button>
+  </div>
+</div>
+
+<script>
+  // Cache-bust every load during dev — python's http.server has 1s Last-Modified
+  // granularity, so quick edit-then-reload cycles can otherwise serve stale JS.
+  // The stylesheet needs the same treatment: it's the one asset in index.html
+  // that wasn't on this scheme, so a browser that had already cached it kept
+  // serving that copy through every later CSS edit regardless of reload.
+  const V = Date.now();
+  document.getElementById('mainStyle').href = 'css/style.css?v=' + V;
+  ['noise', 'map', 'game', 'ai', 'render', 'input', 'ui', 'radial', 'main'].forEach(name => {
+    document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
+  });
+</script>
+</body>
+</html>

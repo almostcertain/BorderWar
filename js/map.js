@@ -1,0 +1,383 @@
+const WATER = -2;
+const NEUTRAL = -1;
+
+// OpenFront's three land terrains. Costlier ground is also slower ground —
+// the two values move together, so rough country resists on both axes.
+const PLAINS = 0, HIGHLAND = 1, MOUNTAIN = 2;
+
+const GameMap = {
+  width: 0,
+  height: 0,
+  elevation: null,  // Float32Array, 0..1 (land only meaningful above sea level)
+  owner: null,      // Int16Array: WATER, NEUTRAL, or player index
+  shoreDist: null,  // Uint8Array, water tiles only: tile-distance to nearest land
+  landTiles: 0,
+
+  // Share of the grid that should end up as playable continent. A fixed sea
+  // level let the noise decide how much land a seed produced, and it varied
+  // 4-5x at the same map size — an Extra Large roll could come out smaller
+  // than a median Large and play like one. Match length follows land area, so
+  // that variance landed straight on pacing.
+  // Kept well clear of the ceiling the radial falloff imposes (~24% of grid).
+  // See findSeaLevel for how the sea level search actually copes with this
+  // target being unreachable on some seeds.
+  LAND_FRACTION: 0.40,
+
+  generate(width, height, seed, landFraction) {
+    this.width = width;
+    this.height = height;
+    const size = width * height;
+    this.elevation = new Float32Array(size);
+    this.owner = new Int16Array(size);
+    this._region = new Int32Array(size);
+    this._queue = new Int32Array(size);
+
+    const scale = 5 / width;
+    const cx = width / 2, cy = height / 2;
+
+    // Independent field driving terrain *tier* (plains vs highland vs
+    // mountain) — deliberately decoupled from `elevation` below and sampled
+    // with Noise.ridged rather than Noise.fractal. classifyTerrain used to
+    // slice tiers off elevation's own percentiles, but elevation is
+    // dominated by the radial falloff (built to shape the coastline, high in
+    // the middle by construction) plus plain fbm, whose octaves are all
+    // smooth bumps regardless of frequency — so mountains/highlands always
+    // collapsed into one contiguous blob (or, sampled at a higher frequency,
+    // several smaller but still smooth-edged blobs) near the landmass
+    // centre. Ridged noise folds each octave into a crease instead of a
+    // bump and cascades finer creases along coarser ones, which is what
+    // actually produces winding, branching mountain-range shapes with real
+    // internal texture (see the Africa reference this was built against:
+    // many separate ranges, each with its own internal ridges, not a
+    // plateau).
+    this.roughness = new Float32Array(size);
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        // Octave averaging pulls values toward 0.5, so expand contrast back out.
+        let e = (Noise.fractal(x * scale, y * scale * 1.6, seed, 5) - 0.5) * 2.6 + 0.55;
+
+        // Radial falloff so the map is an island cluster ringed by ocean.
+        const dx = (x - cx) / cx, dy = (y - cy) / cy;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        e -= Math.max(0, d - 0.55) * 1.4;
+
+        this.elevation[i] = e;
+        this.roughness[i] = Noise.ridged(x * scale * 1.6, y * scale * 1.6, seed + 5000, 6);
+      }
+    }
+
+    // Raise or lower the sea until the surviving continent is the size we
+    // want. Measuring the largest landmass rather than raw land above water is
+    // what makes this work: dropping the sea can spawn separate islands that
+    // get pruned away, so only the connected mass is a meaningful target.
+    const target = Math.round(size * (landFraction || this.LAND_FRACTION));
+    const best = this.findSeaLevel(target);
+
+    this.largestLandmassAt(best);
+    this.pruneSmallLandmasses(this.MIN_LANDMASS_TILES);
+    this.classifyTerrain();
+    this.computeShoreDist();
+    return this.landTiles;
+  },
+
+  // Below this, a landmass is dropped to water rather than kept as an island.
+  // findSpawns' own landAround(x,y,5) >= 90 gate already requires a candidate
+  // spawn centre to sit in a locally dense 11x11 patch of land, so anything
+  // this small could never host a spawn anyway — this floor exists purely to
+  // keep pixel-speck islands (and the coastline noise they'd add to sea
+  // pathfinding) out of the map, not to gate spawning.
+  MIN_LANDMASS_TILES: 70,
+
+  // Finds the sea level whose largest connected landmass lands closest to
+  // `target` tiles. Plain bisection (the old approach) assumed the largest-
+  // component size shrinks smoothly as the threshold rises; measuring it
+  // directly against real seeds turned up two ways that's not safe to assume:
+  //
+  //  1. The curve genuinely jumps. Lowering the sea level can fuse two
+  //     islands, and the largest-component size leaps from one plateau to a
+  //     much bigger one with nothing achievable in between — measured on one
+  //     seed, 54% of the grid dropped straight to 26% between two thresholds
+  //     0.02 apart. Bisection converges toward the crossing point assuming a
+  //     value near the target exists there; across a jump like this, no such
+  //     value exists, and which side it lands on is close to a coin flip.
+  //  2. The old fixed floor (0.30) isn't always low enough to bracket the
+  //     target at all. Measured directly: for some seeds the largest
+  //     reachable landmass AT that floor — the most generous point the old
+  //     search ever tried — topped out under 23%, because that seed's whole
+  //     elevation field runs drier. No amount of searching inside
+  //     [0.30, 0.85] finds 40% if 40% was never reachable in that range to
+  //     begin with; bisection just converges on the floor and calls it the
+  //     best it found. That's the exact shape of the ~15% severe-undershoot
+  //     failures measured across both old and new map sizes — the same seeds
+  //     had land comfortably past 40% available at a lower threshold the
+  //     search never tried.
+  //
+  // The fix: widen the floor downward first, until the largest landmass AT it
+  // actually clears the target — so the range brackets the target at all —
+  // then sweep broadly rather than bisect, so a jump anywhere in that range
+  // gets sampled on both sides instead of assumed not to exist. Every sample
+  // taken, during widening, the coarse sweep, or the fine refinement,
+  // updates one running best-so-far, so the result is never worse than the
+  // best single point actually tried.
+  findSeaLevel(target) {
+    let lo = 0.30, hi = 0.85;
+    let bestT = lo, bestDiff = Infinity;
+    const consider = t => {
+      const count = this.largestLandmassAt(t);
+      const diff = Math.abs(count - target);
+      if (diff < bestDiff) { bestDiff = diff; bestT = t; }
+      return count;
+    };
+
+    // Widen until the floor itself clears the target, or give up at a level
+    // low enough that virtually the whole grid is land regardless of seed
+    // (measured: -0.3 alone already clears 40% by 75%+ on every seed sampled;
+    // this goes well past that for margin).
+    for (let guard = 0; guard < 12 && consider(lo) < target; guard++) {
+      lo -= 0.15;
+      if (lo < -1.5) break;
+    }
+
+    // Broad sweep across the now target-bracketing range, so a jump anywhere
+    // in it gets caught rather than stepped over.
+    const COARSE = 18;
+    const coarseT = [];
+    for (let i = 0; i <= COARSE; i++) {
+      const t = lo + (hi - lo) * i / COARSE;
+      coarseT.push(t);
+      consider(t);
+    }
+
+    // Refine inside the coarse step nearest the best sample found so far —
+    // a much narrower window, so bisecting within it is far less likely to
+    // itself straddle an undiscovered jump.
+    let bestIdx = 0, bestGap = Infinity;
+    for (let i = 0; i < coarseT.length; i++) {
+      const gap = Math.abs(coarseT[i] - bestT);
+      if (gap < bestGap) { bestGap = gap; bestIdx = i; }
+    }
+    const fineLo = coarseT[Math.max(0, bestIdx - 1)];
+    const fineHi = coarseT[Math.min(coarseT.length - 1, bestIdx + 1)];
+    const FINE = 10;
+    for (let i = 0; i <= FINE; i++) {
+      consider(fineLo + (fineHi - fineLo) * i / FINE);
+    }
+
+    return bestT;
+  },
+
+  // Share of land at each tier. Fixed proportions rather than fixed elevation
+  // cutoffs, for the same reason the sea level is searched rather than fixed:
+  // the noise's absolute range wanders by seed, so a hard cutoff would give one
+  // map alpine spines and the next none at all.
+  HIGHLAND_SHARE: 0.26,
+  MOUNTAIN_SHARE: 0.10,
+
+  classifyTerrain() {
+    const size = this.width * this.height;
+    this.terrain = new Uint8Array(size);
+
+    // Percentiles off a sample — sorting every land tile on an XL map is far
+    // more work than the answer needs. Off `roughness`, not `elevation`: see
+    // its comment in generate() — using elevation here is what produced one
+    // contiguous highland/mountain mass instead of scattered ranges.
+    const sample = [];
+    const stride = Math.max(1, Math.floor(this.landTiles / 20000));
+    let seen = 0;
+    for (let i = 0; i < size; i++) {
+      if (this.owner[i] === WATER) continue;
+      if (seen++ % stride === 0) sample.push(this.roughness[i]);
+    }
+    if (!sample.length) return;
+    sample.sort((a, b) => a - b);
+    const at = f => sample[Math.min(sample.length - 1, Math.floor(sample.length * f))];
+    const mountainAt = at(1 - this.MOUNTAIN_SHARE);
+    const highlandAt = at(1 - this.MOUNTAIN_SHARE - this.HIGHLAND_SHARE);
+
+    for (let i = 0; i < size; i++) {
+      if (this.owner[i] === WATER) continue;
+      const r = this.roughness[i];
+      this.terrain[i] = r >= mountainAt ? MOUNTAIN : (r >= highlandAt ? HIGHLAND : PLAINS);
+    }
+  },
+
+  // Floods the map at sea level `t` and returns the size of its biggest
+  // connected landmass, leaving `owner` and `_region` set for that threshold.
+  largestLandmassAt(t) {
+    const size = this.width * this.height;
+    for (let i = 0; i < size; i++) {
+      this.owner[i] = this.elevation[i] > t ? NEUTRAL : WATER;
+    }
+    const region = this._region, queue = this._queue, nb = new Int32Array(4);
+    region.fill(-1);
+    // Every region's size, not just the winner's — pruneSmallLandmasses uses
+    // this to decide which secondary landmasses survive as islands rather
+    // than being dropped to water along with everything too small to matter.
+    const sizes = [];
+    let bestRegion = -1, bestCount = 0, regionId = 0;
+
+    for (let start = 0; start < size; start++) {
+      if (this.owner[start] === WATER || region[start] !== -1) continue;
+      let head = 0, tail = 0, count = 0;
+      queue[tail++] = start;
+      region[start] = regionId;
+      while (head < tail) {
+        const i = queue[head++];
+        count++;
+        const n = this.neighbors(i, nb);
+        for (let k = 0; k < n; k++) {
+          const j = nb[k];
+          if (this.owner[j] !== WATER && region[j] === -1) { region[j] = regionId; queue[tail++] = j; }
+        }
+      }
+      sizes.push(count);
+      if (count > bestCount) { bestCount = count; bestRegion = regionId; }
+      regionId++;
+    }
+    this._bestRegion = bestRegion;
+    this._regionSizes = sizes;
+    return bestCount;
+  },
+
+  // Drops every landmass under `minTiles` to water, exactly as the old
+  // pruneToLargest did for everything but the single biggest region — but
+  // keeps any other region that clears the floor as a real, separately
+  // identified island, now that naval invasions can actually reach one.
+  // Two passes rather than one: the first settles which tiles are land at
+  // all, so the second's coastline sampling (which asks "is my neighbour
+  // water") reads the final map instead of a partially-pruned one that would
+  // make the answer depend on iteration order.
+  pruneSmallLandmasses(minTiles) {
+    const size = this.width * this.height;
+    const region = this._region, sizes = this._regionSizes;
+    const survivors = [];
+    for (let r = 0; r < sizes.length; r++) if (sizes[r] >= minTiles) survivors.push(r);
+    // Largest first, so landmass id 0 is always the main continent — the one
+    // findSpawns leans on most heavily by sheer odds of a sample landing there.
+    survivors.sort((a, b) => sizes[b] - sizes[a]);
+    const idOf = new Map(survivors.map((r, idx) => [r, idx]));
+
+    let land = 0;
+    for (let i = 0; i < size; i++) {
+      if (this.owner[i] === WATER) continue;
+      if (idOf.has(region[i])) land++;
+      else { this.owner[i] = WATER; this.elevation[i] = 0.48; }
+    }
+    this.landTiles = land;
+
+    // A stable id per surviving landmass, plus a small sample of its coastal
+    // tiles — the lookup AI naval targeting scans instead of re-deriving
+    // "what islands exist" from scratch on every bot's think.
+    this.landmassId = new Int32Array(size).fill(-1);
+    this.landmasses = survivors.map((r, idx) => ({ id: idx, size: sizes[r], coastSample: [] }));
+    const nb = new Int32Array(4);
+    const COAST_SAMPLE = 12;
+    for (let i = 0; i < size; i++) {
+      if (this.owner[i] === WATER) continue;
+      const id = idOf.get(region[i]);
+      this.landmassId[i] = id;
+      const lm = this.landmasses[id];
+      if (lm.coastSample.length >= COAST_SAMPLE) continue;
+      const n = this.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        if (this.owner[nb[k]] === WATER) { lm.coastSample.push(i); break; }
+      }
+    }
+  },
+
+  // Multi-source BFS distance (in tiles) from every water tile to the
+  // nearest land, seeded from the water tiles that actually touch a shore
+  // and flooded outward across open water — mirrors the "magnitude" field
+  // OpenFront bakes into its terrain data. Game.seaPath prices a route off
+  // this: hugging the coast is expensive, a band a few tiles out is free,
+  // and far blue water carries a small penalty of its own. Land tiles are
+  // left at 0 (unused; the BFS never assigns them).
+  computeShoreDist() {
+    const size = this.width * this.height;
+    const dist = this.shoreDist = new Uint8Array(size);
+    const queue = this._queue, nb = new Int32Array(4);
+    let head = 0, tail = 0;
+
+    for (let i = 0; i < size; i++) {
+      if (this.owner[i] === WATER) continue;
+      const n = this.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (this.owner[j] === WATER && dist[j] === 0) { dist[j] = 1; queue[tail++] = j; }
+      }
+    }
+
+    while (head < tail) {
+      const i = queue[head++];
+      const d = dist[i];
+      if (d >= 250) continue;   // past this, every bucket above is identical anyway
+      const n = this.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (this.owner[j] === WATER && dist[j] === 0) { dist[j] = d + 1; queue[tail++] = j; }
+      }
+    }
+  },
+
+  isLand(i) { return this.owner[i] !== WATER; },
+  isCoastal(i) {
+    const nb = this._coastBuf || (this._coastBuf = new Int32Array(4));
+    const n = this.neighbors(i, nb);
+    for (let k = 0; k < n; k++) if (this.owner[nb[k]] === WATER) return true;
+    return false;
+  },
+  idx(x, y) { return y * this.width + x; },
+
+  // Fills out[0..n] with the 4-neighbour indices of i that lie on the map.
+  neighbors(i, out) {
+    const w = this.width, x = i % w, y = (i / w) | 0;
+    let n = 0;
+    if (x > 0) out[n++] = i - 1;
+    if (x < w - 1) out[n++] = i + 1;
+    if (y > 0) out[n++] = i - w;
+    if (y < this.height - 1) out[n++] = i + w;
+    return n;
+  },
+
+  // Picks spawn points on land, spread apart, avoiding tiny islands.
+  findSpawns(count, rng) {
+    // Spread spawns as evenly as the landmass allows, relaxing the spacing
+    // requirement until every player fits.
+    let minDist = Math.sqrt(this.landTiles / count) * 1.1;
+
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const spawns = [];
+      for (let guard = 0; guard < 8000 && spawns.length < count; guard++) {
+        const x = 6 + Math.floor(rng() * (this.width - 12));
+        const y = 6 + Math.floor(rng() * (this.height - 12));
+        const i = this.idx(x, y);
+        if (!this.isLand(i)) continue;
+        if (this.landAround(x, y, 5) < 90) continue;
+
+        let ok = true;
+        for (const s of spawns) {
+          const sx = s % this.width, sy = (s / this.width) | 0;
+          if (Math.hypot(sx - x, sy - y) < minDist) { ok = false; break; }
+        }
+        if (ok) spawns.push(i);
+      }
+      if (spawns.length === count) return spawns;
+      minDist *= 0.75;
+    }
+    return [];
+  },
+
+  landAround(x, y, r) {
+    let n = 0;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= this.width || ny >= this.height) continue;
+        if (this.isLand(this.idx(nx, ny))) n++;
+      }
+    }
+    return n;
+  }
+};
