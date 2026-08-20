@@ -125,6 +125,9 @@ const Game = {
   // Trade ships currently in transit between two Ports — see
   // updatePortTrade/stepTradeShips in the "Ports & trade ships" section.
   tradeShips: [],
+  // Warships currently in play — see the "Warships" section near the end of
+  // this file for their build/combat/patrol logic.
+  warships: [],
   // Short-lived "+123" floating labels spawned wherever a train just paid
   // out gold — pure presentation, aged and culled in stepTrains/render only,
   // never read by any gameplay logic. See GOLD_POPUP_LIFETIME.
@@ -198,6 +201,7 @@ const Game = {
     this.trains = [];
     this.nextTrainId = 1;
     this.tradeShips = [];
+    this.warships = [];
     this.goldPopups = [];
     this.alliances = [];
     this.requests = [];
@@ -520,6 +524,20 @@ const Game = {
       type: 'port', name: 'Port', icon: '⚓', hotkey: '3',
       baseCost: 125000, maxCost: 1000000, buildTime: 8, upgradable: true,
       costGroup: ['factory', 'port']
+    },
+    // OpenFront's UnitType.Warship: cost is LINEAR like Fort (not pooled with
+    // anything else) — Config.ts's real costWrapper is
+    // `(numUnits+1)*250_000` capped at 1_000_000. Not upgradable (OpenFront
+    // has no warship upgrade path either). Placed on WATER near the player's
+    // own coast rather than on owned land — see warshipBlockReason/
+    // buildWarship in the "Warships" section below, which this entry's
+    // buildTime is NOT read by: a warship spawns instantly (matching
+    // OpenFront's own SpawnExecution, which has no construction phase for
+    // units the way City/Factory/Port/Fort do here), it's carried only so
+    // the build-bar hint text has a number to show.
+    {
+      type: 'warship', name: 'Warship', icon: '🚢', hotkey: '5',
+      baseCost: 250000, maxCost: 1000000, buildTime: 0, upgradable: false, linear: true
     }
   ],
 
@@ -1717,6 +1735,7 @@ const Game = {
     this.stepTrains(dt);
     this.updatePortTrade(dt);
     this.stepTradeShips(dt);
+    this.stepWarships(dt);
 
     for (const p of this.players) {
       if (p.alive && p.tiles.size === 0 && p.troops < 20) p.alive = false;
@@ -1728,6 +1747,10 @@ const Game = {
     // are dropped in updateDiplomacy just below.
     for (let i = this.boats.length - 1; i >= 0; i--) {
       if (!this.players[this.boats[i].attacker].alive) this.boats.splice(i, 1);
+    }
+    // Same treatment for a dead nation's warships — nobody left to crew them.
+    for (let i = this.warships.length - 1; i >= 0; i--) {
+      if (!this.players[this.warships[i].owner].alive) this.warships.splice(i, 1);
     }
 
     // After the death sweep, so a nation that fell this tick takes its
@@ -3162,6 +3185,337 @@ const Game = {
       }
 
       this.tradeShips.splice(i, 1);
+    }
+  },
+
+  // --- Warships ----------------------------------------------------------
+  // Ported against OpenFront's actual WarshipExecution/MoveWarshipExecution/
+  // ShellExecution source (github.com/openfrontio/OpenFrontIO), not guessed
+  // — see feedback-openfront-source-porting memory for the fetch approach.
+  // Deliberately narrowed scope, matching how every other structure in this
+  // file was ported (see the UNITS/rail-network comments above): no
+  // port-docking/repair retreat, no passive healing, no veterancy. A
+  // Warship spawns at full health, fights until it sinks, and is gone —
+  // simpler than the real source's health-management state machine, and not
+  // something the user asked for. Everything actually requested — visual
+  // presence, stealing unfriendly trade ships, shooting down invasion boats,
+  // shift-drag select + click-to-relocate, patrolling an assigned area,
+  // health, and warship-vs-warship combat — is ported for real.
+  //
+  // Movement reuses seaPath (the same weighted A* boats/trade ships already
+  // use) rather than a new pathfinder: seaPath's sourceTiles/targetTile
+  // arguments only ever need each endpoint's own water neighbours, which
+  // works identically whether the endpoint is a coastal land tile (boats)
+  // or open water (a warship roaming free) — see its own comment. A warship
+  // is stored the same shape a boat/trade ship already is — {path, pos} — so
+  // Game.pathPos below reads all three uniformly.
+  WARSHIP_MAX_HEALTH: 1000,               // Config.ts UnitType.Warship.maxHealth
+  WARSHIP_TARGET_RANGE: 130,              // warshipTargettingRange() — engagement/detection radius
+  WARSHIP_PATROL_RANGE: 100,              // warshipPatrolRange() — wander radius around patrolTile
+  WARSHIP_SHELL_COOLDOWN: 2,              // warshipShellAttackRate()=20 ticks @ 10 ticks/sec
+  WARSHIP_CAPTURE_DIST: 5,                // huntDownTradeShip's manhattan capture distance
+  // BOAT_SPEED's own comment: 10 ticks/sec, 1 tile/tick is the ported rate
+  // for every ship type in this file, warships included — OpenFront has no
+  // separate, slower warshipSpeed of its own.
+  WARSHIP_SPEED: 10,
+  WARSHIP_REPATH_INTERVAL: 5,             // seconds between patrol-wander waypoint picks
+  WARSHIP_CHASE_REPATH: 1.5,              // seconds between trade-ship-chase path refreshes
+  WARSHIP_SNAP_MAX_DIST: 8,               // how far a placement tap may land from open water and still snap
+  MAX_WARSHIPS_PER_PLAYER: 6,             // keeps per-tick seaPath calls (patrol/chase) bounded
+
+  // Float tile-space position of anything shaped like a boat/trade ship/
+  // warship — {path: [tile,...], pos: float index along it} — interpolating
+  // between the two path tiles straddling `pos`. Same technique render.js's
+  // drawBoats/drawTradeShips already use inline for their pixel position;
+  // this is the game-logic (range-check) equivalent, shared by all three.
+  pathPos(entity) {
+    const path = entity.path, w = GameMap.width;
+    const idx = Math.min(path.length - 1, Math.floor(entity.pos));
+    const frac = Math.min(1, entity.pos - idx);
+    const a = path[idx], c = path[Math.min(idx + 1, path.length - 1)];
+    const ax = a % w, ay = (a / w) | 0, cx = c % w, cy = (c / w) | 0;
+    return { x: ax + (cx - ax) * frac, y: ay + (cy - ay) * frac };
+  },
+
+  // Same terrain-agnostic BFS shape as nearestOwnedCoastNear, but hunting
+  // for a WATER tile that touches the player's own coastline instead of a
+  // land one — a Warship launches from open water next to home territory,
+  // not from the shore tile itself.
+  nearestOwnedWaterNear(playerId, fromTile, maxDist) {
+    if (fromTile < 0) return -1;
+    const w = GameMap.width;
+    const nb = new Int32Array(4);
+    const touchesOwnCoast = (i) => {
+      if (GameMap.owner[i] !== WATER) return false;
+      const n = GameMap.neighbors(i, nb);
+      for (let k = 0; k < n; k++) if (GameMap.owner[nb[k]] === playerId && GameMap.isLand(nb[k])) return true;
+      return false;
+    };
+    if (touchesOwnCoast(fromTile)) return fromTile;
+    const tx = fromTile % w, ty = (fromTile / w) | 0;
+    const seen = new Set([fromTile]);
+    const queue = [fromTile];
+    let head = 0, best = -1, bestDist = Infinity;
+    while (head < queue.length) {
+      const i = queue[head++];
+      const ix = i % w, iy = (i / w) | 0;
+      const dist = Math.abs(ix - tx) + Math.abs(iy - ty);
+      if (dist < bestDist && touchesOwnCoast(i)) { best = i; bestDist = dist; }
+      if (dist >= maxDist) continue;
+      const n = GameMap.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (!seen.has(j)) { seen.add(j); queue.push(j); }
+      }
+    }
+    return best;
+  },
+
+  // Why a Warship cannot be placed here, for the UI to say out loud — same
+  // null-or-reason shape as buildBlockReason, but a separate function since
+  // a Warship's placement rule (open water touching your own coast) is the
+  // inverse of every land structure's (buildBlockReason requires the tile
+  // itself to be owned land, which a water tile never is).
+  warshipBlockReason(playerId, tile) {
+    const p = this.players[playerId];
+    if (!p || !p.alive) return 'Nation defeated';
+    if (tile < 0 || GameMap.owner[tile] !== WATER) return 'Coastal water only';
+    const nb = new Int32Array(4);
+    const n = GameMap.neighbors(tile, nb);
+    let touches = false;
+    for (let k = 0; k < n; k++) {
+      if (GameMap.owner[nb[k]] === playerId && GameMap.isLand(nb[k])) { touches = true; break; }
+    }
+    if (!touches) return 'Must be near your own coast';
+    if (this.warships.filter(w => w.owner === playerId).length >= this.MAX_WARSHIPS_PER_PLAYER) {
+      return 'Warship limit reached';
+    }
+    if (p.gold < this.unitCost(p, 'warship')) return 'Not enough gold';
+    return null;
+  },
+
+  canBuildWarship(playerId, tile) { return !this.warshipBlockReason(playerId, tile); },
+
+  // Spawns instantly (see the UNITS comment on why buildTime isn't read
+  // here) at full health, patrolling right where it was placed.
+  buildWarship(playerId, tile) {
+    if (!this.canBuildWarship(playerId, tile)) return false;
+    const p = this.players[playerId];
+    p.gold -= this.unitCost(p, 'warship');
+    p.unitsBuilt.warship = this.unitsBuilt(p, 'warship') + 1;
+    p.units.warship = this.unitsOwned(p, 'warship') + 1;
+    this.warships.push({
+      owner: playerId,
+      path: [tile], pos: 0,
+      patrolTile: tile,
+      health: this.WARSHIP_MAX_HEALTH, maxHealth: this.WARSHIP_MAX_HEALTH,
+      target: null, targetKind: null,
+      lastShellAt: -Infinity, lastPathAt: -Infinity
+    });
+    return true;
+  },
+
+  // Player-issued relocation (UI's shift-drag select, then a plain click on
+  // water) — MoveWarshipExecution's real job, minus the water-component
+  // connectivity check (this game has no such precomputed labelling; a
+  // failed seaPath below does the same job for an unreachable body of
+  // water). Also becomes the new patrol center once it arrives, exactly
+  // like OpenFront's own patrolTile field — see warshipPatrol.
+  moveWarships(list, tile) {
+    if (tile < 0 || GameMap.owner[tile] !== WATER) return false;
+    let moved = false;
+    for (const w of list) {
+      if (!this.warships.includes(w) || w.owner !== this.me) continue;
+      const idx = Math.min(w.path.length - 1, Math.floor(w.pos));
+      const curTile = w.path[idx];
+      const path = this.seaPath([curTile], tile);
+      if (!path) continue;
+      w.path = path;
+      w.pos = 0;
+      w.patrolTile = tile;
+      w.lastPathAt = this.elapsed;
+      moved = true;
+    }
+    return moved;
+  },
+
+  // Config.ts's ShellExecution.effectOnTarget with baseDamage=250 (so the
+  // (roll-1)*25+200 multiplier IS the damage) and the veterancy bonus term
+  // dropped — this game has no veterancy system. A 1-6 roll, 200-325 damage.
+  warshipShellDamage() {
+    const roll = 1 + Math.floor(this.rng() * 6);
+    return (roll - 1) * 25 + 200;
+  },
+
+  // WarshipExecution.findBestTarget: transport ship (boat) beats warship
+  // beats trade ship, nearest of whichever tier wins, "unfriendly" meaning
+  // not this warship's own owner and not allied to them (this game has no
+  // canAttackPlayer beyond that). Only called when `w` has no target already.
+  warshipAcquireTarget(w, pos, rangeSq) {
+    let best = null, bestDist = Infinity;
+    for (const b of this.boats) {
+      if (b.attacker === w.owner || this.areAllied(w.owner, b.attacker)) continue;
+      const bp = this.pathPos(b);
+      const d = (bp.x - pos.x) ** 2 + (bp.y - pos.y) ** 2;
+      if (d <= rangeSq && d < bestDist) { best = b; bestDist = d; }
+    }
+    if (best) { w.target = best; w.targetKind = 'boat'; return; }
+
+    best = null; bestDist = Infinity;
+    for (const ow of this.warships) {
+      if (ow === w || ow.owner === w.owner || this.areAllied(w.owner, ow.owner)) continue;
+      const op = this.pathPos(ow);
+      const d = (op.x - pos.x) ** 2 + (op.y - pos.y) ** 2;
+      if (d <= rangeSq && d < bestDist) { best = ow; bestDist = d; }
+    }
+    if (best) { w.target = best; w.targetKind = 'warship'; return; }
+
+    best = null; bestDist = Infinity;
+    for (const s of this.tradeShips) {
+      if (s.owner === w.owner || this.areAllied(w.owner, s.owner)) continue;
+      const sp = this.pathPos(s);
+      const d = (sp.x - pos.x) ** 2 + (sp.y - pos.y) ** 2;
+      if (d <= rangeSq && d < bestDist) { best = s; bestDist = d; }
+    }
+    if (best) { w.target = best; w.targetKind = 'tradeship'; }
+  },
+
+  // Priority 1/2 targets (boat, warship): the warship holds its ground and
+  // fires on cooldown rather than closing in — matches real WarshipExecution,
+  // which never moves toward either, only toward a trade ship (priority 3).
+  // A boat has no health of its own in this game (see the "Naval invasions"
+  // section), so one shell simply sinks it outright, same as a target that
+  // "can't be oneshotted" being skipped in the real ShellExecution — there's
+  // no partial-damage state to track. A warship target keeps taking shell
+  // damage every cooldown until it sinks (stepWarships removes it at 0 hp).
+  warshipShootAt(w) {
+    if (this.elapsed - w.lastShellAt < this.WARSHIP_SHELL_COOLDOWN) return;
+    w.lastShellAt = this.elapsed;
+    if (w.targetKind === 'boat') {
+      const i = this.boats.indexOf(w.target);
+      if (i >= 0) this.boats.splice(i, 1);
+      w.target = null; w.targetKind = null;
+      return;
+    }
+    w.target.health -= this.warshipShellDamage();
+    if (w.target.health <= 0) { w.target = null; w.targetKind = null; }
+  },
+
+  // Priority 3 (huntDownTradeShip): the only target type a warship actually
+  // chases. Repathed on a cooldown rather than every tick — a full seaPath
+  // call per warship per tick would be far too expensive with a real fleet
+  // in play (see the class comment on why patrol wandering does the same).
+  // "Capture" is OpenFront's real PlayerImpl.captureUnit verbatim: just
+  // unit.setOwner(this) — the trade ship keeps sailing its existing route,
+  // now flying the capturing player's colours (see render.js's
+  // drawTradeShips, which colours strictly off `ship.owner`).
+  warshipChaseTradeShip(w, dt, curTile) {
+    const target = w.target;
+    const tIdx = Math.min(target.path.length - 1, Math.floor(target.pos));
+    const targetTile = target.path[tIdx];
+    if (this.manhattanDist(curTile, targetTile) <= this.WARSHIP_CAPTURE_DIST) {
+      target.owner = w.owner;
+      w.target = null; w.targetKind = null;
+      return;
+    }
+    if (!w.path || w.pos >= w.path.length - 1 || this.elapsed - w.lastPathAt >= this.WARSHIP_CHASE_REPATH) {
+      const path = this.seaPath([curTile], targetTile);
+      if (path) { w.path = path; w.pos = 0; }
+      w.lastPathAt = this.elapsed;
+    }
+    w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * dt);
+  },
+
+  // Bounded rejection sample for a water tile within patrol range of
+  // `w.patrolTile` — a light version of WarshipExecution.randomTile (which
+  // escalates its search radius over hundreds of attempts); missing here
+  // just means trying again next WARSHIP_REPATH_INTERVAL, so there's no
+  // need for that machinery. Returns -1 on a run of bad luck.
+  warshipPickPatrolWaypoint(w) {
+    const mw = GameMap.width, mh = GameMap.height;
+    const cx = w.patrolTile % mw, cy = (w.patrolTile / mw) | 0;
+    const range = this.WARSHIP_PATROL_RANGE;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const x = cx + Math.floor((this.rng() * 2 - 1) * range);
+      const y = cy + Math.floor((this.rng() * 2 - 1) * range);
+      if (x < 0 || y < 0 || x >= mw || y >= mh) continue;
+      const tile = GameMap.idx(x, y);
+      if (GameMap.owner[tile] === WATER) return tile;
+    }
+    return -1;
+  },
+
+  // No target: wander within patrol range of patrolTile, exactly like
+  // WarshipExecution.patrol(). Also where a fresh moveWarships() relocation
+  // order actually plays out — that just seeds w.path/patrolTile directly,
+  // so once it arrives this same "arrived → pick a new nearby waypoint"
+  // logic takes over from the new center with no special-casing needed.
+  warshipPatrol(w, dt, curTile) {
+    const arrived = !w.path || w.pos >= w.path.length - 1;
+    if (arrived) {
+      if (this.elapsed - w.lastPathAt >= this.WARSHIP_REPATH_INTERVAL) {
+        const dest = this.warshipPickPatrolWaypoint(w);
+        if (dest >= 0) {
+          const path = this.seaPath([curTile], dest);
+          if (path) { w.path = path; w.pos = 0; }
+        }
+        w.lastPathAt = this.elapsed;
+      }
+      return;
+    }
+    w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * dt);
+  },
+
+  // Revalidates (and, if empty, re-acquires) a target every tick, then hands
+  // off to combat/chase/patrol — see WarshipExecution.tick's own priority
+  // chain (transport ship > warship > trade ship > patrol), reproduced here.
+  warshipTick(w, dt) {
+    const idx = Math.min(w.path.length - 1, Math.floor(w.pos));
+    const curTile = w.path[idx];
+    const pos = this.pathPos(w);
+    const rangeSq = this.WARSHIP_TARGET_RANGE * this.WARSHIP_TARGET_RANGE;
+
+    if (w.target) {
+      const kind = w.targetKind;
+      const arr = kind === 'boat' ? this.boats : kind === 'warship' ? this.warships : this.tradeShips;
+      let ok = arr.includes(w.target) && (kind !== 'warship' || w.target.health > 0);
+      if (ok) {
+        const tp = this.pathPos(w.target);
+        const d = (tp.x - pos.x) ** 2 + (tp.y - pos.y) ** 2;
+        const ownerOf = kind === 'boat' ? w.target.attacker : w.target.owner;
+        ok = d <= rangeSq && ownerOf !== w.owner && !this.areAllied(w.owner, ownerOf);
+      }
+      if (!ok) { w.target = null; w.targetKind = null; }
+    }
+
+    if (!w.target) this.warshipAcquireTarget(w, pos, rangeSq);
+
+    if (w.targetKind === 'boat' || w.targetKind === 'warship') {
+      this.warshipShootAt(w);
+      return;
+    }
+    if (w.targetKind === 'tradeship') {
+      this.warshipChaseTradeShip(w, dt, curTile);
+      return;
+    }
+    this.warshipPatrol(w, dt, curTile);
+  },
+
+  // Sinks anything at 0 hp (no refund, no port to recall to — see the class
+  // comment on what's deliberately not ported), decrementing units.warship
+  // so unitCost's price curve reflects the fleet actually still afloat.
+  // unitsBuilt is left untouched, same treatment losing a captured structure
+  // gets — see the UNITS comment on why it never decrements.
+  stepWarships(dt) {
+    for (let i = this.warships.length - 1; i >= 0; i--) {
+      const w = this.warships[i];
+      if (w.health <= 0) {
+        this.warships.splice(i, 1);
+        const owner = this.players[w.owner];
+        if (owner) owner.units.warship = Math.max(0, this.unitsOwned(owner, 'warship') - 1);
+        continue;
+      }
+      this.warshipTick(w, dt);
     }
   }
 };

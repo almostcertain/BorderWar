@@ -254,7 +254,9 @@ const Render = {
     this.drawBoats();
     this.drawTrains();
     this.drawTradeShips();
+    this.drawWarships();
     this.drawGoldPopups();
+    this.drawSelectionBox();
   },
 
   // Static rail lines between stations — drawn underneath the structure
@@ -523,10 +525,14 @@ const Render = {
     const hoverB = Game.buildings.get(tile);
     // Hovering an existing structure of the same type while armed previews an
     // upgrade instead of a blocked build — same ghost, different legality
-    // check, matching what UI.onTap actually does on tap.
-    const ok = (hoverB && hoverB.type === UI.placing)
-      ? Game.canUpgrade(Game.me, tile)
-      : Game.canBuild(Game.me, UI.placing, tile);
+    // check, matching what UI.onTap actually does on tap. Warship has no
+    // buildings-map entry (and no upgrade) at all — it's always checked
+    // against canBuildWarship instead.
+    const ok = UI.placing === 'warship'
+      ? Game.canBuildWarship(Game.me, tile)
+      : (hoverB && hoverB.type === UI.placing)
+        ? Game.canUpgrade(Game.me, tile)
+        : Game.canBuild(Game.me, UI.placing, tile);
 
     const px = (tile % w - this.cam.x) * s + cw / 2;
     const py = (((tile / w) | 0) - this.cam.y) * s + ch / 2;
@@ -553,6 +559,21 @@ const Render = {
       ctx.fill();
       ctx.lineWidth = Math.max(1, this.dpr * 1.5);
       ctx.strokeStyle = 'rgba(130, 215, 255, 0.55)';
+      ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Warship placement: show the patrol radius it'll wander once launched,
+    // same dashed-ring language as Fort's protection radius above.
+    if (UI.placing === 'warship') {
+      const cx = px + s / 2, cy = py + s / 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, Game.WARSHIP_PATROL_RANGE * s, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(160, 200, 255, 0.06)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
+      ctx.strokeStyle = 'rgba(160, 200, 255, 0.5)';
       ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
       ctx.stroke();
       ctx.setLineDash([]);
@@ -848,6 +869,134 @@ const Render = {
       ctx.strokeStyle = 'rgba(0,0,0,0.65)';
       ctx.stroke();
     }
+  },
+
+  // CSS-pixel (client-coordinate) position of a warship — the same space
+  // screenToTile/findStructureNear use for hit-testing (UI's shift-drag box
+  // select and click-to-relocate), distinct from the device-pixel math
+  // drawWarships uses below to actually paint it.
+  warshipClientPos(w) {
+    const s = this.cam.scale;
+    const p = Game.pathPos(w);
+    return {
+      x: (p.x + 0.5 - this.cam.x) * s + window.innerWidth / 2,
+      y: (p.y + 0.5 - this.cam.y) * s + window.innerHeight / 2
+    };
+  },
+
+  // Warships: a persistent combat unit, not a transient boat/trade-ship
+  // crossing, so it gets a heavier, distinct hull silhouette (an elongated
+  // hexagon, rotated to face its current heading) instead of the pixel-dot
+  // or flat-circle treatment those get — plus a health bar once damaged and
+  // a selection ring + patrol-radius ring for whichever of the player's own
+  // are currently shift-drag selected (see UI.selectedWarships).
+  drawWarships() {
+    if (!Game.warships.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height, mw = GameMap.width;
+    const r = Math.max(6 * this.dpr, Math.min(16 * this.dpr, s * 0.9));
+
+    if (UI.selectedWarships.size) {
+      for (const w of Game.warships) {
+        if (!UI.selectedWarships.has(w)) continue;
+        const { x: sx, y: sy } = this.warshipClientPos(w);
+        const px = sx * this.dpr, py = sy * this.dpr;
+        if (px >= -60 && py >= -60 && px <= cw + 60 && py <= ch + 60) {
+          ctx.beginPath();
+          ctx.arc(px, py, r * 1.8, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+          ctx.lineWidth = Math.max(1.5, this.dpr * 1.5);
+          ctx.setLineDash([3 * this.dpr, 3 * this.dpr]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        const patX = (w.patrolTile % mw + 0.5 - this.cam.x) * s + cw / 2;
+        const patY = (((w.patrolTile / mw) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+        ctx.beginPath();
+        ctx.arc(patX, patY, Game.WARSHIP_PATROL_RANGE * s, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+        ctx.lineWidth = Math.max(1, this.dpr);
+        ctx.setLineDash([5 * this.dpr, 5 * this.dpr]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    for (const w of Game.warships) {
+      const idx = Math.min(w.path.length - 1, Math.floor(w.pos));
+      const frac = Math.min(1, w.pos - idx);
+      const a = w.path[idx], c = w.path[Math.min(idx + 1, w.path.length - 1)];
+      const ax = a % mw, ay = (a / mw) | 0, cx = c % mw, cy = (c / mw) | 0;
+      const tx = ax + (cx - ax) * frac, ty = ay + (cy - ay) * frac;
+      const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
+
+      // Heading persists across frames where the ship isn't moving (idle,
+      // or holding station to fire) rather than snapping back to 0.
+      if (a !== c) w._heading = Math.atan2(cy - ay, cx - ax);
+      const heading = w._heading || 0;
+
+      const owner = Game.players[w.owner];
+      const col = owner ? owner.color : [200, 200, 200];
+
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(heading);
+
+      const len = r * 1.9, wid = r * 0.85;
+      ctx.beginPath();
+      ctx.moveTo(len * 0.55, 0);
+      ctx.lineTo(len * 0.2, -wid);
+      ctx.lineTo(-len * 0.35, -wid);
+      ctx.lineTo(-len * 0.55, 0);
+      ctx.lineTo(-len * 0.35, wid);
+      ctx.lineTo(len * 0.2, wid);
+      ctx.closePath();
+      ctx.fillStyle = `rgb(${(col[0] * 0.55) | 0}, ${(col[1] * 0.55) | 0}, ${(col[2] * 0.55) | 0})`;
+      ctx.fill();
+      ctx.strokeStyle = `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
+      ctx.lineWidth = Math.max(1.2, r * 0.16);
+      ctx.stroke();
+
+      // Turret: a small hollow square amidships, same stroked-not-filled
+      // treatment the Port anchor glyph uses in drawStructures.
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(1, r * 0.14);
+      ctx.strokeRect(-r * 0.22, -r * 0.22, r * 0.44, r * 0.44);
+      ctx.restore();
+
+      // Health bar: only once damaged, matching the rest of the HUD's
+      // "only surface what's changed from the default" restraint.
+      if (w.health < w.maxHealth) {
+        const bw = len * 1.1, bh = Math.max(2, r * 0.22);
+        const bx = px - bw / 2, by = py - r * 1.5;
+        const pct = Math.max(0, w.health / w.maxHealth);
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.fillStyle = pct > 0.5 ? '#7ee787' : pct > 0.25 ? '#f0c674' : '#ff6b6b';
+        ctx.fillRect(bx, by, bw * pct, bh);
+      }
+    }
+  },
+
+  // The live shift-drag marquee rectangle — see Input's `selecting` state.
+  // Drawn last, in raw device-pixel canvas space (Input tracks it in
+  // CSS-pixel client coordinates, same space as every other pointer handler,
+  // so it's scaled up by dpr here rather than everywhere it's touched).
+  drawSelectionBox() {
+    const sel = Input.selecting;
+    if (!sel || !sel.active) return;
+    const ctx = this.ctx, d = this.dpr;
+    const x0 = Math.min(sel.x0, sel.x1) * d, y0 = Math.min(sel.y0, sel.y1) * d;
+    const x1 = Math.max(sel.x0, sel.x1) * d, y1 = Math.max(sel.y0, sel.y1) * d;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = 'rgba(130, 215, 255, 0.12)';
+    ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.strokeStyle = 'rgba(130, 215, 255, 0.8)';
+    ctx.lineWidth = Math.max(1, d);
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
   },
 
   // "+gold" labels that drift up and fade out over each city a train just
