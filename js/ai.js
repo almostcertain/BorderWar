@@ -240,21 +240,35 @@ const AI = {
     return fallback;
   },
 
-  // Border-adjacent by preference — the opposite of buildSite's interior bias.
-  // A fort placed on the front line covers the most contested ground with its
-  // protection radius. The defense/speed bonus doesn't stack (Game.fortInRange
-  // is a boolean "any fort in range", not a count), so a second fort inside an
-  // existing one's FORT_RANGE buys nothing but wastes gold and a build slot —
-  // skip any candidate tile already covered, built or still under construction.
+  // Fort placed exactly on the front line was found to die for free: the
+  // instant the enemy took a single tile it stood on, it was destroyed
+  // before its FORT_RANGE bonus ever mattered (a fort is destroyed, not
+  // captured, when its tile changes hands — see Game.setOwner's fort
+  // branch). Set back FORT_BORDER_BUFFER tiles from
+  // the border/coast instead — still border-adjacent by preference (the
+  // opposite of buildSite's interior bias) so it covers contested ground
+  // with its protection radius, just no longer the literal first tile lost.
+  // The defense/speed bonus doesn't stack (Game.fortInRange is a boolean
+  // "any fort in range", not a count), so a second fort inside an existing
+  // one's FORT_RANGE buys nothing but wastes gold and a build slot — skip
+  // any candidate tile already covered, built or still under construction.
+  FORT_BORDER_BUFFER: 4,
+
   fortSite(p) {
     if (p.tiles.size === 0) return -1;
     let fallback = -1;
+    let fallbackDepth = -1;
     for (let attempt = 0; attempt < 15; attempt++) {
       const tile = this.sampleTile(p);
       if (tile < 0 || Game.buildings.has(tile)) continue;
       if (Game.fortInRange(tile, p.id, true)) continue;
-      if (fallback < 0) fallback = tile;
-      if (!this.isInterior(p, tile)) return tile;
+      // How many full rings of owned tiles surround this candidate, capped
+      // at the buffer — small nations that don't own enough depth anywhere
+      // still get their best available candidate via fallbackDepth rather
+      // than skipping the fort entirely.
+      const depth = this.interiorDepth(p, tile, this.FORT_BORDER_BUFFER);
+      if (depth > fallbackDepth) { fallback = tile; fallbackDepth = depth; }
+      if (depth >= this.FORT_BORDER_BUFFER) return tile;
     }
     return fallback;
   },
@@ -302,6 +316,35 @@ const AI = {
     if (n < 4) return false;                   // coast or map edge
     for (let k = 0; k < n; k++) if (GameMap.owner[nb[k]] !== p.id) return false;
     return true;
+  },
+
+  // Ring-by-ring BFS out from `tile`, counting how many full rings stay
+  // entirely owned by `p` before hitting a non-owned tile or the map edge
+  // (fortSite's border/coast signal), capped at `cap` since callers only
+  // care up to their required buffer depth. Distinct from isInterior above
+  // (a single-ring yes/no used by buildSite) — fortSite needs the actual
+  // depth so it can still rank a too-small nation's best-available site
+  // instead of only ever getting a hard yes/no at one fixed radius.
+  interiorDepth(p, tile, cap) {
+    const nb = Game.abuf;
+    let ring = [tile];
+    const seen = new Set(ring);
+    let depth = 0;
+    while (depth < cap) {
+      const next = [];
+      for (const t of ring) {
+        const n = GameMap.neighbors(t, nb);
+        if (n < 4) return depth;                // coast or map edge
+        for (let k = 0; k < n; k++) {
+          const nt = nb[k];
+          if (GameMap.owner[nt] !== p.id) return depth;
+          if (!seen.has(nt)) { seen.add(nt); next.push(nt); }
+        }
+      }
+      ring = next;
+      depth++;
+    }
+    return depth;
   },
 
   // Update (2026-08-19): live-tested TRIBE_PRIORITY_BONUS/FLOOR alone and it
