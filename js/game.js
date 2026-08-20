@@ -498,16 +498,6 @@ const Game = {
       baseCost: 125000, maxCost: 1000000, buildTime: 8, upgradable: true,
       costGroup: ['factory', 'port']
     },
-    // OpenFront's UnitType.DefensePost. Cost curve is LINEAR (not exponential):
-    // (n+1)*50k, capped at 250k — first fort is 50k, second 100k, fifth+ is 250k.
-    // defensePostRange=30, defensePostDefenseBonus=5x, defensePostSpeedBonus=3x,
-    // constructionDuration=5*10 ticks. Not upgradable. See FORT_* constants and
-    // fortInRange() below for the combat hooks, and tileCost()/stepAttack() for
-    // where those bonuses fire.
-    {
-      type: 'fort', name: 'Defense Fort', icon: '🛡', hotkey: '4',
-      baseCost: 50000, maxCost: 250000, buildTime: 5, upgradable: false, linear: true
-    },
     // OpenFront's UnitType.Port: same exponential cost curve as City/Factory,
     // but Config.ts's real costWrapper for Port explicitly pools its count
     // together with Factory (costWrapper(fn, UnitType.Port, UnitType.Factory))
@@ -524,6 +514,16 @@ const Game = {
       type: 'port', name: 'Port', icon: '⚓', hotkey: '3',
       baseCost: 125000, maxCost: 1000000, buildTime: 8, upgradable: true,
       costGroup: ['factory', 'port']
+    },
+    // OpenFront's UnitType.DefensePost. Cost curve is LINEAR (not exponential):
+    // (n+1)*50k, capped at 250k — first fort is 50k, second 100k, fifth+ is 250k.
+    // defensePostRange=30, defensePostDefenseBonus=5x, defensePostSpeedBonus=3x,
+    // constructionDuration=5*10 ticks. Not upgradable. See FORT_* constants and
+    // fortInRange() below for the combat hooks, and tileCost()/stepAttack() for
+    // where those bonuses fire.
+    {
+      type: 'fort', name: 'Defense Fort', icon: '🛡', hotkey: '4',
+      baseCost: 50000, maxCost: 250000, buildTime: 5, upgradable: false, linear: true
     },
     // OpenFront's UnitType.Warship: cost is LINEAR like Fort (not pooled with
     // anything else) — Config.ts's real costWrapper is
