@@ -132,6 +132,11 @@ const Game = {
   // out gold — pure presentation, aged and culled in stepTrains/render only,
   // never read by any gameplay logic. See GOLD_POPUP_LIFETIME.
   goldPopups: [],
+  // In-flight warship shells — see warshipShootAt (spawns one) and
+  // stepShells (advances/resolves them). Unlike goldPopups these aren't
+  // pure presentation: the target only actually takes damage/sinks once its
+  // shell arrives, not the instant the warship fires.
+  shells: [],
   alliances: [],
   requests: [],
   lastRequestAt: new Map(),
@@ -203,6 +208,7 @@ const Game = {
     this.tradeShips = [];
     this.warships = [];
     this.goldPopups = [];
+    this.shells = [];
     this.alliances = [];
     this.requests = [];
     this.lastRequestAt = new Map();
@@ -1736,6 +1742,7 @@ const Game = {
     this.updatePortTrade(dt);
     this.stepTradeShips(dt);
     this.stepWarships(dt);
+    this.stepShells(dt);
 
     for (const p of this.players) {
       if (p.alive && p.tiles.size === 0 && p.troops < 20) p.alive = false;
@@ -3221,11 +3228,23 @@ const Game = {
   WARSHIP_TARGET_RANGE: 130,              // warshipTargettingRange() — engagement/detection radius
   WARSHIP_PATROL_RANGE: 100,              // warshipPatrolRange() — wander radius around patrolTile
   WARSHIP_SHELL_COOLDOWN: 2,              // warshipShellAttackRate()=20 ticks @ 10 ticks/sec
+  // No OpenFront equivalent — its ShellExecution resolves damage the instant
+  // it fires. Chosen so a shell fired at max WARSHIP_TARGET_RANGE still lands
+  // (130/75≈1.73s) before the next WARSHIP_SHELL_COOLDOWN, so a target never
+  // has two shells in flight toward it at once.
+  WARSHIP_SHELL_SPEED: 75,
   WARSHIP_CAPTURE_DIST: 5,                // huntDownTradeShip's manhattan capture distance
   // BOAT_SPEED's own comment: 10 ticks/sec, 1 tile/tick is the ported rate
   // for every ship type in this file, warships included — OpenFront has no
   // separate, slower warshipSpeed of its own.
   WARSHIP_SPEED: 10,
+  // No OpenFront equivalent. A trade ship also moves at BOAT_SPEED === 10,
+  // so a warship at plain WARSHIP_SPEED can only ever match it tile-for-tile
+  // — any route that isn't perfectly direct (coastline detour, chase
+  // starting off-axis) means it never actually closes the gap and follows
+  // forever. Applied only in warshipChaseTradeShip, not patrol, so patrol
+  // wandering keeps its original pace.
+  WARSHIP_CHASE_SPEED_MULT: 1.5,
   WARSHIP_REPATH_INTERVAL: 5,             // seconds between patrol-wander waypoint picks
   WARSHIP_CHASE_REPATH: 1.5,              // seconds between trade-ship-chase path refreshes
   WARSHIP_SNAP_MAX_DIST: 8,               // AI.warshipSite's own coast-to-water snap distance
@@ -3487,22 +3506,34 @@ const Game = {
   // Priority 1/2 targets (boat, warship): the warship holds its ground and
   // fires on cooldown rather than closing in — matches real WarshipExecution,
   // which never moves toward either, only toward a trade ship (priority 3).
-  // A boat has no health of its own in this game (see the "Naval invasions"
-  // section), so one shell simply sinks it outright, same as a target that
+  // Unlike the real ShellExecution (which resolves damage the instant it
+  // fires), this spawns a travelling shell (see the "Shells" section below)
+  // and defers the actual effect to its impact — render.js draws it as a
+  // blinking dot so a kill is visibly earned, not instant. A boat has no
+  // health of its own in this game (see the "Naval invasions" section), so
+  // its shell simply sinks it outright on arrival, same as a target that
   // "can't be oneshotted" being skipped in the real ShellExecution — there's
   // no partial-damage state to track. A warship target keeps taking shell
   // damage every cooldown until it sinks (stepWarships removes it at 0 hp).
+  // w.target/targetKind are left alone here — warshipTick's own validity
+  // check next tick (arr.includes + health>0) naturally clears them once the
+  // shell actually lands and the target is gone, so there's nothing to do
+  // for the firing warship itself until then.
   warshipShootAt(w) {
     if (this.elapsed - w.lastShellAt < this.WARSHIP_SHELL_COOLDOWN) return;
     w.lastShellAt = this.elapsed;
-    if (w.targetKind === 'boat') {
-      const i = this.boats.indexOf(w.target);
-      if (i >= 0) this.boats.splice(i, 1);
-      w.target = null; w.targetKind = null;
-      return;
-    }
-    w.target.health -= this.warshipShellDamage();
-    if (w.target.health <= 0) { w.target = null; w.targetKind = null; }
+    const from = this.pathPos(w);
+    const to = this.pathPos(w.target);
+    const dist = Math.hypot(to.x - from.x, to.y - from.y);
+    this.shells.push({
+      ownerId: w.owner,
+      from, to,
+      born: this.elapsed,
+      duration: Math.max(0.15, dist / this.WARSHIP_SHELL_SPEED),
+      targetKind: w.targetKind,
+      target: w.target,
+      damage: w.targetKind === 'warship' ? this.warshipShellDamage() : null
+    });
   },
 
   // Priority 3 (huntDownTradeShip): the only target type a warship actually
@@ -3540,7 +3571,7 @@ const Game = {
       if (path) { w.path = path; w.pos = 0; }
       w.lastPathAt = this.elapsed;
     }
-    w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * dt);
+    w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * this.WARSHIP_CHASE_SPEED_MULT * dt);
   },
 
   // Bounded rejection sample for a water tile within patrol range of
@@ -3616,6 +3647,31 @@ const Game = {
       return;
     }
     this.warshipPatrol(w, dt, curTile);
+  },
+
+  // Advances every in-flight shell (see warshipShootAt) and resolves impact
+  // once its travel time elapses: a boat target is spliced from this.boats
+  // outright, a warship target takes the shell's precomputed damage (its own
+  // 0-hp sinking is handled by stepWarships below, same as before this
+  // deferral existed). Guarded with arr.includes/health>0 since the target
+  // may already be gone by the time this shell lands — sunk by a different
+  // shell, or (boat) already spent invading — in which case it's just a
+  // no-op fizzle. render.js's drawShells reads shell.from/to/born/duration
+  // directly to interpolate + blink the projectile; nothing here owns that.
+  stepShells(dt) {
+    for (let i = this.shells.length - 1; i >= 0; i--) {
+      const s = this.shells[i];
+      if (this.elapsed - s.born < s.duration) continue;
+      if (s.targetKind === 'boat') {
+        const bi = this.boats.indexOf(s.target);
+        if (bi >= 0) this.boats.splice(bi, 1);
+      } else if (s.targetKind === 'warship') {
+        if (this.warships.includes(s.target) && s.target.health > 0) {
+          s.target.health -= s.damage;
+        }
+      }
+      this.shells.splice(i, 1);
+    }
   },
 
   // Sinks anything at 0 hp (no refund, no port to recall to — see the class

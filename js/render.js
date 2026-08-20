@@ -255,6 +255,7 @@ const Render = {
     this.drawTrains();
     this.drawTradeShips();
     this.drawWarships();
+    this.drawShells();
     this.drawGoldPopups();
     this.drawSelectionBox();
   },
@@ -1006,6 +1007,48 @@ const Render = {
         ctx.fillStyle = pct > 0.5 ? '#7ee787' : pct > 0.25 ? '#f0c674' : '#ff6b6b';
         ctx.fillRect(bx, by, bw * pct, bh);
       }
+    }
+  },
+
+  // A warship's shells in flight — see Game.warshipShootAt (spawns one, with
+  // fixed from/to tile-space points and a born/duration pair) and stepShells
+  // (resolves the hit once duration elapses, then removes it). Purely a
+  // straight-line lerp between the two logged points — the target may have
+  // moved on since the shell fired, same as real naval gunfire not
+  // course-correcting mid-flight. Rendered as a small blinking dot in the
+  // firing player's colour so a kill reads as "the shell got there", not
+  // instant, matching drawWarships' health-bar-only-when-damaged restraint
+  // by staying tiny and simple rather than a sprite/trail effect.
+  drawShells() {
+    if (!Game.shells.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    const r = Math.max(2 * this.dpr, Math.min(5 * this.dpr, s * 0.3));
+
+    for (const sh of Game.shells) {
+      const t = Math.min(1, (Game.elapsed - sh.born) / sh.duration);
+      const tx = sh.from.x + (sh.to.x - sh.from.x) * t;
+      const ty = sh.from.y + (sh.to.y - sh.from.y) * t;
+      const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -20 || py < -20 || px > cw + 20 || py > ch + 20) continue;
+
+      const owner = Game.players[sh.ownerId];
+      const col = owner ? owner.color : [255, 255, 255];
+      // Blink driven by elapsed time (not travel progress) so it reads as a
+      // hot, flickering tracer the whole way, not something fading in/out
+      // with distance.
+      const blink = 0.5 + 0.5 * Math.sin(Game.elapsed * 30 + sh.born * 17);
+
+      ctx.beginPath();
+      ctx.arc(px, py, r * (1.3 + blink * 0.5), 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${col[0]}, ${col[1]}, ${col[2]}, ${0.25 + blink * 0.35})`;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(px, py, r * 0.55, 0, Math.PI * 2);
+      ctx.fillStyle = blink > 0.5 ? '#fff8dc' : '#ffcf6b';
+      ctx.fill();
     }
   },
 
