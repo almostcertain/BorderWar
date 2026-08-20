@@ -9,7 +9,15 @@ const UI = {
   flashText: '',
   flashUntil: 0,
 
-  DEFAULT_HINT: 'Tap land to attack · right-click or hold for diplomacy/boat · drag to pan',
+  // The player's own warships currently selected via Input's shift-drag box
+  // (or a shift-click on a single one) — see selectWarshipsInBox/
+  // selectWarshipAt below. Holds direct object references straight into
+  // Game.warships, same identity-based pattern updateFronts already uses
+  // for attack/boat chips, so nothing here goes stale across a splice
+  // elsewhere in that array.
+  selectedWarships: new Set(),
+
+  DEFAULT_HINT: 'Tap land to attack · right-click or hold for diplomacy/boat · shift-drag to select warships · drag to pan',
 
   setup() {
     const slider = document.getElementById('ratio');
@@ -48,7 +56,7 @@ const UI = {
     window.addEventListener('keydown', e => {
       const tag = e.target && e.target.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-      if (e.key === 'Escape') { this.placing = null; return; }
+      if (e.key === 'Escape') { this.placing = null; this.selectedWarships.clear(); return; }
       const u = Game.UNITS.find(x => x.hotkey === e.key);
       if (u) this.togglePlacing(u.type);
     });
@@ -87,7 +95,37 @@ const UI = {
     if (!Game.running) return;
     this.placing = this.placing === type ? null : type;
     this.placeHover = -1;
+    this.selectedWarships.clear();
     if (this.placing) { Radial.hide(); this.hideHoverPanel(); }
+  },
+
+  // The player's own warships whose drawn hull falls inside a shift-drag
+  // box, in CSS-pixel client coordinates (same space screenToTile/
+  // findStructureNear use) — replaces whatever was selected before, same as
+  // a fresh marquee in any RTS. An empty box (nothing of yours inside it)
+  // simply clears the selection.
+  selectWarshipsInBox(x0, y0, x1, y1) {
+    this.selectedWarships.clear();
+    for (const w of Game.warships) {
+      if (w.owner !== Game.me) continue;
+      const p = Render.warshipClientPos(w);
+      if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) this.selectedWarships.add(w);
+    }
+  },
+
+  // A shift-click (not a drag) on a single warship — replaces the selection
+  // with just that one, or clears it if the click didn't land on any.
+  selectWarshipAt(sx, sy) {
+    const TAP_RADIUS = 22;   // CSS px, roughly matching the drawn hull size
+    let best = null, bestDist = TAP_RADIUS;
+    for (const w of Game.warships) {
+      if (w.owner !== Game.me) continue;
+      const p = Render.warshipClientPos(w);
+      const d = Math.hypot(p.x - sx, p.y - sy);
+      if (d <= bestDist) { best = w; bestDist = d; }
+    }
+    this.selectedWarships.clear();
+    if (best) this.selectedWarships.add(best);
   },
 
   flash(text) {
@@ -100,6 +138,7 @@ const UI = {
     this.dismissed.clear();
     this.placing = null;
     this.placeHover = -1;
+    this.selectedWarships.clear();
     this.flashUntil = 0;
     this.spawnFlashUntil = 0;
     this._frontChipByRef = null;
@@ -218,6 +257,48 @@ const UI = {
       return;
     }
     if (!Game.running) return;
+
+    // Warship placement is its own branch, not the generic land-structure one
+    // below: it's priced/placed via warshipBlockReason/buildWarship rather
+    // than buildBlockReason/build, since its rule (open water touching your
+    // coast) is the inverse of every land structure's own-tile-ownership
+    // check. findStructureNear/upgrade never apply to it (Game.buildings has
+    // no warship entries — nothing to upgrade), and it spawns instantly
+    // rather than arming a construction timer.
+    if (this.placing === 'warship') {
+      const waterSnap = Game.nearestOwnedWaterNear(Game.me, Render.screenToTile(sx, sy), Game.WARSHIP_SNAP_MAX_DIST);
+      const tile = waterSnap >= 0 ? waterSnap : Render.screenToTile(sx, sy);
+      const reason = Game.warshipBlockReason(Game.me, tile);
+      if (reason) {
+        this.flash(reason);
+        // Same rule buildBlockReason's own land-only refusal follows: a tap
+        // nowhere near open water is the player pointing somewhere else on
+        // purpose, so it cancels placement instead of staying armed.
+        if (reason === 'Coastal water only') { this.placing = null; this.placeHover = -1; }
+        return;
+      }
+      Game.buildWarship(Game.me, tile);
+      this.placing = null;
+      this.placeHover = -1;
+      return;
+    }
+
+    // A selected fleet consumes the next tap as a relocate order if it lands
+    // on open water — shift-drag/shift-click select first (Input.onUp), then
+    // a plain click here moves them and re-arms the same patrol-around-here
+    // behaviour from the new spot (see Game.moveWarships/warshipPatrol).
+    // Selection is kept afterward so a follow-up order can refine the move
+    // without reselecting. A tap that ISN'T water drops the selection and
+    // falls through to whatever that tap would normally do (attack, etc.)
+    // instead of silently eating the click.
+    if (this.selectedWarships.size) {
+      const tile = Render.screenToTile(sx, sy);
+      if (tile >= 0 && GameMap.owner[tile] === WATER) {
+        Game.moveWarships(Array.from(this.selectedWarships), tile);
+        return;
+      }
+      this.selectedWarships.clear();
+    }
 
     if (this.placing) {
       // Tapping anywhere across an existing same-type structure's drawn disc
@@ -419,7 +500,10 @@ const UI = {
       return;
     }
     hintEl.classList.remove('warn');
-    if (this.placing) {
+    if (this.placing === 'warship') {
+      hintEl.textContent = 'Tap open water near your own coast to launch a Warship · ' +
+        formatGold(Game.unitCost(me, 'warship')) + ' gold · Esc to cancel';
+    } else if (this.placing) {
       const def = Game.unitDef(this.placing);
       // Mouse-only, like placeHover itself (see Input.onHover) — touch just
       // gets the generic placement hint below and learns the upgrade path
@@ -434,6 +518,9 @@ const UI = {
           ' · ' + formatGold(Game.unitCost(me, this.placing)) + ' gold' +
           ' · ' + def.buildTime + 's to build · Esc to cancel';
       }
+    } else if (this.selectedWarships.size) {
+      hintEl.textContent = this.selectedWarships.size + ' warship' + (this.selectedWarships.size > 1 ? 's' : '') +
+        ' selected — tap open water to relocate · shift-drag to reselect · Esc to deselect';
     } else {
       hintEl.textContent = this.DEFAULT_HINT;
     }
