@@ -208,6 +208,18 @@ const AI = {
       const tile = type === 'fort' ? this.fortSite(p) : type === 'port' ? this.portSite(p) : this.buildSite(p);
       if (tile >= 0) Game.build(p.id, type, tile);
     }
+
+    // Warship isn't in the UNITS cost-group loop above — it doesn't land in
+    // Game.buildings at all, so it needs its own site-selection (open water,
+    // not a land tile) and its own build call (buildWarship, not build). Same
+    // "afford it, then place it" shape as everything else here, gated the
+    // same way Fort is (needs an economy worth defending first) plus the
+    // per-player cap buildWarship itself also enforces.
+    if (Game.unitsOwned(p, 'city') >= 1 && p.gold >= Game.unitCost(p, 'warship') &&
+        Game.warships.filter(w => w.owner === p.id).length < Game.MAX_WARSHIPS_PER_PLAYER) {
+      const site = this.warshipSite(p);
+      if (site >= 0) Game.buildWarship(p.id, site);
+    }
   },
 
   // Inland by preference: a city on the front line is a gift to whoever takes
@@ -253,6 +265,19 @@ const AI = {
   portSite(p) {
     for (const t of this.coastalTiles(p)) {
       if (!Game.buildings.has(t)) return t;
+    }
+    return -1;
+  },
+
+  // A Warship launches from open water, not a land tile — reuses the same
+  // real coastalTiles() scan portSite does (blind random sampling misses the
+  // coast too often on a large empire, per that function's own comment),
+  // then snaps each candidate shore tile out onto the nearest actual open
+  // water touching it.
+  warshipSite(p) {
+    for (const t of this.coastalTiles(p)) {
+      const water = Game.nearestOwnedWaterNear(p.id, t, Game.WARSHIP_SNAP_MAX_DIST);
+      if (water >= 0) return water;
     }
     return -1;
   },
