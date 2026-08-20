@@ -970,44 +970,35 @@ const Render = {
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
 
-      // Heading persists across frames where the ship isn't moving (idle,
-      // or holding station to fire) rather than snapping back to 0.
-      if (a !== c) w._heading = Math.atan2(cy - ay, cx - ax);
-      const heading = w._heading || 0;
-
       const owner = Game.players[w.owner];
       const col = owner ? owner.color : [200, 200, 200];
 
+      // Rotationally symmetric (a ring inside a ring), so no heading/rotate
+      // needed unlike the old hexagon hull this replaced.
       ctx.save();
       ctx.translate(px, py);
-      ctx.rotate(heading);
 
-      const len = r * 1.9, wid = r * 0.85;
       ctx.beginPath();
-      ctx.moveTo(len * 0.55, 0);
-      ctx.lineTo(len * 0.2, -wid);
-      ctx.lineTo(-len * 0.35, -wid);
-      ctx.lineTo(-len * 0.55, 0);
-      ctx.lineTo(-len * 0.35, wid);
-      ctx.lineTo(len * 0.2, wid);
-      ctx.closePath();
+      ctx.arc(0, 0, r * 0.95, 0, Math.PI * 2);
       ctx.fillStyle = `rgb(${(col[0] * 0.55) | 0}, ${(col[1] * 0.55) | 0}, ${(col[2] * 0.55) | 0})`;
       ctx.fill();
       ctx.strokeStyle = `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
       ctx.lineWidth = Math.max(1.2, r * 0.16);
       ctx.stroke();
 
-      // Turret: a small hollow square amidships, same stroked-not-filled
-      // treatment the Port anchor glyph uses in drawStructures.
+      // Inner ring: same stroked-not-filled treatment the old turret square
+      // used, just circular now.
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = Math.max(1, r * 0.14);
-      ctx.strokeRect(-r * 0.22, -r * 0.22, r * 0.44, r * 0.44);
+      ctx.stroke();
       ctx.restore();
 
       // Health bar: only once damaged, matching the rest of the HUD's
       // "only surface what's changed from the default" restraint.
       if (w.health < w.maxHealth) {
-        const bw = len * 1.1, bh = Math.max(2, r * 0.22);
+        const bw = r * 2.1, bh = Math.max(2, r * 0.22);
         const bx = px - bw / 2, by = py - r * 1.5;
         const pct = Math.max(0, w.health / w.maxHealth);
         ctx.fillStyle = 'rgba(0,0,0,0.6)';
