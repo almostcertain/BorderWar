@@ -1971,11 +1971,15 @@ const Game = {
   // True when a fully-built fort owned by `ownerId` is within FORT_RANGE
   // tiles (Euclidean) of `tile`. Iterates all buildings — typically <100
   // total — so this is cheap relative to the per-tile attack loop cost.
-  fortInRange(tile, ownerId) {
+  // `includePending` also counts a fort still under construction — the combat
+  // hooks below never pass it (an unfinished fort grants no bonus yet), but
+  // AI.fortSite does, so a bot doesn't queue a second fort a few tiles from
+  // one it already started this same minute.
+  fortInRange(tile, ownerId, includePending) {
     const w = GameMap.width, tx = tile % w, ty = (tile / w) | 0;
     const r2 = this.FORT_RANGE * this.FORT_RANGE;
     for (const [bt, b] of this.buildings) {
-      if (!b.built || b.type !== 'fort') continue;
+      if (b.type !== 'fort' || (!b.built && !includePending)) continue;
       if (GameMap.owner[bt] !== ownerId) continue;
       const bx = bt % w, by = (bt / w) | 0;
       const dx = tx - bx, dy = ty - by;

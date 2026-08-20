@@ -242,13 +242,17 @@ const AI = {
 
   // Border-adjacent by preference — the opposite of buildSite's interior bias.
   // A fort placed on the front line covers the most contested ground with its
-  // protection radius.
+  // protection radius. The defense/speed bonus doesn't stack (Game.fortInRange
+  // is a boolean "any fort in range", not a count), so a second fort inside an
+  // existing one's FORT_RANGE buys nothing but wastes gold and a build slot —
+  // skip any candidate tile already covered, built or still under construction.
   fortSite(p) {
     if (p.tiles.size === 0) return -1;
     let fallback = -1;
     for (let attempt = 0; attempt < 15; attempt++) {
       const tile = this.sampleTile(p);
       if (tile < 0 || Game.buildings.has(tile)) continue;
+      if (Game.fortInRange(tile, p.id, true)) continue;
       if (fallback < 0) fallback = tile;
       if (!this.isInterior(p, tile)) return tile;
     }
