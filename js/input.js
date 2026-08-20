@@ -48,12 +48,12 @@ const Input = {
           const railSnap = UI.placing === 'city' ? Render.findRailSnapTile(e.clientX, e.clientY) : -1;
           const coastSnap = UI.placing === 'port'
             ? Game.nearestOwnedCoastNear(Game.me, Render.screenToTile(e.clientX, e.clientY), Game.PORT_SNAP_MAX_DIST) : -1;
-          // Warship snaps the other way — inland/on-land clicks land on the
-          // nearest open water touching the player's own coast instead.
-          const waterSnap = UI.placing === 'warship'
-            ? Game.nearestOwnedWaterNear(Game.me, Render.screenToTile(e.clientX, e.clientY), Game.WARSHIP_SNAP_MAX_DIST) : -1;
-          UI.placeHover = railSnap >= 0 ? railSnap : coastSnap >= 0 ? coastSnap :
-            waterSnap >= 0 ? waterSnap : Render.screenToTile(e.clientX, e.clientY);
+          // Warship placement has no click-time snap at all — a click can
+          // land anywhere on the map (Game.resolveWarshipLaunch snaps it to
+          // the nearest open water and picks a launching Port on its own).
+          // UI.placeHover just tracks the raw hovered tile, same as any tile
+          // that isn't near a rail/coast for city/port.
+          UI.placeHover = railSnap >= 0 ? railSnap : coastSnap >= 0 ? coastSnap : Render.screenToTile(e.clientX, e.clientY);
         }
       }
       UI.hideHoverPanel();
