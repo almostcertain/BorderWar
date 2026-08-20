@@ -260,21 +260,29 @@ const UI = {
 
     // Warship placement is its own branch, not the generic land-structure one
     // below: it's priced/placed via warshipBlockReason/buildWarship rather
-    // than buildBlockReason/build, since its rule (open water touching your
-    // coast) is the inverse of every land structure's own-tile-ownership
-    // check. findStructureNear/upgrade never apply to it (Game.buildings has
-    // no warship entries — nothing to upgrade), and it spawns instantly
-    // rather than arming a construction timer.
+    // than buildBlockReason/build, since a Warship click means "launch one
+    // toward here," not "place one exactly here" — Game.resolveWarshipLaunch
+    // picks the nearest owned Port to launch from and snaps the click to the
+    // nearest open water on its own (per the user's explicit design request:
+    // no coast-clicking required, and a Port is a hard requirement).
+    // findStructureNear/upgrade never apply to it (Game.buildings has no
+    // warship entries — nothing to upgrade), and it spawns instantly rather
+    // than arming a construction timer.
     if (this.placing === 'warship') {
-      const waterSnap = Game.nearestOwnedWaterNear(Game.me, Render.screenToTile(sx, sy), Game.WARSHIP_SNAP_MAX_DIST);
-      const tile = waterSnap >= 0 ? waterSnap : Render.screenToTile(sx, sy);
+      const tile = Render.screenToTile(sx, sy);
       const reason = Game.warshipBlockReason(Game.me, tile);
       if (reason) {
         this.flash(reason);
-        // Same rule buildBlockReason's own land-only refusal follows: a tap
-        // nowhere near open water is the player pointing somewhere else on
-        // purpose, so it cancels placement instead of staying armed.
-        if (reason === 'Coastal water only') { this.placing = null; this.placeHover = -1; }
+        // "No open water there"/"No sea route there" are about THIS specific
+        // click, not about being unable to build one at all — stay armed so
+        // the player can just click elsewhere. Everything else (no Port, no
+        // gold, fleet capped) means the order can't succeed anywhere right
+        // now, so it disarms rather than leaving a placement armed that
+        // every subsequent tap would also refuse.
+        if (reason !== 'No open water there' && reason !== 'No sea route there') {
+          this.placing = null;
+          this.placeHover = -1;
+        }
         return;
       }
       Game.buildWarship(Game.me, tile);
@@ -283,21 +291,24 @@ const UI = {
       return;
     }
 
-    // A selected fleet consumes the next tap as a relocate order if it lands
-    // on open water — shift-drag/shift-click select first (Input.onUp), then
-    // a plain click here moves them and re-arms the same patrol-around-here
-    // behaviour from the new spot (see Game.moveWarships/warshipPatrol).
-    // Selection is kept afterward so a follow-up order can refine the move
-    // without reselecting. A tap that ISN'T water drops the selection and
-    // falls through to whatever that tap would normally do (attack, etc.)
-    // instead of silently eating the click.
+    // A selected fleet consumes the next tap as a relocate order — shift-
+    // drag/shift-click select first (Input.onUp), then a plain click here
+    // moves them (see Game.moveWarships/warshipPatrol). moveWarships itself
+    // snaps a non-water click to the nearest open water (same leniency a
+    // purchase click gets) and returns false only when nothing reachable is
+    // nearby at all — that's read as the player pointing somewhere else on
+    // purpose, and the tap falls through to whatever it would normally do
+    // (attack, etc.) instead of silently eating it. Either way the selection
+    // is dropped right after this tap: an early version kept it armed for a
+    // follow-up order, but in practice a player who has already moved on to
+    // a normal tap has no way to tell the fleet is still selected — the only
+    // way out was Esc, which nothing on screen suggested. Selecting again is
+    // one shift-drag away if another order is actually wanted.
     if (this.selectedWarships.size) {
       const tile = Render.screenToTile(sx, sy);
-      if (tile >= 0 && GameMap.owner[tile] === WATER) {
-        Game.moveWarships(Array.from(this.selectedWarships), tile);
-        return;
-      }
+      const moved = tile >= 0 && Game.moveWarships(Array.from(this.selectedWarships), tile);
       this.selectedWarships.clear();
+      if (moved) return;
     }
 
     if (this.placing) {
@@ -501,8 +512,10 @@ const UI = {
     }
     hintEl.classList.remove('warn');
     if (this.placing === 'warship') {
-      hintEl.textContent = 'Tap open water near your own coast to launch a Warship · ' +
-        formatGold(Game.unitCost(me, 'warship')) + ' gold · Esc to cancel';
+      hintEl.textContent = Game.unitsOwned(me, 'port') < 1
+        ? 'Build a Port first to unlock Warships · Esc to cancel'
+        : 'Tap anywhere to launch a Warship from your nearest Port · ' +
+          formatGold(Game.unitCost(me, 'warship')) + ' gold · Esc to cancel';
     } else if (this.placing) {
       const def = Game.unitDef(this.placing);
       // Mouse-only, like placeHover itself (see Input.onHover) — touch just

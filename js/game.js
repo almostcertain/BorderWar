@@ -3200,7 +3200,10 @@ const Game = {
   // something the user asked for. Everything actually requested — visual
   // presence, stealing unfriendly trade ships, shooting down invasion boats,
   // shift-drag select + click-to-relocate, patrolling an assigned area,
-  // health, and warship-vs-warship combat — is ported for real.
+  // health, and warship-vs-warship combat — is ported for real. Purchase
+  // placement itself is a deliberate, explicit divergence from OpenFront
+  // (whose own Warship is territory-bound like any other structure, no Port
+  // required) — see resolveWarshipLaunch's own comment.
   //
   // Movement reuses seaPath (the same weighted A* boats/trade ships already
   // use) rather than a new pathfinder: seaPath's sourceTiles/targetTile
@@ -3220,7 +3223,7 @@ const Game = {
   WARSHIP_SPEED: 10,
   WARSHIP_REPATH_INTERVAL: 5,             // seconds between patrol-wander waypoint picks
   WARSHIP_CHASE_REPATH: 1.5,              // seconds between trade-ship-chase path refreshes
-  WARSHIP_SNAP_MAX_DIST: 8,               // how far a placement tap may land from open water and still snap
+  WARSHIP_SNAP_MAX_DIST: 8,               // AI.warshipSite's own coast-to-water snap distance
   MAX_WARSHIPS_PER_PLAYER: 6,             // keeps per-tick seaPath calls (patrol/chase) bounded
 
   // Float tile-space position of anything shaped like a boat/trade ship/
@@ -3237,10 +3240,43 @@ const Game = {
     return { x: ax + (cx - ax) * frac, y: ay + (cy - ay) * frac };
   },
 
-  // Same terrain-agnostic BFS shape as nearestOwnedCoastNear, but hunting
-  // for a WATER tile that touches the player's own coastline instead of a
-  // land one — a Warship launches from open water next to home territory,
-  // not from the shore tile itself.
+  // Terrain-agnostic BFS from `fromTile` out to the nearest actual WATER
+  // tile — no ownership requirement, unlike nearestOwnedCoastNear/Port's own
+  // coast snap, since a warship's destination can be anywhere at sea, not
+  // just water touching the player's own territory. A click already on
+  // water returns unchanged. Reuses NEAREST_COAST_MAX_DIST as the search cap
+  // — the same "a target snapping a good distance to the nearest usable spot
+  // still makes sense" reasoning that constant's own comment already gives
+  // for the boat-landing-tile case.
+  nearestWaterNear(fromTile, maxDist) {
+    if (fromTile < 0) return -1;
+    if (GameMap.owner[fromTile] === WATER) return fromTile;
+    const w = GameMap.width;
+    const tx = fromTile % w, ty = (fromTile / w) | 0;
+    const seen = new Set([fromTile]);
+    const queue = [fromTile];
+    const nb = new Int32Array(4);
+    let head = 0, best = -1, bestDist = Infinity;
+    while (head < queue.length) {
+      const i = queue[head++];
+      const ix = i % w, iy = (i / w) | 0;
+      const dist = Math.abs(ix - tx) + Math.abs(iy - ty);
+      if (dist < bestDist && GameMap.owner[i] === WATER) { best = i; bestDist = dist; }
+      if (dist >= maxDist) continue;
+      const n = GameMap.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (!seen.has(j)) { seen.add(j); queue.push(j); }
+      }
+    }
+    return best;
+  },
+
+  // Same terrain-agnostic BFS shape as nearestWaterNear, but hunting for a
+  // WATER tile that touches the player's own coastline specifically — used
+  // only by AI.warshipSite to pick a sensible coastal patrol destination for
+  // a bot, not by the player-facing purchase flow any more (see
+  // resolveWarshipLaunch below: a player click can land anywhere).
   nearestOwnedWaterNear(playerId, fromTile, maxDist) {
     if (fromTile < 0) return -1;
     const w = GameMap.width;
@@ -3271,58 +3307,99 @@ const Game = {
     return best;
   },
 
-  // Why a Warship cannot be placed here, for the UI to say out loud — same
-  // null-or-reason shape as buildBlockReason, but a separate function since
-  // a Warship's placement rule (open water touching your own coast) is the
-  // inverse of every land structure's (buildBlockReason requires the tile
-  // itself to be owned land, which a water tile never is).
-  warshipBlockReason(playerId, tile) {
+  // How many of a player's own Ports (nearest-first, by straight-line
+  // distance to the destination — the same cheap metric OpenFront's own
+  // WarshipExecution.findNearestPort uses) to try a real seaPath from before
+  // giving up on a launch order. More than one matters because the single
+  // nearest Port in a straight line can sit on a different, landlocked body
+  // of water from the clicked destination.
+  WARSHIP_LAUNCH_PORT_ATTEMPTS: 4,
+
+  // Resolves what a Warship purchase click actually means: which of the
+  // player's own Ports it launches from, and the route it sails to get to
+  // wherever was clicked — explicit user design request (2026-08-19): "you
+  // should not have to click on the coast," a Warship "can only be
+  // purchased if a port exists, period," and it "should spawn from the
+  // nearest available port that you own" and "pathfind to the location that
+  // you click on." Not an OpenFront port — their own Warship placement is
+  // territory-bound like every other structure, with no Port requirement —
+  // this is a deliberate divergence, same category as the Fort-capture-
+  // destroys-outright change noted elsewhere in project memory.
+  //
+  // Returns { ok:false, reason } or { ok:true, port, dest, path }. Shared by
+  // warshipBlockReason (a dry run for the UI) and buildWarship (which
+  // re-runs it rather than threading the result through, matching how
+  // canBuild/build already double up on buildBlockReason elsewhere in this
+  // file — a single discrete click is cheap enough to check twice).
+  resolveWarshipLaunch(playerId, clickTile) {
     const p = this.players[playerId];
-    if (!p || !p.alive) return 'Nation defeated';
-    if (tile < 0 || GameMap.owner[tile] !== WATER) return 'Coastal water only';
-    const nb = new Int32Array(4);
-    const n = GameMap.neighbors(tile, nb);
-    let touches = false;
-    for (let k = 0; k < n; k++) {
-      if (GameMap.owner[nb[k]] === playerId && GameMap.isLand(nb[k])) { touches = true; break; }
+    if (!p || !p.alive) return { ok: false, reason: 'Nation defeated' };
+
+    const ports = [];
+    for (const b of this.buildings.values()) {
+      if (b.type === 'port' && b.built && GameMap.owner[b.tile] === playerId) ports.push(b);
     }
-    if (!touches) return 'Must be near your own coast';
+    if (ports.length === 0) return { ok: false, reason: 'Build a Port first' };
+
     if (this.warships.filter(w => w.owner === playerId).length >= this.MAX_WARSHIPS_PER_PLAYER) {
-      return 'Warship limit reached';
+      return { ok: false, reason: 'Warship limit reached' };
     }
-    if (p.gold < this.unitCost(p, 'warship')) return 'Not enough gold';
-    return null;
+    if (p.gold < this.unitCost(p, 'warship')) return { ok: false, reason: 'Not enough gold' };
+
+    const dest = this.nearestWaterNear(clickTile, this.NEAREST_COAST_MAX_DIST);
+    if (dest < 0) return { ok: false, reason: 'No open water there' };
+
+    ports.sort((a, c) => this.tileDistSq(a.tile, dest) - this.tileDistSq(c.tile, dest));
+    for (let i = 0; i < Math.min(ports.length, this.WARSHIP_LAUNCH_PORT_ATTEMPTS); i++) {
+      const path = this.seaPath([ports[i].tile], dest);
+      if (path) return { ok: true, port: ports[i], dest, path };
+    }
+    return { ok: false, reason: 'No sea route there' };
   },
 
-  canBuildWarship(playerId, tile) { return !this.warshipBlockReason(playerId, tile); },
+  // Why a Warship purchase click can't be carried out, for the UI to say out
+  // loud — same null-or-reason shape as buildBlockReason.
+  warshipBlockReason(playerId, clickTile) {
+    return this.resolveWarshipLaunch(playerId, clickTile).reason || null;
+  },
+
+  canBuildWarship(playerId, clickTile) { return !this.warshipBlockReason(playerId, clickTile); },
 
   // Spawns instantly (see the UNITS comment on why buildTime isn't read
-  // here) at full health, patrolling right where it was placed.
-  buildWarship(playerId, tile) {
-    if (!this.canBuildWarship(playerId, tile)) return false;
+  // here) at full health, right at whichever owned Port resolveWarshipLaunch
+  // picked, immediately sailing the resolved route out to the clicked
+  // destination — which becomes its patrol center the moment it arrives,
+  // exactly like a player-issued moveWarships relocation (see warshipPatrol).
+  buildWarship(playerId, clickTile) {
+    const r = this.resolveWarshipLaunch(playerId, clickTile);
+    if (!r.ok) return false;
     const p = this.players[playerId];
     p.gold -= this.unitCost(p, 'warship');
     p.unitsBuilt.warship = this.unitsBuilt(p, 'warship') + 1;
     p.units.warship = this.unitsOwned(p, 'warship') + 1;
     this.warships.push({
       owner: playerId,
-      path: [tile], pos: 0,
-      patrolTile: tile,
+      path: r.path, pos: 0,
+      patrolTile: r.dest,
       health: this.WARSHIP_MAX_HEALTH, maxHealth: this.WARSHIP_MAX_HEALTH,
       target: null, targetKind: null,
-      lastShellAt: -Infinity, lastPathAt: -Infinity
+      lastShellAt: -Infinity, lastPathAt: this.elapsed
     });
     return true;
   },
 
-  // Player-issued relocation (UI's shift-drag select, then a plain click on
-  // water) — MoveWarshipExecution's real job, minus the water-component
-  // connectivity check (this game has no such precomputed labelling; a
-  // failed seaPath below does the same job for an unreachable body of
-  // water). Also becomes the new patrol center once it arrives, exactly
-  // like OpenFront's own patrolTile field — see warshipPatrol.
-  moveWarships(list, tile) {
-    if (tile < 0 || GameMap.owner[tile] !== WATER) return false;
+  // Player-issued relocation (UI's shift-drag select, then a plain click) —
+  // MoveWarshipExecution's real job, minus the water-component connectivity
+  // check (this game has no such precomputed labelling; a failed seaPath
+  // below does the same job for an unreachable body of water). A click that
+  // isn't already water snaps to the nearest one, same leniency
+  // resolveWarshipLaunch gives a purchase click and for the same reason —
+  // the player shouldn't need to land exactly on water pixel-for-pixel.
+  // Also becomes the new patrol center once it arrives, exactly like
+  // OpenFront's own patrolTile field — see warshipPatrol.
+  moveWarships(list, clickTile) {
+    const tile = this.nearestWaterNear(clickTile, this.NEAREST_COAST_MAX_DIST);
+    if (tile < 0) return false;
     let moved = false;
     for (const w of list) {
       if (!this.warships.includes(w) || w.owner !== this.me) continue;

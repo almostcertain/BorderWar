@@ -210,12 +210,14 @@ const AI = {
     }
 
     // Warship isn't in the UNITS cost-group loop above — it doesn't land in
-    // Game.buildings at all, so it needs its own site-selection (open water,
-    // not a land tile) and its own build call (buildWarship, not build). Same
-    // "afford it, then place it" shape as everything else here, gated the
-    // same way Fort is (needs an economy worth defending first) plus the
-    // per-player cap buildWarship itself also enforces.
-    if (Game.unitsOwned(p, 'city') >= 1 && p.gold >= Game.unitCost(p, 'warship') &&
+    // Game.buildings at all, so it needs its own site-selection (a coastal
+    // destination to send it toward, not a land tile) and its own build call
+    // (buildWarship, not build). A Port is a hard requirement (per
+    // Game.resolveWarshipLaunch's own comment — a deliberate user design
+    // request, not an OpenFront fidelity thing), checked here too so a
+    // bot without one skips straight past instead of wasting a coastalTiles
+    // scan on a purchase that's going to fail anyway.
+    if (Game.unitsOwned(p, 'port') >= 1 && p.gold >= Game.unitCost(p, 'warship') &&
         Game.warships.filter(w => w.owner === p.id).length < Game.MAX_WARSHIPS_PER_PLAYER) {
       const site = this.warshipSite(p);
       if (site >= 0) Game.buildWarship(p.id, site);
@@ -269,8 +271,10 @@ const AI = {
     return -1;
   },
 
-  // A Warship launches from open water, not a land tile — reuses the same
-  // real coastalTiles() scan portSite does (blind random sampling misses the
+  // Picks a sensible coastal destination to send a new Warship toward — not
+  // where it launches from any more (Game.resolveWarshipLaunch always picks
+  // the nearest owned Port for that part). Reuses the same real
+  // coastalTiles() scan portSite does (blind random sampling misses the
   // coast too often on a large empire, per that function's own comment),
   // then snaps each candidate shore tile out onto the nearest actual open
   // water touching it.

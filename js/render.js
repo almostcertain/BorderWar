@@ -515,6 +515,19 @@ const Render = {
     }
   },
 
+  // Game.resolveWarshipLaunch runs a real seaPath (weighted A*) per
+  // candidate Port — fine for a one-off click, far too expensive to redo
+  // every animation frame while the placement ghost just sits over the same
+  // hovered tile. Cached by that tile, only recomputed when it actually
+  // changes.
+  warshipLaunchPreview(tile) {
+    if (this._warshipLaunchTile !== tile) {
+      this._warshipLaunchTile = tile;
+      this._warshipLaunchResult = Game.resolveWarshipLaunch(Game.me, tile);
+    }
+    return this._warshipLaunchResult;
+  },
+
   // Where the armed structure would land. Mouse only — touch has no hover, so
   // there the hint line under the build bar is the whole of the feedback.
   drawPlacement() {
@@ -523,13 +536,19 @@ const Render = {
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
     const tile = UI.placeHover;
     const hoverB = Game.buildings.get(tile);
+    // Warship resolution (which Port it launches from, the route it sails)
+    // runs a real seaPath per candidate Port — too expensive to redo every
+    // animation frame while the mouse just sits still. Cached by hovered
+    // tile, same idea render.js's own hoverAnnexAt throttle uses for a
+    // different expensive per-frame check.
+    const warshipPreview = UI.placing === 'warship' ? this.warshipLaunchPreview(tile) : null;
     // Hovering an existing structure of the same type while armed previews an
     // upgrade instead of a blocked build — same ghost, different legality
     // check, matching what UI.onTap actually does on tap. Warship has no
     // buildings-map entry (and no upgrade) at all — it's always checked
-    // against canBuildWarship instead.
+    // against the cached resolution above instead.
     const ok = UI.placing === 'warship'
-      ? Game.canBuildWarship(Game.me, tile)
+      ? warshipPreview.ok
       : (hoverB && hoverB.type === UI.placing)
         ? Game.canUpgrade(Game.me, tile)
         : Game.canBuild(Game.me, UI.placing, tile);
@@ -564,17 +583,35 @@ const Render = {
       ctx.setLineDash([]);
     }
 
-    // Warship placement: show the patrol radius it'll wander once launched,
-    // same dashed-ring language as Fort's protection radius above.
-    if (UI.placing === 'warship') {
-      const cx = px + s / 2, cy = py + s / 2;
+    // Warship placement: a click can land anywhere now (Game.resolveWarship
+    // Launch does the snapping), so the ghost shows what will ACTUALLY
+    // happen rather than the raw hovered tile — the route it'll sail from
+    // whichever owned Port got picked, plus the patrol radius it wanders
+    // once it arrives at the (possibly snapped) destination, same dashed-
+    // ring language as Fort's protection radius above.
+    if (UI.placing === 'warship' && warshipPreview.ok) {
+      const dx = (warshipPreview.dest % w + 0.5 - this.cam.x) * s + cw / 2;
+      const dy = (((warshipPreview.dest / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       ctx.beginPath();
-      ctx.arc(cx, cy, Game.WARSHIP_PATROL_RANGE * s, 0, Math.PI * 2);
+      ctx.arc(dx, dy, Game.WARSHIP_PATROL_RANGE * s, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(160, 200, 255, 0.06)';
       ctx.fill();
       ctx.lineWidth = Math.max(1, this.dpr * 1.5);
       ctx.strokeStyle = 'rgba(160, 200, 255, 0.5)';
       ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.setLineDash([6 * this.dpr, 5 * this.dpr]);
+      ctx.lineWidth = Math.max(1, this.dpr * 1.2);
+      ctx.strokeStyle = 'rgba(160, 200, 255, 0.8)';
+      ctx.beginPath();
+      let movedRoute = false;
+      for (const t of warshipPreview.path) {
+        const lx = (t % w + 0.5 - this.cam.x) * s + cw / 2;
+        const ly = (((t / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+        if (!movedRoute) { ctx.moveTo(lx, ly); movedRoute = true; } else ctx.lineTo(lx, ly);
+      }
       ctx.stroke();
       ctx.setLineDash([]);
     }
