@@ -3012,11 +3012,12 @@ const Game = {
   //    spawn time — which is slower per-candidate but exactly as correct,
   //    and only runs once per successful spawn roll rather than continuously.
   //  - The captured-trade-ship redirect (TradeShipExecution's wasCaptured
-  //    branch, re-targeting the ship's new owner's nearest tradeable Port)
-  //    isn't ported: nothing in this game can capture a ship at sea, only a
-  //    Port itself. The one capture case that CAN happen — one Port capturing
-  //    the other mid-crossing, collapsing the trip into "trading with
-  //    yourself" — is still handled, matching the real early-return for it.
+  //    branch, re-targeting the ship's new owner's nearest tradeable Port) IS
+  //    ported — see warshipChaseTradeShip's capture branch and
+  //    nearestOwnedPortRoute below in the Warships section. The other
+  //    capture case — one Port capturing the other mid-crossing, collapsing
+  //    the trip into "trading with yourself" — is still handled too,
+  //    matching the real early-return for it.
   //  - goldMultiplierFor (host-cheats / lobby-creator gold multiplier) has no
   //    counterpart here, so tradeShipGold omits it entirely rather than
   //    hardcoding a multiplier of 1 for a system that doesn't exist.
@@ -3361,6 +3362,28 @@ const Game = {
     return { ok: false, reason: 'No sea route there' };
   },
 
+  // Finds `playerId`'s own nearest built Port reachable by sea from
+  // `fromTile` — same nearest-first-then-verify-with-seaPath approach as
+  // resolveWarshipLaunch just above, reused here for TradeShipExecution's
+  // wasCaptured redirect (see warshipChaseTradeShip): a freshly captured
+  // trade ship reroutes to the capturing player's own nearest tradeable Port
+  // instead of finishing its old voyage to an enemy/neutral one. Returns
+  // null if that player owns no Port, or none of the nearest few connect by
+  // sea from here.
+  nearestOwnedPortRoute(playerId, fromTile) {
+    const ports = [];
+    for (const b of this.buildings.values()) {
+      if (b.type === 'port' && b.built && GameMap.owner[b.tile] === playerId) ports.push(b);
+    }
+    if (ports.length === 0) return null;
+    ports.sort((a, c) => this.tileDistSq(a.tile, fromTile) - this.tileDistSq(c.tile, fromTile));
+    for (let i = 0; i < Math.min(ports.length, this.WARSHIP_LAUNCH_PORT_ATTEMPTS); i++) {
+      const path = this.seaPath([fromTile], ports[i].tile);
+      if (path) return { port: ports[i], path };
+    }
+    return null;
+  },
+
   // Why a Warship purchase click can't be carried out, for the UI to say out
   // loud — same null-or-reason shape as buildBlockReason.
   warshipBlockReason(playerId, clickTile) {
@@ -3486,16 +3509,29 @@ const Game = {
   // chases. Repathed on a cooldown rather than every tick — a full seaPath
   // call per warship per tick would be far too expensive with a real fleet
   // in play (see the class comment on why patrol wandering does the same).
-  // "Capture" is OpenFront's real PlayerImpl.captureUnit verbatim: just
-  // unit.setOwner(this) — the trade ship keeps sailing its existing route,
-  // now flying the capturing player's colours (see render.js's
-  // drawTradeShips, which colours strictly off `ship.owner`).
+  // "Capture" is OpenFront's real PlayerImpl.captureUnit plus
+  // TradeShipExecution's wasCaptured branch: unit.setOwner(this) — the trade
+  // ship now flies the capturing player's colours (see render.js's
+  // drawTradeShips, which colours strictly off `ship.owner`) — and then
+  // reroutes to the capturing player's own nearest tradeable Port
+  // (nearestOwnedPortRoute) instead of finishing its old voyage, so the
+  // payout on arrival (stepTradeShips) lands with its new owner rather than
+  // whoever it was originally sailing toward. If that player owns no
+  // reachable Port (e.g. captured by a warship whose last Port has since
+  // fallen), it just keeps its old route/destination under new colours,
+  // same as before this redirect existed.
   warshipChaseTradeShip(w, dt, curTile) {
     const target = w.target;
     const tIdx = Math.min(target.path.length - 1, Math.floor(target.pos));
     const targetTile = target.path[tIdx];
     if (this.manhattanDist(curTile, targetTile) <= this.WARSHIP_CAPTURE_DIST) {
       target.owner = w.owner;
+      const route = this.nearestOwnedPortRoute(w.owner, targetTile);
+      if (route) {
+        target.dstPort = route.port.tile;
+        target.path = route.path;
+        target.pos = 0;
+      }
       w.target = null; w.targetKind = null;
       return;
     }
