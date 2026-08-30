@@ -186,9 +186,26 @@ const AI = {
   // see project memory). Picking whichever pool member the bot currently
   // owns fewer of, instead of a fixed member, makes purchases alternate
   // between them as the shared price climbs rather than fixating on one.
+  // How many separate SAM Launchers to plant for territorial coverage before
+  // further spend switches to leveling up the weakest one instead — see
+  // economy()'s own comment on why charges (per-structure) matter more past
+  // that point than range (which barely moves per level anyway). Not an
+  // OpenFront difficulty column port — their AI files weren't scoped for
+  // this session, same disclaimer as TRIBE_PRIORITY_BONUS/maybeNuke above —
+  // just a number small enough to spread a couple of launchers across a
+  // nation's coastline/border before committing to upgrades.
+  SAM_COVERAGE_TARGET: 2,
+
   economy(p) {
     const consideredTypes = new Set();
     for (const u of Game.UNITS) {
+      // Warship/AtomBomb/HydrogenBomb (see their own UNITS entries'
+      // `action: true`) never land on a land tile via buildBlockReason/
+      // build — each gets its own dedicated purchase call below instead.
+      // Silo has no flag: it's an ordinary territory-bound structure like
+      // City/Factory/Port/Fort, so it rides this generic loop and
+      // buildSite(p) (the ternary below's fallback) same as they do.
+      if (u.action) continue;
       if (consideredTypes.has(u.type)) continue;
       const pool = u.costGroup || [u.type];
       for (const t of pool) consideredTypes.add(t);
@@ -202,26 +219,115 @@ const AI = {
         }
       }
 
-      // Forts are only worth building once there's at least one city to defend.
-      if (type === 'fort' && Game.unitsOwned(p, 'city') < 1) continue;
+      // Forts, Silos, and SAM Launchers are only worth building once there's
+      // at least one city to defend/support — a Silo in particular is the
+      // single most expensive flat-cost purchase in the game (1M, same as a
+      // maxed-out City), and a SAM Launcher's own 1.5M starting price is
+      // higher still, neither worth a fresh nation's very first gold.
+      if ((type === 'fort' || type === 'silo' || type === 'sam') && Game.unitsOwned(p, 'city') < 1) continue;
       if (p.gold < Game.unitCost(p, type)) continue;
+
+      // SAM's real payoff past its first couple of launchers is charges, not
+      // range: samRange(level) asymptotes almost immediately (level 1→2 gains
+      // barely a tile), but a SAM's samQueue cap IS its level — a level-2 SAM
+      // can shoot down two converging nukes without waiting on SAM_COOLDOWN,
+      // a level-1 one can't (see stepSAMs/dynamicSamRange). buildSite alone
+      // never surfaces that: on any nation past a trivial size it keeps
+      // finding a fresh tile every cycle, so bots would scatter unlimited
+      // lone level-1 SAMs and never once upgrade one — real coverage, but
+      // no nation ever gets a SAM that can actually stop a two-nuke strike.
+      // Once SAM_COVERAGE_TARGET launchers already give the territory
+      // spread, further SAM spend concentrates on leveling up the weakest
+      // one instead of planting yet another single-charge launcher.
+      if (type === 'sam' && this.countBuilt(p, 'sam') >= this.SAM_COVERAGE_TARGET) {
+        // Unconditional continue, even when nothing is upgradable THIS cycle
+        // (every SAM already mid-upgrade) — falling through to buildSite
+        // below would otherwise plant a fresh 3rd/4th/... SAM the moment the
+        // existing ones are all busy, defeating the whole point of capping
+        // structure count in favor of levels.
+        const upgradeTile = this.weakestBuilt(p, 'sam');
+        if (upgradeTile >= 0 && Game.canUpgrade(p.id, upgradeTile)) Game.upgrade(p.id, upgradeTile);
+        continue;
+      }
+
       const tile = type === 'fort' ? this.fortSite(p) : type === 'port' ? this.portSite(p) : this.buildSite(p);
       if (tile >= 0) Game.build(p.id, type, tile);
+      // No fresh site at all (a small/landlocked/built-out nation) but the
+      // type still has room to grow in place — upgrade the weakest one
+      // rather than leaving this cycle's gold unspent. Fort/Silo/Warship/
+      // the bombs are all upgradable:false, so this only ever fires for
+      // City/Factory/Port/SAM, and never fights the branch above for SAM.
+      else if (Game.unitDef(type).upgradable) {
+        const upgradeTile = this.weakestBuilt(p, type);
+        if (upgradeTile >= 0 && Game.canUpgrade(p.id, upgradeTile)) Game.upgrade(p.id, upgradeTile);
+      }
     }
 
-    // Warship isn't in the UNITS cost-group loop above — it doesn't land in
-    // Game.buildings at all, so it needs its own site-selection (a coastal
-    // destination to send it toward, not a land tile) and its own build call
-    // (buildWarship, not build). A Port is a hard requirement (per
-    // Game.resolveWarshipLaunch's own comment — a deliberate user design
-    // request, not an OpenFront fidelity thing), checked here too so a
-    // bot without one skips straight past instead of wasting a coastalTiles
-    // scan on a purchase that's going to fail anyway.
+    // Warship/AtomBomb/HydrogenBomb are `action: true` (see the loop's own
+    // comment above) — none of them land in Game.buildings, so each needs
+    // its own site/target selection and its own purchase call rather than
+    // the generic build() the loop above uses. A Port is a hard requirement
+    // for Warship (per Game.resolveWarshipLaunch's own comment — a
+    // deliberate user design request, not an OpenFront fidelity thing),
+    // checked here too so a bot without one skips straight past instead of
+    // wasting a coastalTiles scan on a purchase that's going to fail anyway.
     if (Game.unitsOwned(p, 'port') >= 1 && p.gold >= Game.unitCost(p, 'warship') &&
         Game.warships.filter(w => w.owner === p.id).length < Game.MAX_WARSHIPS_PER_PLAYER) {
       const site = this.warshipSite(p);
       if (site >= 0) Game.buildWarship(p.id, site);
     }
+
+    this.maybeNuke(p);
+  },
+
+  // Cheap flavor, not a port of real OpenFront's own nuke-targeting AI
+  // (Config.ts/the bot behaviour files have real "where's the biggest
+  // cluster of enemy troops/structures" alertness scoring for this that
+  // wasn't part of this session's scope) — a bot with a ready Silo
+  // occasionally lobs an Atom Bomb at a random tile of whichever rival it
+  // currently borders/fights the most (the same `contact` signal think()
+  // already computes via borderTargets), rather than hunting for the
+  // objectively best target. Tribes and neutral land are skipped: a Tribe's
+  // whole army is already Fort/Warship-tier cheap to just walk over, and
+  // nuking unclaimed land destroys nothing worth destroying. Gated at 1-in-8
+  // per economy() cycle (which itself runs every 2-5s per bot) so a bot with
+  // a ready Silo doesn't nuke on literally the first opportunity every time.
+  //
+  // Hydrogen Bomb chance, on top of the base 1-in-8: it's 6.67x the Atom
+  // Bomb's price (5M vs 750k) for 3.3x the outer blast radius (see
+  // NUKE_MAGNITUDES), so it only pays for itself against a rival with enough
+  // territory/troops for that radius to actually land on something —
+  // dropped on a nation the size of a Tribe it would mostly detonate over
+  // empty conquered dirt. HYDROGEN_WORTHY below gates on the target
+  // outweighing the bot itself; this chance then further rations it so a
+  // flush bot doesn't reach for the biggest bomb every single time the
+  // worthy-target condition holds.
+  HYDROGEN_NUKE_CHANCE: 4,
+
+  maybeNuke(p) {
+    if (Game.unitsOwned(p, 'silo') < 1) return;
+    if (p.gold < Game.unitCost(p, 'atombomb')) return;
+    if (!this.chance(8)) return;
+
+    let best = -1, bestContact = 0;
+    for (const [targetId, contact] of this.borderTargets(p)) {
+      if (targetId < 0) continue;
+      const t = Game.players[targetId];
+      if (!t || !t.alive || t.isTribe) continue;
+      if (contact > bestContact) { bestContact = contact; best = targetId; }
+    }
+    if (best < 0) return;
+
+    const target = Game.players[best];
+    let n = Math.floor(Game.rng() * target.tiles.size);
+    let targetTile = -1;
+    for (const t of target.tiles) if (n-- <= 0) { targetTile = t; break; }
+    if (targetTile < 0) return;
+
+    const hydrogenWorthy = target.tiles.size > p.tiles.size || target.troops > p.troops;
+    const type = hydrogenWorthy && p.gold >= Game.unitCost(p, 'hydrogenbomb') && this.chance(this.HYDROGEN_NUKE_CHANCE)
+      ? 'hydrogenbomb' : 'atombomb';
+    Game.launchNuke(p.id, type, targetTile);
   },
 
   // Inland by preference: a city on the front line is a gift to whoever takes
@@ -302,6 +408,33 @@ const AI = {
       if (water >= 0) return water;
     }
     return -1;
+  },
+
+  // How many completed structures of `type` p currently owns — distinct from
+  // Game.unitsOwned, which sums LEVELS rather than counting placements (see
+  // the UNITS comment in game.js on why). Needed wherever a per-STRUCTURE
+  // effect (SAM's charge slots) has to be told apart from a per-LEVEL sum
+  // that prices identically either way.
+  countBuilt(p, type) {
+    let n = 0;
+    for (const b of Game.buildings.values()) {
+      if (b.type === type && b.built && GameMap.owner[b.tile] === p.id) n++;
+    }
+    return n;
+  },
+
+  // The owned, completed, not-already-upgrading structure of `type` with the
+  // lowest level — spending an upgrade here first keeps a nation's set of
+  // that type from ending up with one maxed one and the rest permanently
+  // stuck at level 1.
+  weakestBuilt(p, type) {
+    let best = -1, bestLevel = Infinity;
+    for (const b of Game.buildings.values()) {
+      if (b.type !== type || !b.built || b.upgrading) continue;
+      if (GameMap.owner[b.tile] !== p.id) continue;
+      if (b.level < bestLevel) { bestLevel = b.level; best = b.tile; }
+    }
+    return best;
   },
 
   sampleTile(p) {
