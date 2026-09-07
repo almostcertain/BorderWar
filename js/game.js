@@ -343,6 +343,7 @@ const Game = {
   renderElapsed: 0,
   nbuf: new Int32Array(4),
   abuf: new Int32Array(4),   // separate scratch so adjacency checks can't clobber nbuf
+  pbuf: new Int32Array(4),   // and another, for frontier scoring inside those same loops
   bbuf: new Int32Array(4),   // scratch for setOwner's own border bookkeeping
   bbuf2: new Int32Array(4),  // nested scratch updateBorderTile uses per-neighbour, so it can't clobber bbuf mid-update
 
@@ -1735,8 +1736,8 @@ const Game = {
     // with the same state and burns the same id on the same turn, and ids are
     // deliberately never reused (see nextAttackId).
     const a = { id: this.nextAttackId++, attacker: attackerId, target: targetId, troops, progress: 0,
-                heapTile: [], heapPrio: [], seen: new Set(), popPrio: 0,
-                noiseSeed: (this.rng() * 1e9) | 0 };
+                heapTile: [], heapPrio: [], border: new Set(),
+                frontSeed: ((this.rng() * 0x7fffffff) | 0) || 1 };
     if (!this.refreshFrontier(a)) return false;
 
     attacker.troops -= troops;
@@ -2288,15 +2289,15 @@ const Game = {
     // id dies with the landing, and the front it opens is separately
     // cancellable from that moment on.
     const a = { id: this.nextAttackId++, attacker: boat.attacker, target: boat.target, troops: boat.troops, progress: 0,
-                heapTile: [], heapPrio: [], seen: new Set(), popPrio: 0,
-                noiseSeed: (this.rng() * 1e9) | 0 };
+                heapTile: [], heapPrio: [], border: new Set(),
+                frontSeed: ((this.rng() * 0x7fffffff) | 0) || 1 };
     const nb = this.nbuf;
     const n = GameMap.neighbors(tile, nb);
     for (let k = 0; k < n; k++) {
       const j = nb[k];
-      if (GameMap.owner[j] === boat.target && !a.seen.has(j)) {
-        a.seen.add(j);
-        this.heapPush(a, j, this.frontierPriority(0, j, a));
+      if (GameMap.owner[j] === boat.target) {
+        a.border.add(j);
+        this.heapPush(a, j, this.frontierPriority(j, a));
       }
     }
     // The target no longer holds anything touching the beachhead (lost it to
@@ -2703,25 +2704,66 @@ const Game = {
     return this.TERRAIN_SPEED[GameMap.terrain[tile]] / this.TERRAIN_SPEED[0];
   },
 
-  // Roughness of the advancing edge. Without it every tile at a given distance
-  // carries an identical priority, the wave leaves the heap in lockstep, and a
-  // push across open ground reads as a straight staircase.
+  // Shape of the advancing edge, ported from OpenFront's actual
+  // AttackExecution.addNeighbors rather than invented here:
   //
-  // The noise is sampled from a smooth field rather than rolled per tile.
-  // Independent per-tile randomness does produce a ragged edge, but it also
-  // scrambles the order faster than terrain's cost can accumulate over the
-  // dozen-odd tiles of a push — measured at amplitude 4 it flattened mountain
-  // resistance from 21% to 46%, and at 8 it inverted. Coherent noise moves
-  // whole stretches of the line together instead, so the front grows lobes and
-  // bays while rough ground still turns it.
-  FRONT_JITTER: 3.2,
-  FRONT_NOISE_SCALE: 0.09,
+  //   priority = (rand(0,7) + 10) * (1 - numOwnedByMe * 0.5 + mag / 2) + tickNow
+  //
+  // Three ideas, none of which the previous version had.
+  //
+  // 1. The priority is NOT cumulative. Ours used to be `reached + moveCost`,
+  //    i.e. Dijkstra over a cost field, so the wave left the heap in exact
+  //    cost-distance order and a push across even ground drew a near-perfect
+  //    expanding contour. Coherent noise added on top only bent that contour;
+  //    it could not break it, which is precisely why fronts still read as
+  //    rigid. OpenFront's ordering is *local* — it never accumulates — and
+  //    `tickNow` is the only thing pulling the queue forward, acting as an
+  //    aging term so ground deferred by a bad roll or rough terrain still
+  //    comes up a few seconds later instead of never.
+  //
+  // 2. `numOwnedByMe` — how many of the tile's four neighbours the attacker
+  //    already holds — is the dominant term, and it is negative. At 4 it is
+  //    -1.0 (priority goes negative: taken immediately), at 1 it is +0.5.
+  //    Concave pockets in the line therefore snap shut while convex bulges
+  //    crawl. That single term is most of the OpenFront look: the front
+  //    reaches out in fingers, then the bays between them fill in behind.
+  //
+  // 3. Terrain (`mag`: 1 plains / 1.5 highland / 2 mountain) MULTIPLIES the
+  //    random roll instead of being added beside it. The old note here — that
+  //    per-tile white noise "flattened mountain resistance from 21% to 46%"
+  //    — was a true measurement of the wrong construction: additive noise on
+  //    an accumulating cost drowns terrain out. Multiplied, a mountain scales
+  //    the whole roll by 1.5x and keeps its full relative weight no matter how
+  //    large the jitter is, so the edge can be genuinely ragged and still bend
+  //    around high ground. Terrain's effect on *speed* is unchanged either
+  //    way — that lives in stepAttack's budget via terrainMoveCost.
+  //
+  // Rolled per tile visit from the attack's own stream (frontRand), not
+  // sampled from a smooth field: coherent noise moves whole stretches of line
+  // together, which is a different, smoother artifact than what OpenFront
+  // actually produces.
+  FRONT_TERRAIN_MAG: [1, 1.5, 2],
 
-  frontierPriority(reached, tile, a) {
-    const w = GameMap.width;
-    const n = Noise.fractal((tile % w) * this.FRONT_NOISE_SCALE,
-                            ((tile / w) | 0) * this.FRONT_NOISE_SCALE, a.noiseSeed, 3);
-    return reached + this.terrainMoveCost(tile) + n * this.FRONT_JITTER;
+  // Per-attack xorshift32. Integer-only so every client's stream is
+  // bit-identical, and separate from Game.rng so the number of tiles a front
+  // happens to touch cannot shift the shared stream every other system draws
+  // from. Returns 0..n-1, matching PseudoRandom.nextInt(0, n)'s exclusive max.
+  frontRand(a, n) {
+    let s = a.frontSeed;
+    s ^= s << 13; s |= 0;
+    s ^= s >>> 17;
+    s ^= s << 5;  s |= 0;
+    a.frontSeed = s;
+    return (s >>> 0) % n;
+  },
+
+  frontierPriority(tile, a) {
+    const nb = this.pbuf;
+    const n = GameMap.neighbors(tile, nb);
+    let owned = 0;
+    for (let k = 0; k < n; k++) if (GameMap.owner[nb[k]] === a.attacker) owned++;
+    const mag = this.FRONT_TERRAIN_MAG[GameMap.terrain[tile] || 0];
+    return (this.frontRand(a, 7) + 10) * (1 - owned * 0.5 + mag / 2) + this.ticks;
   },
 
   // Troops spent to take one tile, following OpenFront's attackLogic:
@@ -2846,13 +2888,14 @@ const Game = {
     }
   },
 
-  // --- Conquest frontier: a cheapest-first priority queue ------------------
-  // OpenFront keeps its `toConquer` set as a priority queue, and that choice is
-  // what gives fronts their shape. A plain FIFO advances in strict distance
-  // order, so the wave crosses a ridge at the same moment it crosses a meadow
-  // and terrain only changes the bill. Ordering by accumulated movement cost
-  // instead lets a push bulge through open ground and lag against high country,
-  // which is where the ragged, map-following fronts come from.
+  // --- Conquest frontier: OpenFront's own priority queue -------------------
+  // A plain FIFO advances in strict distance order, so the wave crosses a ridge
+  // at the same moment it crosses a meadow and terrain only changes the bill.
+  // A priority queue is what gives a front its shape instead — but *what* it is
+  // ordered by is the whole question, and the answer is not accumulated cost
+  // (that is a Dijkstra contour, which is what made these fronts read as rigid).
+  // See frontierPriority for the local, non-accumulating score this is keyed on,
+  // and note that the heap deliberately holds duplicate entries per tile.
   heapPush(a, tile, prio) {
     const T = a.heapTile, P = a.heapPrio;
     let i = T.length;
@@ -2868,7 +2911,7 @@ const Game = {
 
   heapPop(a) {
     const T = a.heapTile, P = a.heapPrio;
-    const top = T[0], topPrio = P[0], last = T.length - 1;
+    const top = T[0], last = T.length - 1;
     T[0] = T[last]; P[0] = P[last];
     T.pop(); P.pop();
     let i = 0;
@@ -2883,7 +2926,6 @@ const Game = {
       const p = P[small]; P[small] = P[i]; P[i] = p;
       i = small;
     }
-    a.popPrio = topPrio;
     return top;
   },
 
@@ -2901,15 +2943,15 @@ const Game = {
   // territory synchronously on every click; this is the fix for that hitch.
   refreshFrontier(a) {
     const attacker = this.players[a.attacker];
-    const seen = new Set(), nb = this.nbuf;
-    a.heapTile = []; a.heapPrio = []; a.seen = seen;
+    const border = new Set(), nb = this.nbuf;
+    a.heapTile = []; a.heapPrio = []; a.border = border;
     for (const i of attacker.borderTiles) {
       const n = GameMap.neighbors(i, nb);
       for (let k = 0; k < n; k++) {
         const j = nb[k];
-        if (GameMap.owner[j] === a.target && !seen.has(j)) {
-          seen.add(j);
-          this.heapPush(a, j, this.frontierPriority(0, j, a));
+        if (GameMap.owner[j] === a.target) {
+          border.add(j);
+          this.heapPush(a, j, this.frontierPriority(j, a));
         }
       }
     }
@@ -3148,7 +3190,10 @@ const Game = {
     // Tiles earned this tick, carried as a fraction so slow fronts still creep
     // forward rather than stalling on a rounded-down zero. The live queue is
     // this front's width, which is what OpenFront's rate is proportional to.
-    const borderTiles = a.heapTile.length;
+    // OpenFront's own `attack.borderSize() + random.nextInt(0, 5)`: the width
+    // a front is credited with wobbles a few tiles a tick, so two pushes of
+    // identical size don't advance in lockstep with each other.
+    const borderTiles = a.border.size + this.frontRand(a, 5);
     const resist = defender ? this.defenceStrength(defender, a.attacker) : 0;
     const rate = this.attackTilesPerTick(a.troops, resist, borderTiles, !defender);
     // `progress` is measured in plains-equivalent tiles; rough ground simply
@@ -3160,19 +3205,21 @@ const Game = {
     while (guard-- > 0) {
       if (a.heapTile.length === 0) break;
 
-      // Cheapest reachable ground first, so the wave is ordered by how hard the
-      // country is to cross rather than by raw distance from the border.
+      // Best-scoring ground first — see frontierPriority: mostly how far the
+      // line has already wrapped around this tile, nudged by terrain and a
+      // per-tile roll, aged by the tick it was discovered on.
       const tile = a.heapTile[0];
 
-      if (GameMap.owner[tile] !== a.target) { this.heapPop(a); continue; }
+      if (GameMap.owner[tile] !== a.target) { a.border.delete(tile); this.heapPop(a); continue; }
 
       // The queue was built from a border that may since have moved — a
       // counter-attack can retake the tiles this wave advanced through. Without
       // re-checking contact, the wave rolls on into enemy land and leaves a
-      // disconnected snake of territory behind their front. Forgetting the tile
-      // rather than dropping it lets the wave pick it up again if the front
-      // fights its way back into contact.
-      if (!this.touchesPlayer(tile, a.attacker)) { a.seen.delete(tile); this.heapPop(a); continue; }
+      // disconnected snake of territory behind their front. The entry is simply
+      // dropped (OpenFront's own `continue`): if the front fights its way back
+      // into contact, conquering any tile beside this one re-enqueues it, and
+      // refreshFrontier picks it up wholesale if the queue ever runs dry.
+      if (!this.touchesPlayer(tile, a.attacker)) { a.border.delete(tile); this.heapPop(a); continue; }
 
       // Skipped tiles above cost no movement; only ground actually taken does.
       // Terrain sets the baseline; tileSpeedRatio is what lets an overwhelming
@@ -3197,26 +3244,43 @@ const Game = {
       if (a.troops < cost) { a.troops = 0; break; }
 
       this.heapPop(a);
-      const reached = a.popPrio;
+      a.border.delete(tile);
       a.progress -= move;
       a.troops -= cost;
       if (defender) {
         defender.troops = Math.max(0, defender.troops - this.defenderLossPerTile(defender));
       }
+
+      // Neighbours are scored BEFORE this tile changes hands, exactly as
+      // OpenFront's tick() calls addNeighbors(tileToConquer) ahead of
+      // conquer(). The ordering is load-bearing, not incidental: it means a
+      // tile whose only attacker-side neighbour is the one being taken right
+      // now scores numOwnedByMe = 0 and lands at the very back of the queue,
+      // while a tile already flanked scores 2 or 3 and jumps the line. That
+      // is what makes the edge reach out in fingers and fill in behind them
+      // rather than advancing as one contour.
+      //
+      // No dedup set here either — OpenFront's toConquer holds duplicates on
+      // purpose. A tile adjacent to three separate conquests is enqueued three
+      // times, each with its own roll and a higher numOwnedByMe than the last,
+      // and the heap serves the best of them. Re-scoring ground as the line
+      // wraps around it is half of why pockets snap shut instead of lingering
+      // as holes. `a.border` (the Set) is what the front's real width is read
+      // off, so the duplicates never inflate the advance rate.
+      const n = GameMap.neighbors(tile, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (GameMap.owner[j] === a.target) {
+          a.border.add(j);
+          this.heapPush(a, j, this.frontierPriority(j, a));
+        }
+      }
+
       this.setOwner(tile, a.attacker);
 
       if (defender && defender.tiles.size > 0 && defender.tiles.size <= this.DEAD_DEFENDER_TILES) {
         this.handleDeadDefender(a.target, a.attacker);
         break;
-      }
-
-      const n = GameMap.neighbors(tile, nb);
-      for (let k = 0; k < n; k++) {
-        const j = nb[k];
-        if (GameMap.owner[j] === a.target && !a.seen.has(j)) {
-          a.seen.add(j);
-          this.heapPush(a, j, this.frontierPriority(reached, j, a));
-        }
       }
     }
 
@@ -3237,7 +3301,7 @@ const Game = {
   // Live attack fronts, used for both rendering and AI target scoring.
   frontierTilesOf(playerId) {
     let n = 0;
-    for (const a of this.attacks) if (a.attacker === playerId) n += a.heapTile.length;
+    for (const a of this.attacks) if (a.attacker === playerId) n += a.border.size;
     return n;
   },
 

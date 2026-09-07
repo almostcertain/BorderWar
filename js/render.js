@@ -978,10 +978,13 @@ const Render = {
   // minimum and top-2 cap, so a nation fighting on two separated fronts gets
   // a number on each, but three-plus fragments (or a second sliver too small
   // to matter) still collapse down to the biggest ones.
+  // `tiles` is the attack's live border Set (Game.stepAttack keeps it in step
+  // with the conquest heap, which may hold the same tile more than once and so
+  // can't be clustered directly); an array is still accepted.
   clusterBorderTiles(tiles, minSize, maxClusters) {
-    if (tiles.length === 0) return [];
+    const borderSet = tiles instanceof Set ? tiles : new Set(tiles);
+    if (borderSet.size === 0) return [];
     const w = GameMap.width, h = GameMap.height;
-    const borderSet = new Set(tiles);
     const visited = new Set();
     const clusters = [];
 
@@ -1050,9 +1053,9 @@ const Render = {
       // Unclaimed land isn't contested — there's no defender to fight over
       // the number with, so it's just noise on an ordinary expansion.
       if (a.target < 0) continue;
-      if (a.heapTile.length <= 0) continue;
+      if (a.border.size <= 0) continue;
 
-      const fronts = this.clusterBorderTiles(a.heapTile, 30, 2);
+      const fronts = this.clusterBorderTiles(a.border, 30, 2);
       if (!fronts.length) continue;
 
       // Every front reaching this point already involves the player one way
