@@ -12,7 +12,21 @@ const Render = {
 
   labels: [],
   labelsAt: 0,
-  LABEL_INTERVAL: 300,   // ms; flood-filling every frame would be wasteful
+  // ms between the START of one label sweep and the next. A sweep no longer
+  // happens in a single frame (see computeLabelSlice) — it walks one nation
+  // per frame — so this is a cadence, not the cost of a spike. Measured on an
+  // Extra Large map mid-match: the old single-pass version flood-filled all
+  // ~830k owned tiles in one 32ms frame, 3.3x a second, which is most of the
+  // client-side hitching this interval was originally set to ration.
+  LABEL_INTERVAL: 1000,
+
+  // Sweep state for the sliced rebuild: the ids still to walk this sweep, the
+  // labels gathered so far, and whether a sweep is currently in progress.
+  // `labels` itself is only swapped in once a sweep completes, so drawLabels
+  // never sees a half-updated set.
+  labelQueue: [],
+  labelsPending: [],
+  labelSweeping: false,
 
   // Same reasoning as LABEL_INTERVAL, applied to the hover-time annexation
   // check: a mouse resting deep inside a huge, ordinary (non-enclosed)
@@ -127,10 +141,18 @@ const Render = {
     if (id < 0) { this.hoverBuiltFor = -1; return; }
     const now = performance.now();
     const tileMoved = UI.hoverTile !== this.hoverBuiltForTile;
-    // Territory changes and nation switches rebuild immediately — only a
-    // same-nation tile move (the expensive enclosure recheck) is throttled.
-    if (id !== this.hoverBuiltFor || territoryChanged ||
-        (tileMoved && now - this.hoverAnnexAt > this.ANNEX_HOVER_INTERVAL)) {
+    // Switching to a different nation rebuilds immediately — that one is a
+    // direct answer to the cursor and has to feel instant. A territory change
+    // or a same-nation tile move goes through the throttle instead.
+    //
+    // territoryChanged used to rebuild immediately too, which sounds cheap
+    // and isn't: it is true on any frame ANY tile anywhere changed hands, so
+    // during a push (or just bots fighting somewhere off screen) it fired on
+    // essentially every frame, and each rebuild repaints the hovered nation's
+    // whole tile set — 4ms a frame on an Extra Large map, sustained, for a
+    // tint that nobody can see updating at 60Hz.
+    if (id !== this.hoverBuiltFor ||
+        ((territoryChanged || tileMoved) && now - this.hoverAnnexAt > this.ANNEX_HOVER_INTERVAL)) {
       this.buildHoverOverlay(id);
       this.hoverBuiltFor = id;
       this.hoverBuiltForTile = UI.hoverTile;
@@ -1642,21 +1664,44 @@ const Render = {
     }
   },
 
-  // Anchor each nation's label in its largest contiguous landmass. Recomputed
-  // on a timer rather than per frame — it is a full flood fill of the map.
-  computeLabels() {
-    const w = GameMap.width, owner = GameMap.owner;
-    const size = owner.length;
+  // Opens a label sweep: snapshots who is worth labelling and clears the
+  // shared `seen` buffer once for the whole sweep. Clearing once here rather
+  // than per nation is exactly what the old single-pass version did and is
+  // still correct, because a nation's flood fill below only ever expands into
+  // its OWN tiles — two nations can never mark the same tile, so one nation's
+  // marks can't leak into another's walk later in the same sweep.
+  beginLabelSweep() {
+    const size = GameMap.owner.length;
     if (!this.seenBuf || this.seenBuf.length !== size) {
       this.seenBuf = new Uint8Array(size);
       this.queueBuf = new Int32Array(size);
     }
-    const seen = this.seenBuf, queue = this.queueBuf, nb = new Int32Array(4);
-    seen.fill(0);
-    const labels = [];
-
+    this.seenBuf.fill(0);
+    this.labelQueue = [];
     for (const p of Game.players) {
-      if (!p.alive || p.tiles.size === 0) continue;
+      if (p.alive && p.tiles.size > 0) this.labelQueue.push(p.id);
+    }
+    this.labelsPending = [];
+    this.labelSweeping = true;
+  },
+
+  // Anchors ONE nation's label in its largest contiguous landmass, and is the
+  // unit of work a sweep is sliced into — see drawLabels for the pacing.
+  //
+  // Walking every nation in a single call (what this used to do) meant flood-
+  // filling every owned tile on the map in one frame: measured at 32ms on an
+  // Extra Large map mid-match, fired 3.3x a second, which is a dropped frame
+  // every time and was the single largest source of client-side hitching.
+  // The work per sweep is unchanged — it is just spread a nation per frame,
+  // so the same rebuild costs ~1.3ms a frame instead of 32ms in one.
+  computeLabelSlice(playerId) {
+    const w = GameMap.width, owner = GameMap.owner;
+    const seen = this.seenBuf, queue = this.queueBuf, nb = new Int32Array(4);
+    const labels = this.labelsPending;
+
+    {
+      const p = Game.players[playerId];
+      if (!p || !p.alive || p.tiles.size === 0) return;
       let best = null;
 
       for (const start of p.tiles) {
@@ -1683,7 +1728,7 @@ const Render = {
                    bw: maxX - minX + 1, bh: maxY - minY + 1 };
         }
       }
-      if (!best) continue;
+      if (!best) return;
 
       // The centroid of a concave or horseshoe-shaped nation can sit on enemy
       // land or open sea, so snap the anchor to the nearest tile the nation
@@ -1700,12 +1745,29 @@ const Render = {
       }
       labels.push({ id: p.id, x: ax, y: ay, count: best.count, bw: best.bw, bh: best.bh });
     }
-    this.labels = labels;
+  },
+
+  // Advances the label sweep by exactly one nation per frame, starting a fresh
+  // sweep once LABEL_INTERVAL has passed since the last one BEGAN. The visible
+  // set only swaps in when a sweep finishes, so labels never render half-built
+  // — they are at most one sweep stale, which is what the old timer already
+  // gave them.
+  stepLabels() {
+    const now = performance.now();
+    if (!this.labelSweeping) {
+      if (now - this.labelsAt <= this.LABEL_INTERVAL) return;
+      this.labelsAt = now;
+      this.beginLabelSweep();
+    }
+    if (this.labelQueue.length > 0) this.computeLabelSlice(this.labelQueue.pop());
+    if (this.labelQueue.length === 0) {
+      this.labels = this.labelsPending;
+      this.labelSweeping = false;
+    }
   },
 
   drawLabels() {
-    const now = performance.now();
-    if (now - this.labelsAt > this.LABEL_INTERVAL) { this.computeLabels(); this.labelsAt = now; }
+    this.stepLabels();
 
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height;

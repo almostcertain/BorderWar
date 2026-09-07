@@ -17,6 +17,7 @@ const Radial = {
   shown: false,
   lastHide: 0,
   key: '',
+  validatedAt: 0,   // last time refresh() re-ran the wedge validators
 
   OUTER: 92,
   INNER: 38,
@@ -166,6 +167,15 @@ const Radial = {
   // Rebuilt only when something a player can see has actually changed — this is
   // called every frame from UI.update so the cooldown and renewal countdowns
   // stay live, and rewriting the SVG at 60Hz would be silly.
+  // How often the wedges are re-validated while the menu sits open. slots()
+  // is not a cheap read of existing state — the Boat wedge's own note comes
+  // from navalInvasionBlockReason, which resolves a landing tile and then
+  // runs a real sea route search to fill it in. Doing that at 60Hz for a menu
+  // whose only live text is a whole-second countdown was pure waste; a
+  // re-validation every 200ms keeps that countdown honest and the wedge's
+  // enabled/disabled state current within a fifth of a second.
+  REVALIDATE_MS: 200,
+
   refresh() {
     if (!this.shown) return;
     let p = null;
@@ -173,6 +183,12 @@ const Radial = {
       p = Game.players[this.targetId];
       if (!p || !p.alive) { this.hide(); return; }
     }
+
+    // open() clears `key`, so the menu still validates instantly on the frame
+    // it appears rather than waiting out a first interval.
+    const now = performance.now();
+    if (this.key !== '' && now - this.validatedAt < this.REVALIDATE_MS) return;
+    this.validatedAt = now;
 
     const slots = this.slots();
     const key = slots.map(s => s ? [s.icon, s.label, s.note, s.disabled].join('|') : '-').join('/');
