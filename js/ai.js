@@ -198,7 +198,102 @@ const AI = {
   // nation's coastline/border before committing to upgrades.
   SAM_COVERAGE_TARGET: 2,
 
+  // --- Strategic savings ---------------------------------------------------
+  // economy() below buys whatever it can afford as it walks Game.UNITS, and
+  // that alone is enough to put the entire Silo/nuke/SAM half of the tech
+  // tree permanently out of a bot's reach. Fort is the culprit: its price is
+  // LINEAR and capped at 250k (see its UNITS entry), and fortSite() finds a
+  // fresh border tile essentially forever, so a mature nation buys another
+  // Fort every time its treasury crosses 250k and never climbs past it.
+  // Measured headless over a 20-minute, 9-bot large-map match before this
+  // change: 230 Forts for 52.9M gold — 69% of all bot spending — median bot
+  // treasury peaking at 60k against a 1M Silo, and across every seed tried,
+  // zero Silos, zero SAM Launchers and zero nukes launched, ever. Bots
+  // weren't declining to go nuclear; they were structurally incapable of it.
+  //
+  // Two fixes, both here rather than in the cost table (prices are ported
+  // from OpenFront's Config.ts and shouldn't be retuned to paper over an AI
+  // problem):
+  //
+  //   (a) FORT_CAP_BASE below bounds the Fort sink, so a treasury can grow.
+  //   (b) savingsGoal()/savingsReserve() give the bot ONE big-ticket item it
+  //       is currently saving for and forbid every cheaper purchase from
+  //       eating into that reserve — the "when it does [compete for the
+  //       money], this becomes a choice rather than a reflex" the economy()
+  //       comment above has been anticipating.
+  //
+  // Forts protect what a nation has built, so their cap scales with what
+  // there is to protect rather than with raw territory: a bot may hold this
+  // many Forts plus one per City it owns. Generous enough that a big nation
+  // still fortifies a real front (a 9-city nation gets 11), tight enough that
+  // Fort stops being an infinite hole in the budget.
+  FORT_CAP_BASE: 2,
+
+  // Don't start hoarding for a 1M Silo out of a two-city economy — the pause
+  // in City/Factory/Port growth would cost more than the missile is worth,
+  // and maxTroops keys off City level, so a bot that stops developing stops
+  // being able to fight at all. Three cities is roughly where a bot's income
+  // (flat GOLD_PER_SEC plus train/trade-ship lumps) can refill a reserve
+  // without freezing everything else for the rest of the match.
+  SILO_MIN_CITIES: 3,
+
+  // Which single big-ticket purchase this bot is currently banking toward, or
+  // null for "nothing — spend freely." Strictly ordered, one goal at a time:
+  // a bot that tried to save for a Silo and a SAM at once would reserve 2.5M
+  // and never buy either.
+  //
+  //   1. Silo first. Without one, no nuke of any kind can ever be launched
+  //      (resolveNukeLaunch rejects outright), and it's the gate on the whole
+  //      branch.
+  //   2. Then SAM cover, but only once somebody else's Silo actually exists
+  //      to defend against — a launcher bought before anyone can nuke you is
+  //      1.5M spent on nothing. Capped at SAM_COVERAGE_TARGET, matching the
+  //      coverage-then-upgrade rule economy() already applies.
+  //   3. Otherwise keep an Atom Bomb's price in the bank permanently, so a
+  //      built Silo is an armed Silo. Without this the bot buys the Silo,
+  //      immediately spends the next 250k it sees on a Fort, and the launcher
+  //      sits empty — which is exactly the failure this whole block exists to
+  //      stop, one rung further up the ladder.
+  //
+  // All three counts come off ONE walk of Game.buildings rather than the two
+  // countBuilt() calls plus a separate rival scan the obvious spelling would
+  // make: this runs per bot per economy() cycle, and countBuilt is already a
+  // whole-map walk on its own. The rival count includes the human's Silos —
+  // "who can nuke me" has nothing to do with who is a bot.
+  savingsGoal(p) {
+    if (Game.unitsOwned(p, 'city') < this.SILO_MIN_CITIES) return null;
+
+    let ownSilos = Game.unitsPending(p, 'silo');
+    let ownSams = 0, rivalSilos = 0;
+    for (const b of Game.buildings.values()) {
+      if (!b.built) continue;
+      const owner = GameMap.owner[b.tile];
+      if (b.type === 'silo') {
+        if (owner === p.id) ownSilos++;
+        else if (owner >= 0 && !Game.areAllied(p.id, owner)) rivalSilos++;
+      } else if (b.type === 'sam' && owner === p.id) {
+        ownSams++;
+      }
+    }
+
+    if (ownSilos < 1) return 'silo';
+    if (rivalSilos > 0 && ownSams < this.SAM_COVERAGE_TARGET) return 'sam';
+    return 'atombomb';
+  },
+
+  savingsReserve(p, goal) {
+    return goal ? Game.unitCost(p, goal) : 0;
+  },
+
   economy(p) {
+    // The one thing this bot is banking toward, and the treasury floor every
+    // OTHER purchase below has to respect — see savingsGoal's comment. The
+    // goal type itself is exempt (its reserve IS its price), so the branch
+    // that finally buys it isn't blocked by its own savings.
+    const goal = this.savingsGoal(p);
+    const reserve = this.savingsReserve(p, goal);
+    const spendable = t => p.gold - (t === goal ? 0 : reserve);
+
     const consideredTypes = new Set();
     for (const u of Game.UNITS) {
       // Warship/AtomBomb/HydrogenBomb (see their own UNITS entries'
@@ -227,7 +322,15 @@ const AI = {
       // maxed-out City), and a SAM Launcher's own 1.5M starting price is
       // higher still, neither worth a fresh nation's very first gold.
       if ((type === 'fort' || type === 'silo' || type === 'sam') && Game.unitsOwned(p, 'city') < 1) continue;
-      if (p.gold < Game.unitCost(p, type)) continue;
+
+      // Fort's own cap — see FORT_CAP_BASE. Checked before the price test so
+      // a built-out nation's Fort gold is left in the treasury for the
+      // savings goal instead of being handed to a 231st Defense Fort.
+      if (type === 'fort' &&
+          this.countBuilt(p, 'fort') + Game.unitsPending(p, 'fort') >=
+            this.FORT_CAP_BASE + Game.unitsOwned(p, 'city')) continue;
+
+      if (spendable(type) < Game.unitCost(p, type)) continue;
 
       // SAM's real payoff past its first couple of launchers is charges, not
       // range: samRange(level) asymptotes almost immediately (level 1→2 gains
@@ -273,7 +376,7 @@ const AI = {
     // deliberate user design request, not an OpenFront fidelity thing),
     // checked here too so a bot without one skips straight past instead of
     // wasting a coastalTiles scan on a purchase that's going to fail anyway.
-    if (Game.unitsOwned(p, 'port') >= 1 && p.gold >= Game.unitCost(p, 'warship') &&
+    if (Game.unitsOwned(p, 'port') >= 1 && spendable('warship') >= Game.unitCost(p, 'warship') &&
         Game.warships.filter(w => w.owner === p.id).length < Game.MAX_WARSHIPS_PER_PLAYER) {
       const site = this.warshipSite(p);
       if (site >= 0) Game.buildWarship(p.id, site);
@@ -282,18 +385,23 @@ const AI = {
     this.maybeNuke(p);
   },
 
-  // Cheap flavor, not a port of real OpenFront's own nuke-targeting AI
-  // (Config.ts/the bot behaviour files have real "where's the biggest
-  // cluster of enemy troops/structures" alertness scoring for this that
-  // wasn't part of this session's scope) — a bot with a ready Silo
-  // occasionally lobs an Atom Bomb at a random tile of whichever rival it
-  // currently borders/fights the most (the same `contact` signal think()
-  // already computes via borderTargets), rather than hunting for the
-  // objectively best target. Tribes and neutral land are skipped: a Tribe's
-  // whole army is already Fort/Warship-tier cheap to just walk over, and
-  // nuking unclaimed land destroys nothing worth destroying. Gated at 1-in-8
-  // per economy() cycle (which itself runs every 2-5s per bot) so a bot with
-  // a ready Silo doesn't nuke on literally the first opportunity every time.
+  // A bot with a ready Silo and a warhead's worth of gold banked (see
+  // savingsGoal — keeping that gold banked is what makes this reachable at
+  // all) occasionally fires an Atom Bomb at whichever rival it currently
+  // borders/fights the most, using the same `contact` signal think() already
+  // computes via borderTargets. Tribes and neutral land are skipped: a
+  // Tribe's whole army is already Fort/Warship-tier cheap to just walk over,
+  // and nuking unclaimed land destroys nothing worth destroying. Gated at
+  // 1-in-8 per economy() cycle (which itself runs every 2-5s per bot) so a
+  // bot with a ready Silo doesn't nuke on literally the first opportunity
+  // every time.
+  //
+  // Still not a port of OpenFront's own nuke-targeting AI (Config.ts/the bot
+  // behaviour files have real troop-cluster alertness scoring for this that
+  // wasn't part of this session's scope), but no longer a blind random tile
+  // either — nukeTarget() below aims at the target's own hardware, which is
+  // the part that actually made a strike feel deliberate rather than random
+  // when watched.
   //
   // Hydrogen Bomb chance, on top of the base 1-in-8: it's 6.67x the Atom
   // Bomb's price (5M vs 750k) for 3.3x the outer blast radius (see
@@ -307,8 +415,18 @@ const AI = {
   HYDROGEN_NUKE_CHANCE: 4,
 
   maybeNuke(p) {
-    if (Game.unitsOwned(p, 'silo') < 1) return;
     if (p.gold < Game.unitCost(p, 'atombomb')) return;
+    // hasReadySilo() rather than the cheaper unitsOwned(p, 'silo') check this
+    // replaced, for two reasons. It tests SILO_COOLDOWN as well as ownership,
+    // so a reloading Silo doesn't burn the 1-in-8 roll below on a
+    // launchNuke() that can only return false. And it reads the real
+    // buildings map instead of the p.units running total, which is observably
+    // capable of going NEGATIVE (seen headless: a bot ending a match at
+    // units.silo === -1 while still holding land) — an unrelated bookkeeping
+    // bug in setOwner's capture/destroy accounting, but one that would
+    // silently disarm a bot's Silo for the rest of the match if this gate
+    // depended on that counter.
+    if (!this.hasReadySilo(p)) return;
     if (!this.chance(8)) return;
 
     let best = -1, bestContact = 0;
@@ -321,15 +439,61 @@ const AI = {
     if (best < 0) return;
 
     const target = Game.players[best];
-    let n = Math.floor(Game.rng() * target.tiles.size);
-    let targetTile = -1;
-    for (const t of target.tiles) if (n-- <= 0) { targetTile = t; break; }
+    const targetTile = this.nukeTarget(target);
     if (targetTile < 0) return;
 
     const hydrogenWorthy = target.tiles.size > p.tiles.size || target.troops > p.troops;
     const type = hydrogenWorthy && p.gold >= Game.unitCost(p, 'hydrogenbomb') && this.chance(this.HYDROGEN_NUKE_CHANCE)
       ? 'hydrogenbomb' : 'atombomb';
     Game.launchNuke(p.id, type, targetTile);
+  },
+
+  // At least one owned, completed, off-cooldown Silo — the same test
+  // resolveNukeLaunch applies, checked here so maybeNuke can bail before
+  // spending its 1-in-8 roll.
+  hasReadySilo(p) {
+    for (const b of Game.buildings.values()) {
+      if (b.type !== 'silo' || !b.built) continue;
+      if (GameMap.owner[b.tile] !== p.id) continue;
+      if (Game.elapsed - b.lastLaunchAt >= Game.SILO_COOLDOWN) return true;
+    }
+    return false;
+  },
+
+  // Where to actually put the warhead. A nuke's whole value is what the blast
+  // destroys — structures change hands with the ground and die with it — so
+  // aim at the target's own hardware rather than a uniformly random tile of a
+  // nation that may be 90% empty conquered dirt. Ranked by what hurts most to
+  // lose: their Silo first (it's the only thing that can nuke back), then
+  // their SAM cover (removing it clears the way for the next strike), then
+  // the economy. Jittered so a nation under repeated fire doesn't eat every
+  // warhead on the same tile — and deliberately NOT a full scoring pass over
+  // blast-radius contents, which is the OpenFront-fidelity version this still
+  // isn't.
+  //
+  // Falls back to a random owned tile when the target has nothing built,
+  // which is also the pre-existing behaviour for every target.
+  NUKE_TARGET_PRIORITY: { silo: 4, sam: 3, city: 2, factory: 1, port: 1 },
+
+  nukeTarget(target) {
+    let best = -1, bestScore = 0;
+    for (const b of Game.buildings.values()) {
+      if (!b.built) continue;
+      if (GameMap.owner[b.tile] !== target.id) continue;
+      const weight = this.NUKE_TARGET_PRIORITY[b.type] || 0;
+      if (weight === 0) continue;
+      // Jitter is strictly smaller than one priority step, so it shuffles
+      // between equally-valuable targets without ever letting a Port outrank
+      // a Silo.
+      const score = weight * 4 + Math.floor(Game.rng() * 4);
+      if (score > bestScore) { bestScore = score; best = b.tile; }
+    }
+    if (best >= 0) return best;
+
+    if (target.tiles.size === 0) return -1;
+    let n = Math.floor(Game.rng() * target.tiles.size);
+    for (const t of target.tiles) if (n-- <= 0) return t;
+    return -1;
   },
 
   // Inland by preference: a city on the front line is a gift to whoever takes
