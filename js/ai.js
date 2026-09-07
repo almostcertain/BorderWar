@@ -718,7 +718,11 @@ const AI = {
   borderTargets(p, includeAllies) {
     const counts = new Map();
     const nb = Game.nbuf;
-    for (const i of p.tiles) {
+    // p.borderTiles (kept live by Game.setOwner), not p.tiles — only a
+    // border tile can have a non-owned neighbour, and walking every tile a
+    // bot owns on each think() cycle was a perimeter-vs-area hitch of its
+    // own once a bot's territory grew large, same as refreshFrontier's.
+    for (const i of p.borderTiles) {
       const n = GameMap.neighbors(i, nb);
       for (let k = 0; k < n; k++) {
         const o = GameMap.owner[nb[k]];

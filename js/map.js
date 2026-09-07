@@ -79,6 +79,7 @@ const GameMap = {
     this.pruneSmallLandmasses(this.MIN_LANDMASS_TILES);
     this.classifyTerrain();
     this.computeShoreDist();
+    this.computeWaterComponents();
     return this.landTiles;
   },
 
@@ -318,6 +319,35 @@ const GameMap = {
         const j = nb[k];
         if (this.owner[j] === WATER && dist[j] === 0) { dist[j] = d + 1; queue[tail++] = j; }
       }
+    }
+  },
+
+  // Connected-component id for every WATER tile, over the same 4-neighbour
+  // adjacency Game.seaPath's A* actually moves through — the sea's
+  // counterpart to landmassId. Computed once here so seaPath can reject an
+  // unreachable target instantly (two water tiles can only connect if they
+  // share a component) instead of exhausting its whole reachable side of
+  // the map — up to SEA_PATH_GUARD tiles — just to prove there's no route.
+  // Land tiles are left at -1 (unused; never looked up for one).
+  computeWaterComponents() {
+    const size = this.width * this.height;
+    const comp = this.waterComponentId = new Int32Array(size).fill(-1);
+    const queue = this._queue, nb = new Int32Array(4);
+    let id = 0;
+    for (let start = 0; start < size; start++) {
+      if (this.owner[start] !== WATER || comp[start] !== -1) continue;
+      let head = 0, tail = 0;
+      queue[tail++] = start;
+      comp[start] = id;
+      while (head < tail) {
+        const i = queue[head++];
+        const n = this.neighbors(i, nb);
+        for (let k = 0; k < n; k++) {
+          const j = nb[k];
+          if (this.owner[j] === WATER && comp[j] === -1) { comp[j] = id; queue[tail++] = j; }
+        }
+      }
+      id++;
     }
   },
 

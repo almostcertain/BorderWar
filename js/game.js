@@ -1889,6 +1889,19 @@ const Game = {
     }
     if (starts.length === 0) return null;
 
+    // Fast reject: two water tiles can only connect if they share a
+    // waterComponentId (see GameMap.computeWaterComponents, same adjacency
+    // this A* moves through below). Without this, a target on a separate
+    // sea or a landlocked lake made the search below exhaust its entire
+    // reachable side of the map — up to SEA_PATH_GUARD tiles — just to
+    // prove there's no route; measured live at 20-40ms for a single call,
+    // repeated across every boat/warship/trade-ship repath on the map, this
+    // was the game's main remaining source of hitching.
+    const wc = GameMap.waterComponentId;
+    const targetComponents = new Set();
+    for (const t of targetWater) targetComponents.add(wc[t]);
+    if (!starts.some(s => targetComponents.has(wc[s]))) return null;
+
     const goalX = targetTile % w, goalY = (targetTile / w) | 0;
 
     // Cross-product tie-breaker needs one reference line — the start closest
@@ -2082,11 +2095,18 @@ const Game = {
   },
 
   // seaPath, seeded from just the attacker's own coastal tiles rather than
-  // their whole territory — only those can ever border open water.
+  // their whole territory — only those can ever border open water. Scanning
+  // attacker.borderTiles instead of attacker.tiles is exactly equivalent (a
+  // WATER neighbour makes a tile coastal AND a border tile, by definition —
+  // coastal tiles are a subset of border tiles) but perimeter-sized instead
+  // of area-sized. This runs from navalInvasionBlockReason, which the radial
+  // menu calls to decide whether to grey out the Boat option, so a full
+  // territory scan here was a hitch on every check against a large empire,
+  // not just an actual boat launch.
   nearestCoastPath(attackerId, targetTile) {
     const attacker = this.players[attackerId];
     const coastal = [];
-    for (const t of attacker.tiles) if (GameMap.isCoastal(t)) coastal.push(t);
+    for (const t of attacker.borderTiles) if (GameMap.isCoastal(t)) coastal.push(t);
     if (coastal.length === 0) return null;
     return this.seaPath(coastal, targetTile);
   },
@@ -2960,17 +2980,23 @@ const Game = {
   // annexing them one tap at a time was miserable, and this is what lets a
   // single tap take the lot.
   //
-  // Contact points are collected off our own border rather than off the
-  // defender's tile set, since a pocket is by definition something our land
-  // touches, and the shared seen/run map keeps the sweep linear in the
-  // defender's tiles no matter how much of our border touches them. Uses nbuf
-  // so the abuf enclosedRegion walks on can't clobber it mid-scan.
+  // Contact points are collected off our own border (borderTiles, kept live
+  // by setOwner) rather than off the defender's tile set or our own full
+  // territory, since a pocket is by definition something our land touches —
+  // only a border tile can have a neighbour of a different owner — and the
+  // shared seen/run map keeps the sweep linear in the defender's tiles no
+  // matter how much of our border touches them. This runs from the hover
+  // renderer on essentially every frame territory changes anywhere on the
+  // map while the cursor rests on another nation, so scanning all of `me`'s
+  // tiles instead of just its border was a per-frame hitch of its own for a
+  // large empire. Uses nbuf so the abuf enclosedRegion walks on can't
+  // clobber it mid-scan.
   enclosedPocketsOf(targetId, byPlayerId) {
     const me = this.players[byPlayerId];
     if (targetId < 0 || targetId === byPlayerId || !me) return [];
     const seen = new Map(), nb = this.nbuf, regions = [];
     let run = 0;
-    for (const i of me.tiles) {
+    for (const i of me.borderTiles) {
       const n = GameMap.neighbors(i, nb);
       for (let k = 0; k < n; k++) {
         const j = nb[k];
