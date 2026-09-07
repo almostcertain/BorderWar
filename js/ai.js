@@ -40,11 +40,11 @@ const AI = {
   TRIBE_PRIORITY_FLOOR: 0.5,      // never decays below 1.5x, for the rest of the match
   TRIBE_PRIORITY_WINDOW: 240,     // linearly fades from kickoff bonus to the floor over 4 minutes
 
-  update(dt) {
+  update() {
     for (const p of Game.players) {
       if (!p.isBot || !p.alive) continue;
 
-      p.nextThink -= dt;
+      p.nextThink -= Game.TICK_DT;
       if (p.nextThink <= 0) {
         p.nextThink = 2 + Game.rng() * 3;
         this.diplomacy(p);
@@ -54,7 +54,7 @@ const AI = {
 
       // Separate, slower cooldown: navalThink runs a sea-path BFS rather than
       // a cheap map scan, so it doesn't get to think on land's cadence.
-      p.nextNavalThink -= dt;
+      p.nextNavalThink -= Game.TICK_DT;
       if (p.nextNavalThink <= 0) {
         p.nextNavalThink = 15 + Game.rng() * 10;
         this.navalThink(p);
@@ -81,9 +81,11 @@ const AI = {
     }
   },
 
-  // Only answer a renewal the ally has already asked for. A bot never opens the
-  // renewal itself, exactly as OpenFront's nations behave — the human's ally
-  // has to make the first move.
+  // Only answer a renewal the ally has already asked for. A bot never opens
+  // the renewal itself, exactly as OpenFront's nations behave — whichever
+  // side of the alliance p is (human or NPC), the *other* side has to make
+  // the first move. Not human-specific: with more than one human in a match
+  // this fires identically for every alliance a bot holds, human ally or not.
   handleExtensions(p) {
     for (const al of Game.alliances) {
       if (al.a !== p.id && al.b !== p.id) continue;
@@ -728,29 +730,16 @@ const AI = {
     return counts;
   },
 
-  // Checks every point where p's border actually touches targetId's land for
-  // a fully-enclosed pocket and annexes the first one found for free — the
+  // Annexes every fully-enclosed pocket of targetId's land for free — the
   // bot/tribe equivalent of a human noticing a surrounded nation and tapping
-  // it. Without this, only the human ever benefits from encirclement and
-  // tribes only ever die to a human's click. Scans just the contact tiles
-  // (not the whole border), so it doesn't add real cost to a think() cycle
-  // that already walks the same border for borderTargets.
+  // it, taking the whole scatter in one go exactly as that tap now does (see
+  // UI.onTap). Without this, only the human ever benefits from encirclement
+  // and tribes only ever die to a human's click. Game.enclosedPocketsOf scans
+  // just the contact points along p's border, so it doesn't add real cost to
+  // a think() cycle that already walks the same border for borderTargets.
   annexIfEnclosed(p, targetId) {
     if (targetId < 0) return false; // NEUTRAL land can't be annexed
-    const nb = Game.nbuf;
-    const checked = this._annexChecked || (this._annexChecked = new Set());
-    checked.clear();
-    for (const i of p.tiles) {
-      const n = GameMap.neighbors(i, nb);
-      for (let k = 0; k < n; k++) {
-        const j = nb[k];
-        if (GameMap.owner[j] !== targetId || checked.has(j)) continue;
-        checked.add(j);
-        const region = Game.enclosedRegion(j, p.id);
-        if (region) { Game.annexRegion(region, p.id); return true; }
-      }
-    }
-    return false;
+    return Game.annexEnclosedPockets(targetId, p.id) > 0;
   }
 };
 
@@ -762,10 +751,10 @@ const AI = {
 // land) lives in Game, not here — see TRIBE_TROOP_CAP_MULT / TRIBE_GROWTH_MULT /
 // tileCost.
 const TribeAI = {
-  update(dt) {
+  update() {
     for (const p of Game.players) {
       if (!p.isTribe || !p.alive) continue;
-      p.nextThink -= dt;
+      p.nextThink -= Game.TICK_DT;
       if (p.nextThink <= 0) {
         p.nextThink = 3 + Game.rng() * 4;
         this.think(p);

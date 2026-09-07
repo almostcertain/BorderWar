@@ -98,10 +98,100 @@ function mulberry32(seed) {
   };
 }
 
+// Collapse the last few, disputed bits of a float onto a value every engine
+// agrees on. See Game.det below for why this exists at all; this is just the
+// quantizer itself.
+//
+// Relative (12 significant digits), not a fixed grid. An earlier draft of
+// docs/multiplayer-architecture.md called for Math.round(v * 1e9) / 1e9 — that
+// is wrong: v * 1e9 passes Number.MAX_SAFE_INTEGER (~9.0e15) as soon as v is
+// above roughly 9e6, and maxTroopsRaw/growthPerSecond on a large empire are
+// comfortably past that, so a fixed grid silently loses precision exactly
+// where the numbers get big. toPrecision holds at every magnitude, and
+// ECMA-262 specifies it as correctly rounded, so the quantizer is itself
+// deterministic.
+//
+// NaN and ±Infinity pass straight through — "Infinity".toPrecision() is a
+// string that would round-trip fine but there is nothing to quantize, and
+// running non-finite values through the string path is pure risk for no gain.
+// Zero passes through too, which also preserves -0 (since -0 === 0).
+function detQuantize(v) {
+  if (!Number.isFinite(v) || v === 0) return v;
+  return Number(v.toPrecision(12));
+}
+
 const Game = {
+  // Cross-engine deterministic math for the simulation.
+  //
+  // `+ - * /` and Math.sqrt are IEEE-754 operations: every conforming engine
+  // must return the correctly-rounded result, so they are bit-identical on
+  // Chrome, Firefox and Safari alike. Math.pow, Math.exp, Math.log and
+  // Math.hypot are NOT — ECMA-262 leaves them implementation-approximated, and
+  // V8, SpiderMonkey and JavaScriptCore genuinely disagree in the last ulp on
+  // ordinary inputs. Under deterministic lockstep that is fatal: a one-bit
+  // difference in a troop cap feeds the growth curve, which feeds the attack
+  // loop, which amplifies it until two clients hold different maps — silently,
+  // with no error anywhere.
+  //
+  // So every hazardous call in the sim goes through here, and the result is
+  // quantized to 12 significant digits (see detQuantize). Doubles carry ~15-17
+  // significant digits and the contested bits sit around digit 16, so cutting
+  // at 12 collapses the disagreement with four digits of margin while staying
+  // far more precise than any balance number in this file needs.
+  //
+  // There is deliberately no det.sqrt: Math.sqrt is already exact everywhere,
+  // so wrapping it would throw away precision and time for nothing. Math.LN2
+  // (LARGE_DEFENDER_DECAY) is likewise left alone — a compile-time constant,
+  // not a computed function. Integer-exponent Math.pow(2, n) is exempt too;
+  // see unitCost.
+  //
+  // The one remaining hole — two engines landing either side of a quantization
+  // boundary — is astronomically unlikely and is what the state hash (MP-0.5)
+  // is for. This turns that hash into a backstop rather than the only defence,
+  // which is all OpenFront itself has.
+  det: {
+    pow(base, exponent) { return detQuantize(Math.pow(base, exponent)); },
+    exp(x) { return detQuantize(Math.exp(x)); },
+    // Computed as sqrt(dx*dx + dy*dy) rather than by calling Math.hypot: the
+    // two multiplies, the add and the sqrt are all IEEE-exact, so this form is
+    // already identical on every engine before the quantizer even runs. The
+    // quantize stays as belt-and-braces and to keep every det.* member
+    // behaving the same way. Where a call site is hot enough that the round-trip
+    // shows up (map.js's spawn-separation loop), inline the sqrt form directly
+    // instead — it is exact on its own.
+    hypot(dx, dy) { return detQuantize(Math.sqrt(dx * dx + dy * dy)); }
+  },
+
   players: [],
+  // Live land/beachhead fronts. Every attack carries an `id` minted from
+  // nextAttackId below — see that counter's comment for why, and for what
+  // consolidation does to an id.
   attacks: [],
+  // Monotonic entity-id counters, in the same shape (and for the same reason)
+  // as nextRailId/nextTrainId further down: a plain integer on the object
+  // literal, reset in init(), consumed as `this.nextAttackId++`. Incremented
+  // only from inside tick()-reachable sim code, so every client mints the same
+  // id for the same entity on the same turn.
+  //
+  // These exist for the wire (MP-1.2, docs/multiplayer-architecture.md §4).
+  // `cancel_attack`, `cancel_boat` and `move_warship` name their targets by id
+  // because an object reference cannot cross a socket, and because every
+  // client has to resolve the same id to the same entity or the fleet that
+  // moves here is not the fleet that moves there. OpenFront's own units carry
+  // a `UnitImpl.id` from `nextUnitID++` on the GameImpl for exactly this.
+  //
+  // An id is never reused inside a match and never renumbered. An entity's id
+  // therefore *ends* — an attack folded into another by launchAttack's
+  // consolidation, a boat that landed, a warship that sank — and an intent
+  // naming a dead id resolves to nothing. That is the correct outcome, not an
+  // error: it resolves to nothing identically on every client, which is all
+  // lockstep asks. See Executor's `_attack`/`_boat`/`_warship` lookups.
+  //
+  // Ids start at 1 so 0 is never a valid entity, and a falsy-id bug shows up
+  // as a dropped intent rather than as a silent hit on entity zero.
+  nextAttackId: 1,
   boats: [],
+  nextBoatId: 1,
   // tile -> { type, tile, built, progress, buildTime, level, upgrading,
   // station, rails, lastTrainAt }. Owner is whoever holds the tile. `built`
   // is false until `progress` reaches `buildTime`, during which it doesn't
@@ -126,24 +216,58 @@ const Game = {
   // updatePortTrade/stepTradeShips in the "Ports & trade ships" section.
   tradeShips: [],
   // Warships currently in play — see the "Warships" section near the end of
-  // this file for their build/combat/patrol logic.
+  // this file for their build/combat/patrol logic. Each carries an `id` — see
+  // nextAttackId above for the scheme.
   warships: [],
-  // Short-lived "+123" floating labels spawned wherever a train just paid
-  // out gold — pure presentation, aged and culled in stepTrains/render only,
-  // never read by any gameplay logic. See GOLD_POPUP_LIFETIME.
-  goldPopups: [],
+  nextWarshipId: 1,
   // In-flight warship shells — see warshipShootAt (spawns one) and
-  // stepShells (advances/resolves them). Unlike goldPopups these aren't
+  // stepShells (advances/resolves them). Unlike Fx's gold popups these aren't
   // pure presentation: the target only actually takes damage/sinks once its
   // shell arrives, not the instant the warship fires.
   shells: [],
+  // In-flight SAM interceptor missiles — see stepSAMs (spawns one, on a
+  // precomputed straight-line intercept course) and stepSamMissiles
+  // (advances/resolves them). Same fire-and-forget shape as `shells` above.
+  samMissiles: [],
+  // Short-lived intercept-confirmation rings — pure presentation, spawned by
+  // stepSamMissiles on a successful kill and aged/culled there, same idea as
+  // nukeBlasts below but small and quick since it's marking a kill, not a
+  // detonation.
+  samFlashes: [],
+  // Fields on Game that are pure presentation and must be SKIPPED by the
+  // deterministic state hash (MP-0.5), which consults this list by name.
+  //
+  // Unlike the gold popups — which were viewer-relative and therefore had to
+  // leave Game entirely, see js/fx.js — these two are pushed unconditionally
+  // and read nothing about who is watching, so every client produces them
+  // identically and they are safe to keep as sim-resident state. They are
+  // excluded from the hash only because hashing them buys nothing: they are
+  // floating-point screen positions with no influence on any rule, so the
+  // digest would be paying for entries that can never reveal a real
+  // divergence the gameplay fields don't already reveal.
+  //
+  // Adding a field here is a claim that it is provably gameplay-irrelevant:
+  // nothing in the simulation may branch on it, read it back, or derive a
+  // value from it. If in doubt, leave it out — a slightly slower hash is
+  // cheap, a desync the hash was told to ignore is not.
+  COSMETIC_STATE: ['nukeBlasts', 'samFlashes'],
   alliances: [],
   requests: [],
   lastRequestAt: new Map(),
   me: 0,
   rng: null,
   running: false,
-  // True from init() until the human taps a spawn tile — see chooseSpawn().
+  // Global, Game.me-blind win-condition result (MP-3.5). null until tick()
+  // decides a winner; then the winning player's id, set exactly once and
+  // never overwritten. Computed identically off shared player state on every
+  // client — see tick()'s post-elimination-sweep block below — so it reaches
+  // the same value on the same turn everywhere, unlike the old client-local
+  // (and Game.me-relative) UI.checkEndGame this replaces.
+  winnerId: null,
+  // True from init() until the spawn phase's timed deadline elapses (see
+  // tickSpawnPhase/SPAWN_PHASE_TURNS) — not until any human taps, which is
+  // MP-3.2's fix: under 2+ humans the first tap can no longer end the phase
+  // for everyone else. chooseSpawn() only claims the caller's own disc.
   spawning: false,
   dirty: true,
   // Tile indices whose owner changed since Render last rebuilt the tile
@@ -154,7 +278,33 @@ const Game = {
   // (first paint) where every tile, including never-touched water/neutral
   // ground, needs its initial color.
   dirtyTiles: null,
-  elapsed: 0,
+  // The sim's one and only timestep. Under deterministic lockstep every
+  // client has to advance the world by the exact same amount on the exact
+  // same turn, so nothing in the simulation may ever see a wall-clock `dt`:
+  // tick() steps by this constant and nothing else, and how often it is
+  // called is a scheduling question for main.js, not a simulation input.
+  // Numerically 1/TICKS_PER_SEC — that constant stays as the ticks->seconds
+  // conversion the ported OpenFront formulas are written in terms of.
+  TICK_DT: 0.1,
+  // Integer turn counter, the sim's authoritative clock. Incremented exactly
+  // once per tick() and never derived from anything else, so two clients that
+  // have processed the same number of turns hold the same value bit-for-bit.
+  ticks: 0,
+  // Derived, never stored: accumulating `elapsed += dt` drifts (adding 0.1 ten
+  // times gives 0.9999999999999999, not 1) and the drift is a function of how
+  // many times you added, which is exactly the kind of history-dependence a
+  // lockstep sim can't afford. Multiplying out from the integer instead gives
+  // every client the same float from the same turn number.
+  //
+  // This is a getter — assigning to it silently does nothing (the file is not
+  // in strict mode), so advance `ticks` instead.
+  get elapsed() { return this.ticks * this.TICK_DT; },
+  // Render-only clock: elapsed plus the fixed-timestep accumulator's current
+  // leftover (see main.js's loop) so animations read a continuously
+  // advancing time instead of snapping forward once per 0.1s tick — ticks
+  // stay fixed-step for sim determinism, this just keeps drawing smooth
+  // between them. Never read this for anything that affects simulation.
+  renderElapsed: 0,
   nbuf: new Int32Array(4),
   abuf: new Int32Array(4),   // separate scratch so adjacency checks can't clobber nbuf
 
@@ -183,22 +333,57 @@ const Game = {
     xlarge: { width: 2000, height: 1000 }   // OpenFront's World, full resolution
   },
 
-  init(botCount, tribeCount, seed, sizeKey) {
+  // gameStartInfo is {gameID, seed, config:{mapSize,bots,tribes},
+  // players:[{clientID,username,playerId}]} — the exact shape LocalServer.start
+  // and server/gameserver.js's start() both produce (docs/multiplayer-
+  // architecture.md §4, §9 Phase 2). myPlayerId is a plain integer, the
+  // caller's job to compute (main.js resolves it from myClientID); this
+  // function never needs to know clientIDs or the network layer exist.
+  init(gameStartInfo, myPlayerId) {
+    gameStartInfo = gameStartInfo || {};
+    const config = gameStartInfo.config || {};
+    const seed = gameStartInfo.seed >>> 0;
+    const sizeKey = config.mapSize;
     this.rng = mulberry32(seed);
     const size = this.MAP_SIZES[sizeKey] || this.MAP_SIZES.medium;
     this.sizeKey = sizeKey in this.MAP_SIZES ? sizeKey : 'medium';
     GameMap.generate(size.width, size.height, seed);
 
-    // Player id space: 0 is human, 1..botCount are Nations, the rest are
-    // Tribes — matching the order OpenFront lists them in (Bots/Tribes are
-    // "the other" type, distinct from Nations). Only the Nations and Tribes
-    // get an algorithmic spawn here — the human picks their own afterward,
-    // OpenFront-style, so they aren't placed until chooseSpawn() runs.
-    const total = 1 + botCount + tribeCount;
-    const npcSpawns = GameMap.findSpawns(botCount + tribeCount, this.rng);
+    // Player id space: 0..H-1 are humans, one per roster entry (real
+    // usernames, not a hardcoded 'You'), H..H+botCount-1 are Nations, the
+    // rest are Tribes — matching the order OpenFront lists them in
+    // (Bots/Tribes are "the other" type, distinct from Nations). Only the
+    // Nations and Tribes get an algorithmic spawn here — humans pick their
+    // own afterward, OpenFront-style, so they aren't placed until
+    // chooseSpawn() runs.
+    const roster = Array.isArray(gameStartInfo.players) ? gameStartInfo.players : [];
+    const H = roster.length;
+    const botCount = config.bots | 0;
+    const tribeCount = config.tribes | 0;
+    const total = H + botCount + tribeCount;
+    // One findSpawns call, sized for humans too, even though humans don't get
+    // placed here (see below) — this is what MP-3.2 needs a fallback tile for
+    // every human at the spawn-phase deadline. Both allocations (the human
+    // reserves and the NPC spawns) come off the same continuous, deterministic
+    // rng stream, so every client partitions the returned array identically:
+    // the first H tiles are reserved for humans (roster order == playerId
+    // order), the rest go to NPCs exactly as before this change.
+    const allSpawns = GameMap.findSpawns(H + botCount + tribeCount, this.rng);
+    this.humanReserveTiles = allSpawns.slice(0, H);
+    const npcSpawns = allSpawns.slice(H);
+
+    // Each human is placed by its own roster entry's `.playerId` field, not
+    // by array position — today the server always hands out contiguous
+    // 0..H-1 in join order so the two coincide, but binding to the field is
+    // the more correct read.
+    const rosterByPlayerId = new Map();
+    for (const entry of roster) if (entry) rosterByPlayerId.set(entry.playerId, entry);
+
     this.players = [];
     this.attacks = [];
+    this.nextAttackId = 1;
     this.boats = [];
+    this.nextBoatId = 1;
     this.dirtyTiles = new Set();
     this.buildings = new Map();
     this.railroads = [];
@@ -207,26 +392,72 @@ const Game = {
     this.nextTrainId = 1;
     this.tradeShips = [];
     this.warships = [];
-    this.goldPopups = [];
+    this.nextWarshipId = 1;
+    // Client-local presentation only, so it is cleared alongside the sim's own
+    // per-match state but deliberately does not live on it — see js/fx.js.
+    Fx.reset();
     this.shells = [];
+    this.samMissiles = [];
+    this.samFlashes = [];
+    this.nukes = [];
+    this.nukeBlasts = [];
+    // Irradiated land — see detonateNuke/falloutDefenseModifier. Tile
+    // indices, always unowned land (GameImpl's own setFallout throws if the
+    // tile has an owner) — cleared the instant anyone actually captures one.
+    this.fallout = new Set();
     this.alliances = [];
     this.requests = [];
     this.lastRequestAt = new Map();
-    this.me = 0;
-    this.elapsed = 0;
+    // Defensive fallback to 0 if myPlayerId is not a valid integer in range
+    // — singleplayer-safe, not expected to ever actually trigger (main.js
+    // always resolves a real index from the roster it just built `total`
+    // from).
+    this.me = (Number.isInteger(myPlayerId) && myPlayerId >= 0 && myPlayerId < total) ? myPlayerId : 0;
+    this.ticks = 0;
+    this.renderElapsed = 0;
+
+    // How many of this.players are humans (indices 0..humanCount-1) — stored
+    // rather than recomputed so tickSpawnPhase's NPC loop and the deadline
+    // auto-placement loop below both know where "NPC" starts without
+    // re-deriving it from the roster every call.
+    this.humanCount = H;
+    // Separate, unconditional turn counter for the spawn phase. Game.ticks
+    // (and Game.elapsed, which is derived from it) is incremented only inside
+    // tick()'s post-spawning body — by design, see the getter's own comment —
+    // so it stays frozen at 0 for the entire spawn phase and can never drive
+    // a spawn-phase deadline. tickSpawnPhase() increments this one instead,
+    // once per call, which happens exactly once per turn while this.spawning
+    // is true.
+    this.spawnPhaseTicks = 0;
+    // Per D1: a solo player has nobody to wait for, so singleplayer keeps the
+    // short window; any match with more than one human gets the long one so
+    // every human has a real chance to place before the deadline.
+    this.SPAWN_PHASE_TURNS = H > 1 ? 300 : 100;
 
     for (let p = 0; p < total; p++) {
-      const isTribe = p > botCount;
-      const isBot = p !== 0 && !isTribe;
+      const isHuman = p < H;
+      const isTribe = !isHuman && p >= H + botCount;
+      const isBot = !isHuman && !isTribe;
       let name, color, startTroops;
-      if (p === 0) {
-        name = 'You'; color = PLAYER_COLORS[0]; startTroops = this.START_TROOPS_HUMAN;
+      if (isHuman) {
+        const entry = rosterByPlayerId.get(p);
+        name = (entry && typeof entry.username === 'string' && entry.username) ? entry.username : ('Player ' + p);
+        color = PLAYER_COLORS[p % PLAYER_COLORS.length];
+        startTroops = this.START_TROOPS_HUMAN;
       } else if (isTribe) {
-        const t = p - botCount - 1;
+        const t = p - H - botCount;
         name = tribeName(t); color = TRIBE_COLORS[t % TRIBE_COLORS.length];
         startTroops = this.START_TROOPS_TRIBE;
       } else {
-        name = BOT_NAMES[(p - 1) % BOT_NAMES.length]; color = PLAYER_COLORS[p % PLAYER_COLORS.length];
+        // Nations. Name/color indexing is shifted by H so the first bot
+        // (now at index H, whatever H is) is still BOT_NAMES[0] / the same
+        // color the first bot always got, regardless of how many humans
+        // are ahead of it in the id space. PLAYER_COLORS/BOT_NAMES still
+        // only have 32 entries each and still wrap with `%` rather than
+        // growing — a pre-existing, accepted, purely cosmetic limitation
+        // once H + enough bots exceeds 32.
+        name = BOT_NAMES[(p - H) % BOT_NAMES.length];
+        color = PLAYER_COLORS[(p - H + 1) % PLAYER_COLORS.length];
         startTroops = this.START_TROOPS_BOT;
       }
       this.players.push({
@@ -234,6 +465,7 @@ const Game = {
         name, color,
         isBot,
         isTribe,
+        isHuman,
         troops: startTroops * this.POP_SCALE,
         gold: this.START_GOLD,
         // Structures held, by type. Kept as a running count rather than derived
@@ -269,21 +501,23 @@ const Game = {
 
     // Spawn-pick phase: every Nation/Tribe claims a provisional starting disc
     // immediately, then keeps re-rolling it to a new nearby spot every
-    // couple of seconds — "still deciding" — until the human taps to place
-    // their own capital. spawnCenters is each NPC's anchor; jumps stay
-    // within SPAWN_JUMP_RADIUS of it so a nation wobbles around one general
-    // area instead of roaming the map. Driven by tick() -> tickSpawnPhase,
-    // same as normal simulation, just gated on `spawning` instead of `running`.
+    // couple of seconds — "still deciding" — until the timed spawn-phase
+    // deadline hits (SPAWN_PHASE_TURNS, below). spawnCenters is each NPC's
+    // anchor; jumps stay within SPAWN_JUMP_RADIUS of it so a nation wobbles
+    // around one general area instead of roaming the map. Driven by
+    // tick() -> tickSpawnPhase, same as normal simulation, just gated on
+    // `spawning` instead of `running`.
     this.spawnCenters = new Array(total).fill(-1);
     this.nextSpawnJumpAt = new Array(total).fill(0);
-    for (let p = 1; p < total; p++) {
-      this.spawnCenters[p] = npcSpawns[p - 1];
-      this.claimStart(npcSpawns[p - 1], p);
+    for (let p = H; p < total; p++) {
+      this.spawnCenters[p] = npcSpawns[p - H];
+      this.claimStart(npcSpawns[p - H], p);
       this.nextSpawnJumpAt[p] = this.SPAWN_JUMP_MIN + this.rng() * (this.SPAWN_JUMP_MAX - this.SPAWN_JUMP_MIN);
     }
 
     this.spawning = true;
     this.running = false;
+    this.winnerId = null;
     this.dirty = true;
   },
 
@@ -292,6 +526,10 @@ const Game = {
   spawnBlockReason(tile) {
     if (!this.spawning) return 'Game already started';
     if (tile < 0 || !GameMap.isLand(tile)) return 'Choose a land tile';
+    // "Unclaimed" already means "not currently held by anyone, human or
+    // NPC" — so two humans picking distinct legal spots never collide, and a
+    // human re-picking a tile inside their own current disc will (harmlessly)
+    // be told it's claimed by themselves. Not worth special-casing.
     if (GameMap.owner[tile] !== NEUTRAL) return 'Already claimed';
     const w = GameMap.width, x = tile % w, y = (tile / w) | 0;
     // Same 90-of-121 density gate findSpawns uses for its own candidates, so a
@@ -303,11 +541,35 @@ const Game = {
 
   canChooseSpawn(tile) { return !this.spawnBlockReason(tile); },
 
-  chooseSpawn(tile) {
+  // `playerId` defaults to this.me so the existing single-player call sites
+  // (ui.js's spawn tap, the Hash harness) are unchanged, but the actor is a
+  // parameter because under lockstep the sim may not ask who is *viewing* —
+  // a spawn arrives stamped with whose it is (MP-1.2's Executor passes the
+  // clientID-resolved player and never the view pointer). The default is the
+  // last remaining Game.me read on this path and disappears with MP-1.5.
+  //
+  // MP-3.2: this only claims (or re-claims) the caller's own provisional
+  // disc — it does NOT end the spawn phase any more. Ending it that way was
+  // the exact bug this task exists to fix: under two or more humans, the
+  // first one to tap would flip `spawning` false for everyone, locking out
+  // anyone who hadn't placed yet. The phase now ends only via the tick-driven
+  // deadline in tickSpawnPhase, for every human at once, regardless of how
+  // many have already placed — so a human can call this any number of times
+  // before the deadline (a re-pick after already placing) and it keeps
+  // working, the same unclaimAll-then-claimStart pattern jumpSpawnPreview
+  // already uses for NPCs, just triggered by a player's tap instead of a
+  // timer.
+  chooseSpawn(tile, playerId) {
     if (!this.canChooseSpawn(tile)) return false;
-    this.claimStart(tile, this.me);
-    this.spawning = false;
-    this.running = true;
+    const id = playerId === undefined ? this.me : playerId;
+    // A re-pick: drop the old claim before claiming the new one, same as
+    // jumpSpawnPreview's own retract-then-reclaim. spawnBlockReason's
+    // "unclaimed" check already means "not currently held by anyone, human
+    // or NPC" — two humans picking distinct legal spots never collide, and a
+    // human re-picking a tile they already hold is (harmlessly) told it's
+    // "already claimed" by themselves, not worth special-casing.
+    if (this.players[id].tiles.size > 0) this.unclaimAll(id);
+    this.claimStart(tile, id);
     return true;
   },
 
@@ -353,28 +615,61 @@ const Game = {
     this.claimStart(target, playerId);
   },
 
-  // Advances every NPC's spawn-preview jump clock. This is the only thing
-  // tick() drives while spawning — no simulation (gold, growth, attacks)
-  // runs until the human has actually placed their capital.
-  tickSpawnPhase(dt) {
-    for (let p = 1; p < this.players.length; p++) {
-      this.nextSpawnJumpAt[p] -= dt;
+  // Advances every NPC's spawn-preview jump clock, then advances the spawn
+  // phase's own turn counter and ends the phase once the deadline hits. This
+  // is the only thing tick() drives while spawning — no simulation (gold,
+  // growth, attacks) runs until the phase is over.
+  //
+  // The NPC loop starts at `this.humanCount`, not the old hardcoded `1`. That
+  // `1` was a leftover from before MP-3.1 generalized player construction to
+  // H humans at indices 0..H-1 — it happened to be harmless for H===1 (there
+  // was only ever one human, at index 0, to skip) but under H>1 it let this
+  // loop call jumpSpawnPreview on the *second* human, which unconditionally
+  // unclaims and re-randomizes that player's tiles — silently destroying and
+  // relocating a second human's chosen capital every 1-2 seconds for as long
+  // as the spawn phase ran. This is exactly the bug MP-3.2 exists to fix.
+  tickSpawnPhase() {
+    for (let p = this.humanCount; p < this.players.length; p++) {
+      this.nextSpawnJumpAt[p] -= this.TICK_DT;
       if (this.nextSpawnJumpAt[p] <= 0) {
         this.jumpSpawnPreview(p);
         this.nextSpawnJumpAt[p] = this.SPAWN_JUMP_MIN + this.rng() * (this.SPAWN_JUMP_MAX - this.SPAWN_JUMP_MIN);
       }
     }
+
+    this.spawnPhaseTicks++;
+    if (this.spawnPhaseTicks >= this.SPAWN_PHASE_TURNS) {
+      // Deadline hit: anyone who never sent (or whose intent never arrived)
+      // a spawn is auto-placed at their reserved tile from init(). A human
+      // who already placed is untouched — tiles.size > 0 skips them.
+      for (let p = 0; p < this.humanCount; p++) {
+        if (this.players[p].tiles.size === 0) this.claimStart(this.humanReserveTiles[p], p);
+      }
+      this.spawning = false;
+      this.running = true;
+      // No explicit NPC "freeze" needed: the instant spawning is false,
+      // tick()'s own top guard means tickSpawnPhase (and jumpSpawnPreview)
+      // is simply never called again.
+    }
   },
 
   claimStart(center, playerId) {
-    // Radius 4 is a 49-tile disc, which puts a fresh spawn's cap at 12.07k —
-    // the 12.1k OpenFront opens with. Radius 5 (81 tiles) overshot to 12.8k.
-    const r = 4;
+    // Radius 5 against a squared cutoff of 29 (~radius 5.39, rather than the
+    // exact r*r=25) rasterizes as a smooth 5/7/9/11/11/11/11/11/9/7/5-wide
+    // blob — wide enough that the per-row taper is only ever 1-2 tiles, so it
+    // reads as round rather than faceted. (Plain dx*dx+dy*dy<=r*r at a small
+    // radius sticks a tile out on all four cardinal sides — the middle row
+    // outgrows its neighbors by 2+ — which reads as a four-pointed/triangular
+    // shape instead of round.) This 97-tile disc puts a fresh spawn's cap at
+    // ~13.1k, a bit above the 12.1k OpenFront opens with, traded for a
+    // rounder starting territory.
+    const r = 5;
+    const rSq = 29;
     const w = GameMap.width;
     const cx = center % w, cy = (center / w) | 0;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
-        if (dx * dx + dy * dy > r * r) continue;
+        if (dx * dx + dy * dy > rSq) continue;
         const nx = cx + dx, ny = cy + dy;
         if (nx < 0 || ny < 0 || nx >= w || ny >= GameMap.height) continue;
         const i = GameMap.idx(nx, ny);
@@ -387,7 +682,18 @@ const Game = {
     const old = GameMap.owner[i];
     if (old >= 0) this.players[old].tiles.delete(i);
     GameMap.owner[i] = newOwner;
-    if (newOwner >= 0) this.players[newOwner].tiles.add(i);
+    if (newOwner >= 0) {
+      this.players[newOwner].tiles.add(i);
+      // GameImpl's own conquer() unconditionally clears fallout the instant
+      // a tile is actually captured by a real player — "decontaminated" by
+      // resettlement — regardless of whether it had any to begin with. Only
+      // gated on a real capture (newOwner >= 0), not every ownership change
+      // this function handles — reverting to NEUTRAL (e.g. an eliminated
+      // player's tiles, or unclaimAll's spawn-phase churn) must NOT clear
+      // fallout, since an irradiated tile sitting unclaimed is exactly the
+      // steady state the mechanic depends on.
+      this.fallout.delete(i);
+    }
 
     // A structure belongs to whoever holds the ground under it. Routing capture
     // through the one function that moves a tile means a city changes hands the
@@ -400,14 +706,29 @@ const Game = {
     const b = this.buildings.get(i);
     if (b) {
       if (!b.built) {
-        // Overrun mid-construction: the site is lost, not inherited — an
-        // attacker doesn't get to finish someone else's half-built structure
-        // for free, and the original builder's sunk gold stays sunk.
         if (old >= 0) {
           const op = this.players[old];
           op.unitsPending[b.type] = Math.max(0, this.unitsPending(op, b.type) - 1);
         }
-        this.buildings.delete(i);
+        // Defensive Fort under construction is destroyed outright, same as a
+        // finished one below — a strongpoint doesn't hand its half-built
+        // fortifications to the attacker either. Reverting to unclaimed
+        // (newOwner < 0, e.g. an eliminated player's tiles going NEUTRAL)
+        // also has nobody left to finish the site, so it's lost the same way.
+        if (b.type === 'fort' || newOwner < 0) {
+          this.buildings.delete(i);
+        } else {
+          // Overrun mid-construction: the half-finished structure isn't lost
+          // — the attacker inherits the build site and it keeps ticking
+          // toward completion under the new flag, same as OpenFront's own
+          // captureUnit transferring a functioning structure whole.
+          // updateConstruction reads ownership fresh off the tile (see its
+          // own comment), so nothing else needs to move here but the pending
+          // count. The original builder's sunk gold still stays sunk — only
+          // the unfinished structure itself, not a refund, changes hands.
+          const np = this.players[newOwner];
+          np.unitsPending[b.type] = this.unitsPending(np, b.type) + 1;
+        }
       } else if (b.type === 'fort') {
         // Defensive Fort is destroyed, not captured, once the enemy pushes
         // through its tile — a strongpoint that falls doesn't hand its
@@ -541,9 +862,82 @@ const Game = {
     // OpenFront's own SpawnExecution, which has no construction phase for
     // units the way City/Factory/Port/Fort do here), it's carried only so
     // the build-bar hint text has a number to show.
+    // `action: true` marks a UNITS entry that is never placed on a land tile
+    // via the normal buildBlockReason/build path and never lands in
+    // Game.buildings — AI.economy's generic cost-group loop skips these
+    // (see its own comment) and gives each its own purchase call instead
+    // (buildWarship / launchNuke). Warship predates this flag; it's added
+    // retroactively here to close a real latent gap the flag's own
+    // introduction (for the two nuke types just below) surfaced: without it,
+    // economy()'s generic loop was quietly attempting
+    // Game.build(p.id, 'warship', buildSite(p)) every cycle — buildTime:0
+    // meant a hit would silently plant a phantom "warship" entry in
+    // Game.buildings that instantly completed and incremented
+    // units.warship, inflating the REAL buildWarship price curve (unitCost
+    // sums unitsOwned+unitsPending) with builds that never touched the
+    // fleet at all. Never actually observed misfiring in practice — buildSite
+    // only offers a tile once a nation already has land, by which point a
+    // bot's real Port-gated Warship purchase below usually wins the cycle
+    // first — but a latent bug wasn't worth leaving in place while adding two
+    // more UNITS entries in exactly the same danger zone.
     {
       type: 'warship', name: 'Warship', icon: '🚢', hotkey: '5',
-      baseCost: 250000, maxCost: 1000000, buildTime: 0, upgradable: false, linear: true
+      baseCost: 250000, maxCost: 1000000, buildTime: 0, upgradable: false, linear: true, action: true
+    },
+    // OpenFront's UnitType.MissileSilo: cost is FLAT — Config.ts's real
+    // costWrapper is `() => 1_000_000` with the numUnits argument ignored
+    // entirely, unlike every cost curve above (exponential City/Factory/Port,
+    // linear Fort/Warship) — a 2nd or 5th Silo costs exactly what the 1st
+    // did. See unitCost's `flat` handling. Their config marks it
+    // upgradable:true, but no per-level effect for it surfaced anywhere in
+    // Config.ts/MissileSiloExecution.ts/UnitImpl.ts while porting (unlike
+    // City, where a level directly feeds maxTroops) — rather than invent a
+    // fabricated bonus, this is deliberately NOT upgradable here, the same
+    // narrowed-scope call already made for Fort and Warship. Placement is the
+    // ordinary own-land buildBlockReason/build path (territoryBound, exactly
+    // like City) — nothing structure-specific to add there. What it actually
+    // DOES — hosting nuke launches on a cooldown — lives in the "Missile
+    // Silo & Nukes" section below.
+    {
+      type: 'silo', name: 'Missile Silo', icon: '🚀', hotkey: '6',
+      baseCost: 1000000, maxCost: 1000000, buildTime: 8, upgradable: false, flat: true
+    },
+    // OpenFront's UnitType.AtomBomb/HydrogenBomb: also flat-cost (see Silo's
+    // own comment on the `flat` curve), and `action: true` for the same
+    // reason Warship is — a bomb click means "launch one at this tile from my
+    // nearest ready Silo," not "place one exactly here," resolved through
+    // resolveNukeLaunch/launchNuke rather than buildBlockReason/build. See
+    // the "Missile Silo & Nukes" section for the launch/flight/detonation
+    // logic and nukeMagnitudes for the inner/outer blast radii each type
+    // ports from Config.ts. buildTime carried only for build-bar consistency,
+    // same as Warship's own comment — a nuke launches the instant it's
+    // ordered, no construction phase.
+    {
+      type: 'atombomb', name: 'Atom Bomb', icon: '☢', hotkey: '7',
+      baseCost: 750000, maxCost: 750000, buildTime: 0, upgradable: false, flat: true, action: true
+    },
+    {
+      type: 'hydrogenbomb', name: 'Hydrogen Bomb', icon: '💥', hotkey: '8',
+      baseCost: 5000000, maxCost: 5000000, buildTime: 0, upgradable: false, flat: true, action: true
+    },
+    // OpenFront's UnitType.SAMLauncher — the defensive interceptor the
+    // "Missile Silo & Nukes" section's own class comment flagged as
+    // deliberately deferred ("SAM Launcher... left for a later pass"), now
+    // ported against the real SAMLauncherExecution.ts/SAMMissileExecution.ts/
+    // Config.ts source. Named "SAM Launcher" rather than reusing "Missile
+    // Silo" even though the user described it that way — this game already
+    // has a structure called Missile Silo (the offensive nuke launcher
+    // above), and OpenFront itself treats these as two entirely separate
+    // buildings with separate names, so keeping them separate here avoids a
+    // straight naming collision. Cost is LINEAR like Fort — their real
+    // costWrapper is `min(3_000_000, (numUnits+1)*1_500_000)`: first SAM
+    // 1.5M, second+ pinned at the 3M cap. Territory-bound placement (own
+    // land only) needs no special-casing, same as City/Fort/Silo. What it
+    // actually DOES — charges, range-per-level, and shooting down incoming
+    // nukes — lives in the "SAM Launcher & Interceptors" section below.
+    {
+      type: 'sam', name: 'SAM Launcher', icon: '📡', hotkey: '9',
+      baseCost: 1500000, maxCost: 3000000, buildTime: 8, upgradable: true, linear: true
     }
   ],
 
@@ -564,6 +958,11 @@ const Game = {
   unitCost(p, type) {
     const def = this.unitDef(type);
     if (!def) return Infinity;
+    // Silo/AtomBomb/HydrogenBomb: costWrapper's callback ignores numUnits
+    // entirely in Config.ts, so the price never moves regardless of how many
+    // you've bought — no n/costGroup accounting applies at all. See the
+    // UNITS entries' own comments.
+    if (def.flat) return def.baseCost;
     // Committed = finished-and-owned plus still-building — so queuing a
     // second one before the first finishes still prices at the doubled rate,
     // not the base rate `units` alone would show until completion.
@@ -579,6 +978,12 @@ const Game = {
     }
     // Fort uses a LINEAR curve: (n+1)*baseCost, capped at maxCost.
     // City/factory/port use the exponential: 2^n * baseCost, capped at maxCost.
+    //
+    // This Math.pow is deliberately NOT routed through Game.det: base 2 with a
+    // small non-negative integer exponent is exactly representable, so every
+    // engine returns the identical double with no approximation involved. It
+    // is the one exempt case in the determinism audit (architecture doc §7.2)
+    // — leave it alone rather than "fixing" it.
     return def.linear
       ? Math.min(def.maxCost, (n + 1) * def.baseCost)
       : Math.min(def.maxCost, Math.pow(2, n) * def.baseCost);
@@ -626,7 +1031,18 @@ const Game = {
       // Port-only fields (see "Ports & trade ships"), carried on every
       // building for the same reason station/rails/lastTrainAt are: cheaper
       // to always have the slot than to special-case the record shape.
-      tradeRejections: 0, lastTradeCheckAt: -Infinity
+      tradeRejections: 0, lastTradeCheckAt: -Infinity,
+      // Silo-only (see "Missile Silo & Nukes"), carried on every building for
+      // the same reason as the Port fields above.
+      lastLaunchAt: -Infinity,
+      // SAM-only (see "SAM Launcher & Interceptors"). samQueue holds one
+      // timestamp per charge currently reloading — UnitImpl's real
+      // _missileTimerQueue — capacity-capped at `level` (isInCooldown there
+      // is verbatim `queue.length === level`), so a level-2 SAM can have two
+      // independent charges reloading on their own clocks at once.
+      // samRangeUpgrade holds the in-progress range ramp after a level-up
+      // (null once settled) — see dynamicSamRange.
+      samQueue: [], samRangeUpgrade: null
     });
     // The lifetime counter unitCost actually prices against — see unitCost's
     // comment. Only this call site and upgrade() touch it; setOwner()'s
@@ -680,13 +1096,17 @@ const Game = {
   // A fresh build's first level and an upgrade's next level are the same
   // += 1 here, since units[type] is a sum of levels, not a headcount — see
   // the UNITS comment. Ownership is read fresh off the tile rather than
-  // cached on the building, so a structure captured mid-build or mid-upgrade
-  // never reaches here at all: setOwner() unwinds it on capture instead of
-  // letting it finish under a new flag.
-  updateConstruction(dt) {
+  // cached on the building, so a structure captured mid-upgrade (or a Fort
+  // captured mid-build) never reaches here at all: setOwner() unwinds that
+  // in-flight progress on capture instead of letting it finish under a new
+  // flag. A non-Fort captured mid-*build*, though, is deliberately left
+  // alone by setOwner() and DOES keep ticking here — reading ownership off
+  // the tile is exactly what lets it finish under its new owner with no
+  // other bookkeeping.
+  updateConstruction() {
     for (const b of this.buildings.values()) {
       if (!b.built) {
-        b.progress += dt;
+        b.progress += this.TICK_DT;
         if (b.progress < b.buildTime) continue;
         b.progress = b.buildTime;
         b.built = true;
@@ -701,10 +1121,26 @@ const Game = {
         // below) never re-triggers it.
         this.onStructureCompleted(b);
       } else if (b.upgrading) {
-        b.progress += dt;
+        b.progress += this.TICK_DT;
         if (b.progress < b.buildTime) continue;
         b.progress = b.buildTime;
         b.upgrading = false;
+        // UnitImpl.increaseLevel: a SAM's range doesn't jump instantly on
+        // upgrade, it ramps smoothly (see dynamicSamRange) — captured before
+        // b.level++ so the ramp starts from whatever range is actually in
+        // effect right now (mid-ramp or settled), matching the real source's
+        // own chained-upgrade behavior rather than resetting hard each time.
+        // The freshly gained charge slot also starts consumed/reloading
+        // immediately, exactly like a real launch — increaseLevel pushes the
+        // queue the same way for SAMLauncher.
+        if (b.type === 'sam') {
+          b.samRangeUpgrade = {
+            startAt: this.elapsed,
+            startRange: this.dynamicSamRange(b, this.elapsed),
+            targetLevel: b.level + 1
+          };
+          b.samQueue.push(this.elapsed);
+        }
         b.level++;
         const owner = GameMap.owner[b.tile];
         if (owner < 0) continue;
@@ -781,7 +1217,7 @@ const Game = {
   // unitsOwned(p, 'city') already tracks), not a count of cities — see the
   // UNITS comment.
   maxTroopsRaw(tiles, cityLevels) {
-    return 2 * (Math.pow(tiles, this.TILE_POP_EXPONENT) * this.TILE_POP_COEF + this.BASE_POP)
+    return 2 * (this.det.pow(tiles, this.TILE_POP_EXPONENT) * this.TILE_POP_COEF + this.BASE_POP)
       + (cityLevels || 0) * this.CITY_POP_INCREASE;
   },
 
@@ -844,7 +1280,7 @@ const Game = {
     const pop = p.troops;
     if (pop >= max) return 0;
     const rawPop = pop / this.POP_SCALE;
-    let perTick = (10 + Math.pow(rawPop, 0.73) / 4) * (1 - pop / max);
+    let perTick = (10 + this.det.pow(rawPop, 0.73) / 4) * (1 - pop / max);
     // OpenFront's troopIncreaseRate applies the same Medium-difficulty scalar
     // to growth that maxTroops applies to the cap — a second, independent cut
     // on top of the smaller max, not implied by it. Tribes get their own
@@ -1086,16 +1522,16 @@ const Game = {
   // what stops a long match calcifying into permanent enemies.
   RELATION_DECAY_PER_SEC: 0.5,
 
-  decayRelations(p, dt) {
-    const step = this.RELATION_DECAY_PER_SEC * dt;
+  decayRelations(p) {
+    const step = this.RELATION_DECAY_PER_SEC * this.TICK_DT;
     for (const [id, r] of p.relations) {
       if (Math.abs(r) <= step * 2) p.relations.set(id, 0);
       else p.relations.set(id, r - Math.sign(r) * step);
     }
   },
 
-  updateDiplomacy(dt) {
-    for (const p of this.players) if (p.alive) this.decayRelations(p, dt);
+  updateDiplomacy() {
+    for (const p of this.players) if (p.alive) this.decayRelations(p);
 
     for (let i = this.requests.length - 1; i >= 0; i--) {
       const r = this.requests[i];
@@ -1144,6 +1580,35 @@ const Game = {
     return true;
   },
 
+  // --- Entity lookup by id ---------------------------------------------------
+  //
+  // The id -> object direction of the scheme documented at nextAttackId. Every
+  // one of these returns null rather than undefined when the id names nothing,
+  // and none of them throws or falls back to "the nearest one": an id that has
+  // ended (an attack consolidated away, a boat that landed, a sunk warship)
+  // must resolve to nothing, and must do so identically on every client. The
+  // Executor turns that null into a silently dropped intent.
+  //
+  // Linear scans. Attacks and boats are bounded by the player count and
+  // MAX_BOATS_PER_PLAYER, warships by MAX_WARSHIPS_PER_PLAYER, and these run
+  // once per cancel/move intent — not per tick — so an index would be pure
+  // bookkeeping to keep in sync for no measurable gain. Same call made for
+  // allianceBetween above.
+  attackById(id) {
+    for (const a of this.attacks) if (a.id === id) return a;
+    return null;
+  },
+
+  boatById(id) {
+    for (const b of this.boats) if (b.id === id) return b;
+    return null;
+  },
+
+  warshipById(id) {
+    for (const w of this.warships) if (w.id === id) return w;
+    return null;
+  },
+
   // Launches an attack from `attacker` against every tile of `targetId` that
   // touches their border. targetId may be NEUTRAL for unclaimed land.
   launchAttack(attackerId, targetId, troops) {
@@ -1176,6 +1641,12 @@ const Game = {
       if (survivor === null) survivor = at;
       else { survivor.troops += at.troops; this.attacks.splice(i, 1); }
     }
+    // The survivor is an existing attack object, mutated in place, so it keeps
+    // the id it was born with — a fresh id here would silently invalidate every
+    // cancel_attack already in flight against this front, which is the one
+    // thing consolidation must not do. The attacks folded *into* it lose their
+    // ids permanently; a cancel_attack naming one of those simply resolves to
+    // nothing, on every client alike. See nextAttackId.
     if (survivor) {
       survivor.troops += troops;
       attacker.troops -= troops;
@@ -1183,7 +1654,11 @@ const Game = {
       return true;
     }
 
-    const a = { attacker: attackerId, target: targetId, troops, progress: 0,
+    // Minted before the frontier check, so a launch that finds no border to
+    // push on burns an id. Harmless: every client runs this same code path
+    // with the same state and burns the same id on the same turn, and ids are
+    // deliberately never reused (see nextAttackId).
+    const a = { id: this.nextAttackId++, attacker: attackerId, target: targetId, troops, progress: 0,
                 heapTile: [], heapPrio: [], seen: new Set(), popPrio: 0,
                 noiseSeed: (this.rng() * 1e9) | 0 };
     if (!this.refreshFrontier(a)) return false;
@@ -1622,18 +2097,18 @@ const Game = {
     // TransportShipExecution stores the target once at launch too, so a boat
     // still attacks the nation it was sent against even if the landing tile
     // itself changes hands again before it arrives.
-    this.boats.push({ attacker: attackerId, target: targetOwner, troops, path, pos: 0, landingTile });
+    this.boats.push({ id: this.nextBoatId++, attacker: attackerId, target: targetOwner, troops, path, pos: 0, landingTile });
     return true;
   },
 
   // Advances every boat along its path; arrival is handled by resolveLanding.
   // A recalled boat runs this in reverse instead — sailing back down the same
   // route toward pos 0 — and hands the troops home once it gets there.
-  stepBoats(dt) {
+  stepBoats() {
     for (let i = this.boats.length - 1; i >= 0; i--) {
       const b = this.boats[i];
       if (b.retreating) {
-        b.pos -= this.BOAT_SPEED * dt;
+        b.pos -= this.BOAT_SPEED * this.TICK_DT;
         if (b.pos > 0) continue;
         const attacker = this.players[b.attacker];
         const malus = b.target >= 0 ? this.ATTACK_RETREAT_MALUS : 0;
@@ -1641,7 +2116,7 @@ const Game = {
         this.boats.splice(i, 1);
         continue;
       }
-      b.pos += this.BOAT_SPEED * dt;
+      b.pos += this.BOAT_SPEED * this.TICK_DT;
       if (b.pos < b.path.length - 1) continue;
       this.resolveLanding(b);
       this.boats.splice(i, 1);
@@ -1677,7 +2152,10 @@ const Game = {
     // A normal attack, seeded from the landing tile's own border — it's real
     // owned territory now (setOwner just ran), so no special-casing is needed
     // anywhere else; touchesPlayer already sees it.
-    const a = { attacker: boat.attacker, target: boat.target, troops: boat.troops, progress: 0,
+    // A beachhead is a real attack and gets a real attack id — the boat's own
+    // id dies with the landing, and the front it opens is separately
+    // cancellable from that moment on.
+    const a = { id: this.nextAttackId++, attacker: boat.attacker, target: boat.target, troops: boat.troops, progress: 0,
                 heapTile: [], heapPrio: [], seen: new Set(), popPrio: 0,
                 noiseSeed: (this.rng() * 1e9) | 0 };
     const nb = this.nbuf;
@@ -1696,16 +2174,18 @@ const Game = {
     else attacker.troops += boat.troops;
   },
 
-  tick(dt) {
-    if (this.spawning) { this.tickSpawnPhase(dt); return; }
+  // One simulation turn. Takes no argument by design — see TICK_DT: the step
+  // is a constant of the simulation, not something the caller gets to vary.
+  tick() {
+    if (this.spawning) { this.tickSpawnPhase(); return; }
     if (!this.running) return;
-    this.elapsed += dt;
+    this.ticks++;
 
     for (const p of this.players) {
       if (!p.alive) continue;
 
       // No cap and no decay: a treasury is a store, not a population.
-      p.gold += this.goldPerSecond(p) * dt;
+      p.gold += this.goldPerSecond(p) * this.TICK_DT;
 
       // The cap governs the home reserve. Troops already marching are outside
       // it, so sending an army frees the room it occupied to refill — the
@@ -1713,7 +2193,7 @@ const Game = {
       // not from an accounting penalty.
       const room = this.maxTroops(p);
       if (p.troops < room) {
-        p.troops = Math.min(room, p.troops + this.growthPerSecond(p) * dt);
+        p.troops = Math.min(room, p.troops + this.growthPerSecond(p) * this.TICK_DT);
       } else if (p.troops > room) {
         // Losing land lowers the cap, and the population has to follow it down.
         // Without this a shrinking nation keeps the army its former empire
@@ -1728,24 +2208,71 @@ const Game = {
       }
     }
 
-    this.updateConstruction(dt);
+    this.updateConstruction();
 
     this.resolveOpposingFronts();
 
     for (let a = this.attacks.length - 1; a >= 0; a--) {
-      if (!this.stepAttack(this.attacks[a], dt)) this.attacks.splice(a, 1);
+      if (!this.stepAttack(this.attacks[a])) this.attacks.splice(a, 1);
     }
 
-    this.stepBoats(dt);
-    this.updateFactoryStations(dt);
-    this.stepTrains(dt);
-    this.updatePortTrade(dt);
-    this.stepTradeShips(dt);
-    this.stepWarships(dt);
-    this.stepShells(dt);
+    this.stepBoats();
+    this.updateFactoryStations();
+    this.stepTrains();
+    this.updatePortTrade();
+    this.stepTradeShips();
+    this.stepWarships();
+    this.stepShells();
+    // Must run before stepNukes: a nuke a SAM successfully intercepts this
+    // tick has to be removed from this.nukes before stepNukes' own duration
+    // check gets a chance to detonate the same object.
+    this.stepSAMs();
+    this.stepSamMissiles();
+    this.stepNukes();
 
     for (const p of this.players) {
       if (p.alive && p.tiles.size === 0 && p.troops < 20) p.alive = false;
+    }
+
+    // Win condition (MP-3.5), computed here — not in UI — because it has to
+    // land on the same turn for every client. This runs off the `alive`
+    // sweep just above and Game.fallout/GameMap.landTiles, none of which
+    // depend on Game.me, so every client evaluates it identically. Decided
+    // exactly once: once winnerId is set, later ticks skip straight past
+    // this block (the `this.winnerId === null` guard) so a later tick can
+    // never recompute or overwrite it.
+    //
+    // Deliberately does NOT special-case isDisconnected players: per MP-3.4,
+    // a disconnected player's nation keeps existing and keeps being
+    // simulated, so if it still holds territory it is a legitimate sole
+    // survivor or a legitimate blocker of someone else's 95% threshold,
+    // exactly as if they were still playing.
+    if (this.winnerId === null) {
+      const alive = this.players.filter(p => p.alive && p.tiles.size > 0);
+      if (alive.length === 1) {
+        this.winnerId = alive[0].id;
+      } else {
+        // OpenFront's WinCheckExecution excludes irradiated land from the
+        // denominator: numTilesWithoutFallout = numLandTiles -
+        // numTilesWithFallout(). Radiated ground isn't required to win — it
+        // just shrinks the total a player needs to own, same as this port's
+        // Game.fallout Set. Checked against every player, not just Game.me
+        // — the old UI.checkEndGame only ever tested the local human.
+        const tilesNeededDenominator = GameMap.landTiles - this.fallout.size;
+        if (tilesNeededDenominator > 0) {
+          for (const p of this.players) {
+            if (p.tiles.size / tilesNeededDenominator > 0.95) {
+              this.winnerId = p.id;
+              break;
+            }
+          }
+        }
+      }
+      // Flips at most once, on the exact tick winnerId is decided, so this
+      // tick still finishes its own body (diplomacy/AI below) normally and
+      // every SUBSEQUENT tick — on every client — hits tick()'s own
+      // `if (!this.running) return` guard identically.
+      if (this.winnerId !== null) this.running = false;
     }
 
     // A boat belonging to a nation that just died has nobody left to receive
@@ -1762,10 +2289,40 @@ const Game = {
 
     // After the death sweep, so a nation that fell this tick takes its
     // alliances and pending offers with it.
-    this.updateDiplomacy(dt);
+    this.updateDiplomacy();
 
-    AI.update(dt);
-    TribeAI.update(dt);
+    AI.update();
+    TribeAI.update();
+  },
+
+  // Dev-only: jumps the match forward by running tick() back-to-back instead
+  // of waiting in realtime. Every tick is the same fixed TICK_DT the main
+  // loop drives, so this produces the exact economy/AI/combat a played-out
+  // match would — just compressed into one synchronous burst. No-ops before
+  // the human has spawned, same as tick() itself (this.running is false
+  // until then).
+  //
+  // Counted in whole ticks rather than by accumulating seconds: the sim's
+  // clock IS the tick count now (see TICK_DT), so "300 seconds" is exactly
+  // 3000 turns, with no float loop counter to drift the burst a tick long or
+  // short. Under lockstep this is the same shape as replaying a turn list.
+  //
+  // NO SHIELD. There used to be a `humanShielded` flag here that froze every
+  // attack, boat and capture aimed at `Game.me` for the duration of the burst,
+  // so the human could not lose ground while the sim ran blind. It is gone
+  // (MP-1.4): every one of its branches tested `=== this.me` inside the
+  // simulation, which is precisely the player-relative branching Phase 0
+  // removed everywhere else, and it was the last of that class in this file.
+  // A sim that behaves differently depending on who is watching it desyncs.
+  // The cost is real and accepted: a burst can now cost the human territory,
+  // in a dev-only tool.
+  //
+  // MP-1.5 replaces this bare tick loop with LocalServer.burst(turns), which
+  // pushes the same number of turns through the ordinary intent/turn pipeline
+  // instead of reaching past it into Game.tick.
+  fastForward(seconds) {
+    const turns = Math.round(seconds / this.TICK_DT);
+    for (let t = 0; t < turns && this.running; t++) this.tick();
   },
 
   DEFENSE_WEIGHT: 1.6,
@@ -1870,7 +2427,7 @@ const Game = {
   LARGE_ATTACKER_THRESHOLD: 100000,
 
   sigmoid(value, decayRate, midpoint) {
-    return 1 / (1 + Math.exp(-decayRate * (value - midpoint)));
+    return 1 / (1 + this.det.exp(-decayRate * (value - midpoint)));
   },
 
   // 0.7-1.0. 1.0 (no effect) for any defender well under the threshold — true
@@ -1889,11 +2446,11 @@ const Game = {
   // and largeAttackerSpeedBonus (0.6, speed) exactly.
   largeAttackerLossMult(attackerTiles) {
     return attackerTiles > this.LARGE_ATTACKER_THRESHOLD
-      ? Math.pow(this.LARGE_ATTACKER_THRESHOLD / attackerTiles, 0.7) : 1;
+      ? this.det.pow(this.LARGE_ATTACKER_THRESHOLD / attackerTiles, 0.7) : 1;
   },
   largeAttackerSpeedMult(attackerTiles) {
     return attackerTiles > this.LARGE_ATTACKER_THRESHOLD
-      ? Math.pow(this.LARGE_ATTACKER_THRESHOLD / attackerTiles, 0.6) : 1;
+      ? this.det.pow(this.LARGE_ATTACKER_THRESHOLD / attackerTiles, 0.6) : 1;
   },
 
   // Pure per-tick budget — how much advance a front can spend this tick. The
@@ -2053,9 +2610,48 @@ const Game = {
     return (this.TERRAIN_MAG[terrain || 0] / 5) * this.POP_SCALE;
   },
 
+  // Config.ts's falloutDefenseModifier(falloutRatio) = 5 - falloutRatio*2:
+  // taking irradiated land costs 5x while fallout is rare on the map,
+  // easing down to 2.5x once a large share of it has been nuked. See
+  // Game.fallout (set in detonateNuke, cleared in setOwner on capture) and
+  // the "Missile Silo & Nukes" section's own comment on why this — not
+  // converting the land to water — is OpenFront's actual default-ruleset
+  // behavior.
+  falloutDefenseModifier() {
+    const ratio = GameMap.landTiles > 0 ? this.fallout.size / GameMap.landTiles : 0;
+    return 5 - ratio * 2;
+  },
+
+  // Real attackLogic applies this same modifier to BOTH troop cost (mag) and
+  // per-tile speed (tileCost) — but its terra-nullius branch computes speed
+  // as within(2000*tileCost/attackTroops, 5, 100), i.e. inversely
+  // proportional to the attacking force's committed troops, while the troop
+  // COST side (mag/5) stays flat regardless of force size. Our engine's
+  // NEUTRAL_RATE_SCALE budget has no troop term at all, so porting the flat
+  // 5x-2.5x multiplier onto move cost alone made pushes into fallout crawl
+  // at the same fixed pace no matter how large the committed army was — a
+  // small force and a huge one took equally forever, which is exactly what
+  // the user reported ("lasts a very long time") and not what OpenFront
+  // actually does (a big army shrugs off the terrain and burns through it
+  // fast, still paying the full flat troop cost per tile, so the whole push
+  // is short and decisive). This reuses that shape — bigger a.troops erases
+  // more of the speed penalty — without touching the flat troop-cost side or
+  // the calibrated non-fallout NEUTRAL_RATE_SCALE pacing.
+  FALLOUT_SPEED_TROOPS: 3000,
+  falloutSpeedMult(troops) {
+    const full = this.falloutDefenseModifier();
+    return 1 + (full - 1) * (this.FALLOUT_SPEED_TROOPS / (this.FALLOUT_SPEED_TROOPS + Math.max(0, troops)));
+  },
+
   // `tile` is optional; pass it from stepAttack to enable the fort bonus.
   tileCost(attacker, defender, attackTroops, terrain, tile) {
     let mag = this.TERRAIN_MAG[terrain || 0];
+    // Fallout: unconditional in real attackLogic (no `defender.isPlayer()`
+    // gate the way DefensePost's own bonus below has) — fitting, since a
+    // fallout tile is by construction always unowned (GameImpl's setFallout
+    // throws otherwise), so it only ever actually matters against the
+    // neutral-land branch just below in practice.
+    if (tile !== undefined && this.fallout.has(tile)) mag *= this.falloutDefenseModifier();
     // Unclaimed land: OpenFront's "simple Bot" type pays half toll (mag/10)
     // that a human or Nation pays (mag/5) — Tribes are that simple Bot type.
     if (!defender) return (mag / (attacker.isTribe ? 10 : 5)) * this.POP_SCALE;
@@ -2063,7 +2659,10 @@ const Game = {
     // openfront.wiki/Bots: "if (attacker.type() == Human && defender.type()
     // == Bot) mag *= 0.8" — a 20% troop-loss discount for the human attacking
     // a Tribe specifically. Nations get no such discount fighting a Tribe.
-    if (defender.isTribe && attacker.id === this.me) mag *= 0.8;
+    // Keyed off the attacker's *type*, not off Game.me: under lockstep every
+    // client runs this same tileCost, so a per-viewer branch here would make
+    // the very first human-vs-Tribe attack diverge between clients.
+    if (defender.isTribe && attacker.isHuman) mag *= 0.8;
 
     // Defense fort: troop cost to take a tile inside the fort's range is 5x,
     // matching Config.defensePostDefenseBonus in OpenFront's attackLogic.
@@ -2191,10 +2790,13 @@ const Game = {
     // the vultures, and the reward for it arrives as gold, which the population
     // curve cannot claw back the way it does conquered land.
     // OpenFront's conquerGoldAmount halves the spoils specifically when the
-    // player being conquered is Human — Bot/Nation kills pay out in full. The
-    // human is always Game.me here, so that's the one case to single out.
+    // player being conquered is Human — Bot/Nation kills pay out in full. So
+    // the branch is on the *defender's type*, not on whether the defender is
+    // the viewing client: with several humans in a lockstep match "the human"
+    // is no longer a single id, and a per-viewer branch would hand different
+    // clients different treasuries.
     if (attacker) {
-      attacker.gold += defenderId === this.me ? defender.gold / 2 : defender.gold;
+      attacker.gold += defender.isHuman ? defender.gold / 2 : defender.gold;
       defender.gold = 0;
     }
 
@@ -2259,13 +2861,24 @@ const Game = {
   // real matches: their cheap prefilter already rejects any unowned
   // neighbour before the lenient flood-fill ever gets a chance to run.
   // Returns the region's tiles (annexable) or null (not enclosed).
-  enclosedRegion(startTile, byPlayerId) {
+  //
+  // `seen`/`run` are how enclosedPocketsOf below walks many pockets in one
+  // sweep without paying for the same ground twice: `seen` maps a tile to the
+  // id of the walk that reached it, so every tile is expanded at most once
+  // across the whole sweep. Meeting a tile stamped by an *earlier* walk means
+  // this pocket has already been walked from another contact point and
+  // rejected there — an accepted pocket is a whole connected component, so it
+  // can never be touching this one — and this walk fails with it.
+  enclosedRegion(startTile, byPlayerId, seen, run) {
     const target = GameMap.owner[startTile];
     if (target < 0 || target === byPlayerId) return null;
 
-    const seen = this._annexSeen || (this._annexSeen = new Set());
-    seen.clear();
-    seen.add(startTile);
+    if (!seen) {
+      seen = this._annexSeen || (this._annexSeen = new Map());
+      seen.clear();
+      run = 0;
+    }
+    seen.set(startTile, run);
     const region = [startTile];
     const stack = [startTile];
     const nb = this.abuf;
@@ -2278,7 +2891,12 @@ const Game = {
         const j = nb[k];
         const o = GameMap.owner[j];
         if (o === target) {
-          if (!seen.has(j)) { seen.add(j); region.push(j); stack.push(j); }
+          const walk = seen.get(j);
+          if (walk === run) continue;
+          if (walk !== undefined) return null; // already walked, already rejected
+          seen.set(j, run);
+          region.push(j);
+          stack.push(j);
           continue;
         }
         if (o === byPlayerId) continue; // part of the wall
@@ -2286,6 +2904,45 @@ const Game = {
       }
     }
     return region;
+  },
+
+  // Every pocket of `targetId` that `byPlayerId`'s land walls in, not just the
+  // one under a cursor. A nuke leaves its blast as a scatter of survivors
+  // among unclaimed irradiated ground, so resettling that ground turns what is
+  // left of the defender there into dozens of one- and two-tile pockets —
+  // annexing them one tap at a time was miserable, and this is what lets a
+  // single tap take the lot.
+  //
+  // Contact points are collected off our own border rather than off the
+  // defender's tile set, since a pocket is by definition something our land
+  // touches, and the shared seen/run map keeps the sweep linear in the
+  // defender's tiles no matter how much of our border touches them. Uses nbuf
+  // so the abuf enclosedRegion walks on can't clobber it mid-scan.
+  enclosedPocketsOf(targetId, byPlayerId) {
+    const me = this.players[byPlayerId];
+    if (targetId < 0 || targetId === byPlayerId || !me) return [];
+    const seen = new Map(), nb = this.nbuf, regions = [];
+    let run = 0;
+    for (const i of me.tiles) {
+      const n = GameMap.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (GameMap.owner[j] !== targetId || seen.has(j)) continue;
+        const region = this.enclosedRegion(j, byPlayerId, seen, ++run);
+        if (region) regions.push(region);
+      }
+    }
+    return regions;
+  },
+
+  // Hands every one of those pockets over at once. All of them are found
+  // before any of them changes hands, since annexRegion/setOwner rewrite the
+  // very tile sets enclosedPocketsOf scans. Returns the tiles taken.
+  annexEnclosedPockets(targetId, byPlayerId) {
+    const regions = this.enclosedPocketsOf(targetId, byPlayerId);
+    let taken = 0;
+    for (const r of regions) { taken += r.length; this.annexRegion(r, byPlayerId); }
+    return taken;
   },
 
   // Instantly hands every tile of an enclosed region to byPlayerId — no
@@ -2312,14 +2969,17 @@ const Game = {
 
     if (wipesThem) {
       const winner = this.players[byPlayerId];
-      winner.gold += loser === this.players[this.me] ? loser.gold / 2 : loser.gold;
+      // Same half-spoils rule as the conquest path above, and keyed the same
+      // way — on the loser being human-controlled, never on it being the
+      // viewing client, which a lockstep sim must not know about.
+      winner.gold += loser.isHuman ? loser.gold / 2 : loser.gold;
       loser.gold = 0;
       loser.troops = 0;
       loser.alive = false;
     }
   },
 
-  stepAttack(a, dt) {
+  stepAttack(a) {
     const attacker = this.players[a.attacker];
 
     // Ordered to retreat: no further conquest, just waiting out RETREAT_DELAY
@@ -2343,7 +3003,7 @@ const Game = {
     // `progress` is measured in plains-equivalent tiles; rough ground simply
     // costs more of it, so the same budget carries a front further across open
     // country than up a ridge.
-    a.progress += rate * dt * this.TICKS_PER_SEC;
+    a.progress += rate * this.TICK_DT * this.TICKS_PER_SEC;
 
     let guard = 20000;
     while (guard-- > 0) {
@@ -2374,7 +3034,12 @@ const Game = {
       // Defense fort: movement cost into protected tiles is 3x, matching
       // Config.defensePostSpeedBonus in OpenFront's attackLogic.
       const fortMult = (defender && this.fortInRange(tile, defender.id)) ? this.FORT_SPEED_MULT : 1;
-      const move = this.terrainMoveCost(tile) * speedRatio * fortMult;
+      // Fallout: falloutSpeedMult (see its own comment) instead of the flat
+      // falloutDefenseModifier tileCost's troop-cost side still uses below —
+      // this side scales down as the attacking force grows, so a strong push
+      // clears irradiated ground quickly instead of crawling forever.
+      const falloutMult = this.fallout.has(tile) ? this.falloutSpeedMult(a.troops) : 1;
+      const move = this.terrainMoveCost(tile) * speedRatio * fortMult * falloutMult;
       if (a.progress < move) break;
 
       const cost = this.tileCost(attacker, defender, a.troops, GameMap.terrain[tile], tile);
@@ -2783,7 +3448,6 @@ const Game = {
   TRAIN_GOLD_FREE_STOPS: 9,
   TRAIN_GOLD_DIST_PENALTY: 5000,
   TRAIN_GOLD_FLOOR: 5000,
-  GOLD_POPUP_LIFETIME: 1.2,       // seconds a "+gold" label drifts/fades before culling
 
   // Config.ts's trainSpawnRate: hyperbolic decay, midpoint at 10 factories.
   // Returned as a 1-in-N chance, consumed by updateFactoryStations below.
@@ -2927,7 +3591,7 @@ const Game = {
   // per-tick shouldSpawnTrain() call. The destination is picked BEFORE
   // rolling (hasAnyTradeDestination is checked first in the real source too)
   // so an empire with nowhere to trade never burns a roll on it.
-  updateFactoryStations(dt) {
+  updateFactoryStations() {
     for (const b of this.buildings.values()) {
       if (b.type !== 'factory' || !b.station) continue;
       if (this.elapsed - b.lastTrainAt < this.TRAIN_SPAWN_COOLDOWN) continue;
@@ -2954,10 +3618,10 @@ const Game = {
   // crosses this tick pays out (or not) in the same pass, so a train moving
   // fast enough to cross two close-together stations in one tick still pays
   // both instead of only the one nearest the end of the step.
-  stepTrains(dt) {
+  stepTrains() {
     for (let i = this.trains.length - 1; i >= 0; i--) {
       const t = this.trains[i];
-      t.pos += this.TRAIN_SPEED * dt;
+      t.pos += this.TRAIN_SPEED * this.TICK_DT;
 
       while (t.nextStop < t.stops.length && t.pos >= t.stops[t.nextStop].dist) {
         const stop = t.stops[t.nextStop++];
@@ -2982,20 +3646,17 @@ const Game = {
             if (stationP) stationP.gold += gold;
           }
           t.stopsVisited++;
-          // Only pop up over a station the viewer actually owns — a payout
-          // at a foreign or allied city isn't the player's own money to
-          // watch tick up.
-          if (stationOwnerId === this.me) this.goldPopups.push({ tile: stop.tile, amount: gold, age: 0 });
+          // Recorded for every station owner alike, whoever they are. The
+          // renderer shows the local viewer only their own payouts (a payout
+          // at a foreign or allied city isn't the player's money to watch tick
+          // up) — but that filter belongs at draw time, not here: a sim branch
+          // on Game.me would make this line compute differently on every
+          // client. See js/fx.js.
+          Fx.goldPopup(stop.tile, gold, stationOwnerId);
         }
       }
 
       if (t.nextStop >= t.stops.length) this.trains.splice(i, 1);
-    }
-
-    for (let i = this.goldPopups.length - 1; i >= 0; i--) {
-      const g = this.goldPopups[i];
-      g.age += dt;
-      if (g.age >= this.GOLD_POPUP_LIFETIME) this.goldPopups.splice(i, 1);
     }
   },
 
@@ -3071,7 +3732,7 @@ const Game = {
   // comment.
   tradeShipGold(dist) {
     const debuff = this.TRADE_SHIP_SHORT_RANGE_DEBUFF;
-    return Math.floor(75000 / (1 + Math.exp(-0.03 * (dist - debuff))) + 50 * dist);
+    return Math.floor(75000 / (1 + this.det.exp(-0.03 * (dist - debuff))) + 50 * dist);
   },
 
   // Config.ts's proximityBonusPortsNb: how many of the nearest candidate
@@ -3137,7 +3798,7 @@ const Game = {
   // the real source's water-component pre-filter. A few attempts guard
   // against one unlucky pick (an allied bonus entry, say, whose sea lane
   // happens to be blocked) wasting an entire successful roll.
-  updatePortTrade(dt) {
+  updatePortTrade() {
     for (const b of this.buildings.values()) {
       if (b.type !== 'port' || !b.built) continue;
       if (this.elapsed - b.lastTradeCheckAt < this.PORT_TRADE_CHECK_INTERVAL) continue;
@@ -3171,7 +3832,7 @@ const Game = {
   // yourself" and is cancelled without a payout, matching the real source's
   // early-return for that exact case (see class comment on what isn't
   // ported alongside it).
-  stepTradeShips(dt) {
+  stepTradeShips() {
     for (let i = this.tradeShips.length - 1; i >= 0; i--) {
       const s = this.tradeShips[i];
       if (GameMap.owner[s.srcPort] === GameMap.owner[s.dstPort]) {
@@ -3179,21 +3840,21 @@ const Game = {
         continue;
       }
 
-      s.pos += this.BOAT_SPEED * dt;
+      s.pos += this.BOAT_SPEED * this.TICK_DT;
       if (s.pos < s.path.length - 1) continue;
 
       const srcP = this.players[GameMap.owner[s.srcPort]];
       const dstP = this.players[GameMap.owner[s.dstPort]];
       const gold = this.tradeShipGold(s.path.length - 1);
-      // Only pop up over a port the viewer actually owns — see stepTrains'
-      // identical filter.
+      // Recorded for both ports' owners unconditionally; the renderer filters
+      // to the local viewer — see stepTrains' identical note and js/fx.js.
       if (srcP) {
         srcP.gold += gold;
-        if (GameMap.owner[s.srcPort] === this.me) this.goldPopups.push({ tile: s.srcPort, amount: gold, age: 0 });
+        Fx.goldPopup(s.srcPort, gold, GameMap.owner[s.srcPort]);
       }
       if (dstP) {
         dstP.gold += gold;
-        if (GameMap.owner[s.dstPort] === this.me) this.goldPopups.push({ tile: s.dstPort, amount: gold, age: 0 });
+        Fx.goldPopup(s.dstPort, gold, GameMap.owner[s.dstPort]);
       }
 
       this.tradeShips.splice(i, 1);
@@ -3229,10 +3890,10 @@ const Game = {
   WARSHIP_PATROL_RANGE: 100,              // warshipPatrolRange() — wander radius around patrolTile
   WARSHIP_SHELL_COOLDOWN: 2,              // warshipShellAttackRate()=20 ticks @ 10 ticks/sec
   // No OpenFront equivalent — its ShellExecution resolves damage the instant
-  // it fires. Chosen so a shell fired at max WARSHIP_TARGET_RANGE still lands
-  // (130/75≈1.73s) before the next WARSHIP_SHELL_COOLDOWN, so a target never
-  // has two shells in flight toward it at once.
-  WARSHIP_SHELL_SPEED: 75,
+  // it fires. Slowed well below the "one shell in flight" pace (130/75≈1.73s)
+  // so shells read as a travel-time projectile rather than a fast hit-scan;
+  // a target can now have more than one shell in flight toward it at once.
+  WARSHIP_SHELL_SPEED: 25,
   WARSHIP_CAPTURE_DIST: 5,                // huntDownTradeShip's manhattan capture distance
   // BOAT_SPEED's own comment: 10 ticks/sec, 1 tile/tick is the ported rate
   // for every ship type in this file, warships included — OpenFront has no
@@ -3424,6 +4085,7 @@ const Game = {
     p.unitsBuilt.warship = this.unitsBuilt(p, 'warship') + 1;
     p.units.warship = this.unitsOwned(p, 'warship') + 1;
     this.warships.push({
+      id: this.nextWarshipId++,
       owner: playerId,
       path: r.path, pos: 0,
       patrolTile: r.dest,
@@ -3443,12 +4105,18 @@ const Game = {
   // the player shouldn't need to land exactly on water pixel-for-pixel.
   // Also becomes the new patrol center once it arrives, exactly like
   // OpenFront's own patrolTile field — see warshipPatrol.
-  moveWarships(list, clickTile) {
+  // `playerId` — whose fleet this order is — defaults to this.me for the
+  // existing ui.js call site, for the same reason chooseSpawn's does: the
+  // ownership check below is a real rule of the sim, and a rule may not be
+  // decided by which client is looking. MP-1.2's Executor passes the actor
+  // resolved from the intent's stamped clientID.
+  moveWarships(list, clickTile, playerId) {
+    const owner = playerId === undefined ? this.me : playerId;
     const tile = this.nearestWaterNear(clickTile, this.NEAREST_COAST_MAX_DIST);
     if (tile < 0) return false;
     let moved = false;
     for (const w of list) {
-      if (!this.warships.includes(w) || w.owner !== this.me) continue;
+      if (!this.warships.includes(w) || w.owner !== owner) continue;
       const idx = Math.min(w.path.length - 1, Math.floor(w.pos));
       const curTile = w.path[idx];
       const path = this.seaPath([curTile], tile);
@@ -3524,7 +4192,7 @@ const Game = {
     w.lastShellAt = this.elapsed;
     const from = this.pathPos(w);
     const to = this.pathPos(w.target);
-    const dist = Math.hypot(to.x - from.x, to.y - from.y);
+    const dist = this.det.hypot(to.x - from.x, to.y - from.y);
     this.shells.push({
       ownerId: w.owner,
       from, to,
@@ -3551,7 +4219,7 @@ const Game = {
   // reachable Port (e.g. captured by a warship whose last Port has since
   // fallen), it just keeps its old route/destination under new colours,
   // same as before this redirect existed.
-  warshipChaseTradeShip(w, dt, curTile) {
+  warshipChaseTradeShip(w, curTile) {
     const target = w.target;
     const tIdx = Math.min(target.path.length - 1, Math.floor(target.pos));
     const targetTile = target.path[tIdx];
@@ -3571,7 +4239,7 @@ const Game = {
       if (path) { w.path = path; w.pos = 0; }
       w.lastPathAt = this.elapsed;
     }
-    w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * this.WARSHIP_CHASE_SPEED_MULT * dt);
+    w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * this.WARSHIP_CHASE_SPEED_MULT * this.TICK_DT);
   },
 
   // Bounded rejection sample for a water tile within patrol range of
@@ -3598,7 +4266,7 @@ const Game = {
   // order actually plays out — that just seeds w.path/patrolTile directly,
   // so once it arrives this same "arrived → pick a new nearby waypoint"
   // logic takes over from the new center with no special-casing needed.
-  warshipPatrol(w, dt, curTile) {
+  warshipPatrol(w, curTile) {
     const arrived = !w.path || w.pos >= w.path.length - 1;
     if (arrived) {
       if (this.elapsed - w.lastPathAt >= this.WARSHIP_REPATH_INTERVAL) {
@@ -3611,13 +4279,13 @@ const Game = {
       }
       return;
     }
-    w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * dt);
+    w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * this.TICK_DT);
   },
 
   // Revalidates (and, if empty, re-acquires) a target every tick, then hands
   // off to combat/chase/patrol — see WarshipExecution.tick's own priority
   // chain (transport ship > warship > trade ship > patrol), reproduced here.
-  warshipTick(w, dt) {
+  warshipTick(w) {
     const idx = Math.min(w.path.length - 1, Math.floor(w.pos));
     const curTile = w.path[idx];
     const pos = this.pathPos(w);
@@ -3643,10 +4311,10 @@ const Game = {
       return;
     }
     if (w.targetKind === 'tradeship') {
-      this.warshipChaseTradeShip(w, dt, curTile);
+      this.warshipChaseTradeShip(w, curTile);
       return;
     }
-    this.warshipPatrol(w, dt, curTile);
+    this.warshipPatrol(w, curTile);
   },
 
   // Advances every in-flight shell (see warshipShootAt) and resolves impact
@@ -3658,7 +4326,7 @@ const Game = {
   // shell, or (boat) already spent invading — in which case it's just a
   // no-op fizzle. render.js's drawShells reads shell.from/to/born/duration
   // directly to interpolate + blink the projectile; nothing here owns that.
-  stepShells(dt) {
+  stepShells() {
     for (let i = this.shells.length - 1; i >= 0; i--) {
       const s = this.shells[i];
       if (this.elapsed - s.born < s.duration) continue;
@@ -3679,7 +4347,7 @@ const Game = {
   // so unitCost's price curve reflects the fleet actually still afloat.
   // unitsBuilt is left untouched, same treatment losing a captured structure
   // gets — see the UNITS comment on why it never decrements.
-  stepWarships(dt) {
+  stepWarships() {
     for (let i = this.warships.length - 1; i >= 0; i--) {
       const w = this.warships[i];
       if (w.health <= 0) {
@@ -3688,7 +4356,575 @@ const Game = {
         if (owner) owner.units.warship = Math.max(0, this.unitsOwned(owner, 'warship') - 1);
         continue;
       }
-      this.warshipTick(w, dt);
+      this.warshipTick(w);
+    }
+  },
+
+  // --- Missile Silo & Nukes -----------------------------------------------
+  // Ported against OpenFront's real MissileSiloExecution/NukeExecution/
+  // Config.ts source (github.com/openfrontio/OpenFrontIO), not guessed — see
+  // feedback-openfront-source-porting memory for the fetch approach. Scoped
+  // down from the real source the same way every other structure in this
+  // file has been (see the UNITS/Warship section comments above), per an
+  // explicit user scoping decision this session: only Missile Silo, Atom
+  // Bomb, and Hydrogen Bomb are ported here. SAM Launcher (the defensive
+  // interceptor) was deferred at the time this comment was first written but
+  // has since been added — see the "SAM Launcher & Interceptors" section
+  // below, right after stepNukes. MIRV (the multi-warhead mega-nuke) is
+  // still deliberately left for a later pass. Alliance-breaking
+  // (NukeExecution.maybeBreakAlliances' weighted-tile-count threshold) is
+  // also not ported; a nuke strike has no diplomatic side effect here.
+  //
+  // Purchase/targeting follows the same "click anywhere, launch from the
+  // nearest ready structure" UX Warship's resolveWarshipLaunch already
+  // established (see that function's own comment) — real OpenFront's own
+  // nuke targeting works this way natively (any tile is a valid target,
+  // Player.canBuild resolves which Silo actually launches it), so this one
+  // needed no divergence note the way Warship's port-requirement did.
+  //
+  // A nuke is a wholly new entity shape, not reusing the boat/warship/
+  // trade-ship {path, pos} convention Game.pathPos reads — a missile flies
+  // in a straight line over anything (terrain, water, the map's whole
+  // pathfinding graph) rather than following a route, so it only ever needs
+  // its fixed from/to endpoints and a travel duration, exactly like a
+  // Warship's own shell (see warshipShootAt/stepShells) but slower and far
+  // more destructive on arrival.
+
+  // Config.ts's nukeMagnitudes(): inner = guaranteed-destroyed radius, outer
+  // = the falling-off "radiating" edge (see nukeBlastTiles). Tile radii,
+  // not ticks — no rescaling needed, since MAP_SIZES already ports
+  // OpenFront's real map dimensions tile-for-tile (see TRAIN_STATION_MAX_
+  // RANGE's own comment making the identical point). MIRV's own magnitude
+  // (12/18) isn't carried here — no MIRV in this pass.
+  NUKE_MAGNITUDES: {
+    atombomb: { inner: 12, outer: 30 },
+    hydrogenbomb: { inner: 80, outer: 100 }
+  },
+  // Config.ts's nukeSpeed(): both bomb types return 10 in their own per-tick
+  // scale, which converts to 100 tiles/sec via TICKS_PER_SEC exactly like
+  // BOAT_SPEED's own "1 tile/tick" comment. Slowed well below that ported
+  // rate so a nuke's flight is visible on screen instead of near-instant,
+  // while still reading as dramatically faster than a boat/warship.
+  NUKE_SPEED: { atombomb: 45, hydrogenbomb: 45 },
+  // Config.ts's SiloCooldown(): 90 ticks, converted through TICKS_PER_SEC.
+  SILO_COOLDOWN: 9,
+  // No OpenFront equivalent — purely how long the render-only shockwave
+  // effect (see detonateNuke's push to nukeBlasts) stays on screen.
+  NUKE_BLAST_FX_DURATION: 1.2,
+
+  // Config.ts's nukeDeathFactor with the MIRVWarhead branch dropped (no MIRV
+  // in this pass) — the AtomBomb/HydrogenBomb branch is the same formula
+  // for both types regardless: 5x the target's current troops, divided by
+  // however many owned tiles they have left. Called once per impacted tile
+  // in detonateNuke's loop, with `humans`/`tilesLeft` shrinking each
+  // iteration, so the same nuke hurts more per-tile against a nation that's
+  // already small than one that's still large — verbatim their own
+  // diminishing-effect loop.
+  nukeDeathFactor(humans, tilesLeft) {
+    return (5 * humans) / Math.max(1, tilesLeft);
+  },
+
+  // Resolves what a nuke-purchase click actually means: which of the
+  // player's own built, off-cooldown Silos launches it, and the target tile
+  // (unlike Warship's resolveWarshipLaunch, a nuke's destination is never
+  // snapped — any tile, land, water, even a tile the player's own nation
+  // holds, is a legal target, matching real OpenFront exactly). Returns
+  // { ok:false, reason } or { ok:true, silo, dst }. Shared by
+  // nukeBlockReason (a dry run for the UI) and launchNuke.
+  resolveNukeLaunch(playerId, nukeType, clickTile) {
+    const p = this.players[playerId];
+    if (!p || !p.alive) return { ok: false, reason: 'Nation defeated' };
+    if (clickTile < 0) return { ok: false, reason: 'Off the map' };
+
+    const silos = [];
+    for (const b of this.buildings.values()) {
+      if (b.type === 'silo' && b.built && GameMap.owner[b.tile] === playerId) silos.push(b);
+    }
+    if (silos.length === 0) return { ok: false, reason: 'Build a Missile Silo first' };
+
+    const ready = silos.filter(s => this.elapsed - s.lastLaunchAt >= this.SILO_COOLDOWN);
+    if (ready.length === 0) return { ok: false, reason: 'Silo reloading' };
+
+    if (p.gold < this.unitCost(p, nukeType)) return { ok: false, reason: 'Not enough gold' };
+
+    // Nearest ready Silo by straight-line distance — a missile has no route
+    // to fail, unlike a Warship's seaPath, so there's nothing to fall back
+    // through a second/third candidate for.
+    ready.sort((a, c) => this.tileDistSq(a.tile, clickTile) - this.tileDistSq(c.tile, clickTile));
+    return { ok: true, silo: ready[0], dst: clickTile };
+  },
+
+  nukeBlockReason(playerId, nukeType, clickTile) {
+    return this.resolveNukeLaunch(playerId, nukeType, clickTile).reason || null;
+  },
+
+  canLaunchNuke(playerId, nukeType, clickTile) { return !this.nukeBlockReason(playerId, nukeType, clickTile); },
+
+  // Spawns instantly (matching SpawnExecution, same as buildWarship) at the
+  // resolved Silo's tile, flying a straight line to the clicked destination.
+  // Puts the launching Silo on cooldown immediately, exactly like
+  // resolveWarshipLaunch's own MissileSilo.launch() call.
+  launchNuke(playerId, nukeType, clickTile) {
+    const r = this.resolveNukeLaunch(playerId, nukeType, clickTile);
+    if (!r.ok) return false;
+    const p = this.players[playerId];
+    p.gold -= this.unitCost(p, nukeType);
+    r.silo.lastLaunchAt = this.elapsed;
+
+    const w = GameMap.width;
+    const from = { x: r.silo.tile % w, y: (r.silo.tile / w) | 0 };
+    const to = { x: clickTile % w, y: (clickTile / w) | 0 };
+    const dist = this.det.hypot(to.x - from.x, to.y - from.y);
+    this.nukes.push({
+      ownerId: playerId, nukeType,
+      src: r.silo.tile, dst: clickTile,
+      from, to,
+      born: this.elapsed,
+      duration: Math.max(0.3, dist / this.NUKE_SPEED[nukeType]),
+      // SAMTargetingSystem's targetedBySam flag, ported for stepSAMs (see
+      // "SAM Launcher & Interceptors") — set the instant a SAM commits a
+      // charge to this nuke, so a second SAM never also claims it.
+      targetedBySAM: false
+    });
+    return true;
+  },
+
+  // Debug-panel nuke — fires a nuke straight into this.nukes from an
+  // explicit source/destination pair, skipping every resolveNukeLaunch check
+  // (Silo built, cooldown, gold). Backs UI's two-click "Debug Nuke"/"Debug
+  // H-Bomb" buttons (see ui.js's armDebugNuke/onTap 'debugnuke' branch), but
+  // also callable straight from the browser console since Game is a plain
+  // top-level const, not module-scoped:
+  //   Game.debugNuke('atombomb', 1000, 1234)
+  //   Game.debugNuke('hydrogenbomb', 1000, 1234, ownerId)
+  // owner defaults to the first living non-tribe bot (so your own SAMs treat
+  // it as hostile, same as a real attack) and falls back to the human player
+  // if no such bot exists — letting srcTile/dstTile be any two tiles at all (own
+  // territory included) is what makes this useful for testing SAM defenses
+  // without waiting on a bot to build a Silo and choose to strike.
+  debugNuke(nukeType, srcTile, dstTile, ownerId = null) {
+    const w = GameMap.width;
+    if (ownerId == null) {
+      // "Not me" was only ever a stand-in for "not the human" — express it
+      // that way so even this debug helper stays independent of which client
+      // is viewing, and picks the same owner everywhere.
+      ownerId = this.players.findIndex(p => p && p.alive && !p.isTribe && !p.isHuman);
+      if (ownerId < 0) ownerId = this.players.findIndex(p => p && p.isHuman);
+    }
+    if (!this.players[ownerId]) { console.warn('[debugNuke] no such player', ownerId); return false; }
+
+    const from = { x: srcTile % w, y: (srcTile / w) | 0 };
+    const to = { x: dstTile % w, y: (dstTile / w) | 0 };
+    const dist = this.det.hypot(to.x - from.x, to.y - from.y);
+    this.nukes.push({
+      ownerId, nukeType,
+      src: srcTile, dst: dstTile,
+      from, to,
+      born: this.elapsed,
+      duration: Math.max(0.3, dist / this.NUKE_SPEED[nukeType]),
+      targetedBySAM: false
+    });
+    return true;
+  },
+
+  // The "radiating" blast footprint: a flood fill out from the impact tile,
+  // solid within the inner radius and a 50/50 coin flip per tile in the band
+  // between inner and outer — Config.ts's real rand.chance(2) — so the
+  // crater's edge burns outward unevenly instead of stopping in a hard-edged
+  // circle. Verbatim NukeExecution.tilesToDestroy's non-waterNukes branch
+  // (this game has no waterNukes toggle, so the smooth-irregular-boundary
+  // water-nuke branch isn't ported). A tile only joins the set by being
+  // reached as a passing neighbour of one already in it, exactly like the
+  // real mg.bfs call — the coin flip can sever connectivity and leave an
+  // isolated pocket beyond it untouched, which is a faithful reproduction of
+  // the real shape, not a bug.
+  nukeBlastTiles(dst, magnitude) {
+    const inner2 = magnitude.inner * magnitude.inner;
+    const outer2 = magnitude.outer * magnitude.outer;
+    const result = new Set([dst]);
+    const queue = [dst];
+    const nb = new Int32Array(4);
+    let head = 0;
+    while (head < queue.length) {
+      const i = queue[head++];
+      const n = GameMap.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (result.has(j)) continue;
+        const d2 = this.tileDistSq(dst, j);
+        if (d2 > outer2) continue;
+        if (d2 > inner2 && this.rng() >= 0.5) continue;
+        result.add(j);
+        queue.push(j);
+      }
+    }
+    return result;
+  },
+
+  // Ported against NukeExecution.detonate(). Order matters: buildings are
+  // destroyed FIRST, reading ownership straight off GameMap.owner before
+  // anything below overwrites it; then tiles are unclaimed and irradiated —
+  // the "radiating land" the user asked for, which turned out to mean
+  // OpenFront's real fallout mechanic, not a literal water crater: the land
+  // survives, unowned, and stays fully capturable — just brutally expensive
+  // to retake until someone actually does (see falloutDefenseModifier); then
+  // troop losses are applied using the POST-irradiation tile counts
+  // (tilesBeforeNuke = numTilesOwned() + numImpactedTiles, verbatim their
+  // own detonate()); then finally anything afloat within the full outer-
+  // radius circle sinks — a stricter, luck-free circle than the
+  // probabilistic "radiating" land-destroy shape above, matching how the
+  // real source's separate mg.units() sweep uses a flat
+  // euclideanDistSquared test with no rand.chance involved, and how a
+  // structure can therefore be destroyed by this circle even on a tile the
+  // land-destroy coin flip happened to spare.
+  detonateNuke(nuke) {
+    const dst = nuke.dst;
+    const magnitude = this.NUKE_MAGNITUDES[nuke.nukeType];
+    const outer2 = magnitude.outer * magnitude.outer;
+    const w = GameMap.width;
+    const dstX = dst % w, dstY = (dst / w) | 0;
+    const withinOuter = (pos) => (pos.x - dstX) ** 2 + (pos.y - dstY) ** 2 < outer2;
+
+    // 1. Every building within the full outer-radius circle, owner read
+    // fresh before step 2 below can touch GameMap.owner.
+    for (const [tile, b] of this.buildings) {
+      if (this.tileDistSq(dst, tile) >= outer2) continue;
+      const owner = GameMap.owner[tile];
+      if (owner >= 0) {
+        const op = this.players[owner];
+        if (b.built) op.units[b.type] = Math.max(0, this.unitsOwned(op, b.type) - b.level);
+        else op.unitsPending[b.type] = Math.max(0, this.unitsPending(op, b.type) - 1);
+      }
+      this.buildings.delete(tile);
+    }
+
+    // 2. Unclaim + irradiate the "radiating" land-destroy set. Real
+    // GameImpl.queueWaterConversion only actually turns land to water under
+    // a `waterNukes` ruleset toggle this game doesn't model — its default
+    // (and this port's) behavior is `setFallout(tile, true)` instead: the
+    // land itself survives, unowned and radioactive, still fully capturable
+    // — just at falloutDefenseModifier's steep troop/speed multiplier (see
+    // tileCost/stepAttack) until someone actually resettles it, which
+    // GameImpl's own conquer() clears instantly (ported in setOwner above).
+    const toDestroy = this.nukeBlastTiles(dst, magnitude);
+    const tilesPerPlayer = new Map();
+    for (const tile of toDestroy) {
+      const owner = GameMap.owner[tile];
+      if (owner >= 0) {
+        this.players[owner].tiles.delete(tile);
+        tilesPerPlayer.set(owner, (tilesPerPlayer.get(owner) || 0) + 1);
+        GameMap.owner[tile] = NEUTRAL;
+      }
+      // Fallout applies to every LAND tile in the blast, owned or not —
+      // verbatim queueWaterConversion's own mg.isLand(tile) guard, which has
+      // no ownership condition. `owner !== WATER` is this game's isLand
+      // check (already-relinquished-to-NEUTRAL tiles above still count).
+      if (owner !== WATER) this.fallout.add(tile);
+      this.dirtyTiles.add(tile);
+    }
+
+    // 3. Diminishing troop losses — the player's home reserve, their
+    // outgoing attacks, and their in-transit invasion boats all take the
+    // same per-tile nukeDeathFactor hit, each reading/writing live so the
+    // loss compounds exactly like the real per-tile loop does.
+    for (const [ownerId, numImpactedTiles] of tilesPerPlayer) {
+      const p = this.players[ownerId];
+      let tilesLeft = p.tiles.size + numImpactedTiles;
+      for (let i = 0; i < numImpactedTiles; i++) {
+        p.troops = Math.max(0, p.troops - this.nukeDeathFactor(p.troops, tilesLeft));
+        for (const a of this.attacks) {
+          if (a.attacker !== ownerId) continue;
+          a.troops = Math.max(0, a.troops - this.nukeDeathFactor(a.troops, tilesLeft));
+        }
+        for (const bt of this.boats) {
+          if (bt.attacker !== ownerId) continue;
+          bt.troops = Math.max(0, bt.troops - this.nukeDeathFactor(bt.troops, tilesLeft));
+        }
+        tilesLeft--;
+      }
+    }
+
+    // 4. Anything afloat within the same full outer-radius circle sinks
+    // outright, own fleet included — no owner immunity, matching the real
+    // source's unconditional mg.units() sweep.
+    for (let i = this.warships.length - 1; i >= 0; i--) {
+      if (withinOuter(this.pathPos(this.warships[i]))) this.warships.splice(i, 1);
+    }
+    for (let i = this.boats.length - 1; i >= 0; i--) {
+      if (withinOuter(this.pathPos(this.boats[i]))) this.boats.splice(i, 1);
+    }
+    for (let i = this.tradeShips.length - 1; i >= 0; i--) {
+      if (withinOuter(this.pathPos(this.tradeShips[i]))) this.tradeShips.splice(i, 1);
+    }
+
+    // Ephemeral shockwave for render.js's drawNukeBlasts — not gameplay
+    // state, just aged out and pruned by stepNukes below.
+    this.nukeBlasts.push({ x: dstX, y: dstY, inner: magnitude.inner, outer: magnitude.outer, born: this.elapsed });
+  },
+
+  // Advances every in-flight nuke (straight-line, see launchNuke) and
+  // detonates it once its travel duration elapses. A nuke intercepted by a
+  // SAM this same tick never reaches here at all — stepSamMissiles (called
+  // first, see Game.tick) already spliced it out of this.nukes — so this
+  // still needs no interception check of its own; every nuke still in the
+  // array by the time this runs is one that got through. Also prunes spent
+  // shockwave effects, the only other thing this system leaves lying around.
+  stepNukes() {
+    for (let i = this.nukes.length - 1; i >= 0; i--) {
+      const n = this.nukes[i];
+      if (this.elapsed - n.born < n.duration) continue;
+      this.nukes.splice(i, 1);
+      this.detonateNuke(n);
+    }
+    for (let i = this.nukeBlasts.length - 1; i >= 0; i--) {
+      if (this.elapsed - this.nukeBlasts[i].born > this.NUKE_BLAST_FX_DURATION) this.nukeBlasts.splice(i, 1);
+    }
+  },
+
+  // --- SAM Launcher & Interceptors ------------------------------------------
+  // Ported against OpenFront's real SAMLauncherExecution.ts/
+  // SAMMissileExecution.ts/Config.ts source (github.com/openfrontio/
+  // OpenFrontIO), not guessed — see feedback-openfront-source-porting memory.
+  //
+  // Charges: verbatim UnitImpl's own model. A SAM's `samQueue` holds one
+  // elapsed-time entry per charge currently mid-reload, capacity-capped at
+  // its `level` — `queue.length === level` means fully saturated (no free
+  // charge), exactly matching real UnitImpl.isInCooldown(). A level-2 SAM
+  // therefore has two independent SAM_COOLDOWN timers, not one shared one:
+  // firing both at once (two nukes converging in the same tick) reloads them
+  // back-to-back rather than serially, and firing just one leaves the other
+  // charge free to answer a second launch immediately. Leveling up doesn't
+  // hand over its new charge for free either — increaseLevel pushes a fresh
+  // queue entry the same way a real launch does, so the extra capacity has
+  // to reload once before it's usable (see updateConstruction's upgrade
+  // branch, which does the equivalent push).
+  //
+  // Range: samRange(level) is their exact rational curve, asymptotically
+  // approaching SAM_MAX_RANGE (150 tiles, unscaled — see NUKE_MAGNITUDES'
+  // own comment on why OpenFront's map dimensions need no rescaling here):
+  // level 1 = 70, level 3 = 90, level 5 = 102. It also doesn't jump the
+  // instant an upgrade completes — dynamicSamRange ramps it linearly over
+  // SAM_UPGRADE_RAMP seconds, matching their own samLauncherState/
+  // dynamicSamRange pair.
+  //
+  // Targeting/interception is the one piece that couldn't be a literal
+  // port: the real SAMTargetingSystem walks a nuke's discretized per-tile
+  // trajectory (from its own ParabolaUniversalPathFinder) looking for a tile
+  // both in range and reachable in time. This game's nukes don't have that
+  // — Game.launchNuke gives a nuke only fixed from/to endpoints and a
+  // born/duration pair, a continuous straight-line flight (see that
+  // section's own comment on why). samSolveIntercept below is the
+  // continuous-time equivalent of the same question — algebraically solving
+  // "where do these two constant-velocity paths meet" instead of stepping
+  // tile by tile — which is exactly as precise while fitting this game's own
+  // data shape.
+
+  SAM_MAX_RANGE: 150,
+  // Config.ts's SAMCooldown(): 90 ticks, same conversion SILO_COOLDOWN's own
+  // comment already explains (TICKS_PER_SEC=10) — and, tellingly, the exact
+  // same raw value as SiloCooldown, so the two structures share a cooldown
+  // pace even though nothing in the real source ties them together.
+  SAM_COOLDOWN: 9,
+  // Config.ts's samUpgradeDuration(): floor(SAMCooldown()/2) ticks, in this
+  // file's own seconds scale rather than raw ticks.
+  SAM_UPGRADE_RAMP: 4.5,
+  // Config.ts's defaultSamMissileSpeed(): 12 tiles/tick raw = 120 tiles/sec,
+  // a 1.2x ratio over their own raw nukeSpeed (100 tiles/sec — see
+  // NUKE_SPEED's comment). Applied to THIS game's own slowed-down NUKE_SPEED
+  // (45, not the raw 100) to preserve that same 1.2x ratio rather than the
+  // real absolute number, same reasoning NUKE_SPEED's own comment gives for
+  // why it was slowed in the first place.
+  SAM_MISSILE_SPEED: 54,
+  // No OpenFront equivalent, same as NUKE_BLAST_FX_DURATION just above it —
+  // purely how long the intercept-confirmation ring (see stepSamMissiles)
+  // stays on screen.
+  SAM_FLASH_FX_DURATION: 0.5,
+
+  samRange(level) {
+    return this.SAM_MAX_RANGE - 480 / (level + 5);
+  },
+
+  // Config.ts's dynamicSamRange: while a level-up is still ramping (see
+  // updateConstruction's `b.samRangeUpgrade` hook), the effective range
+  // slides linearly from whatever range was actually in effect the instant
+  // the upgrade landed, up to the new level's — otherwise it's just the
+  // static value for the current level. `now` is passed explicitly (rather
+  // than always reading this.elapsed) so stepSAMs' intercept solve can ask
+  // "what will the range be at the tick the interceptor actually arrives",
+  // matching the real source's own ticks+expTicks lookahead — the ramp
+  // formula is a pure function of elapsed-since-upgrade, so it extrapolates
+  // correctly into the future with no special-casing needed.
+  //
+  // Clamped on BOTH ends, not just the upper one: render.js reads this with
+  // Game.renderElapsed, which only tracks Game.elapsed frame-by-frame inside
+  // main.js's normal animation loop (see renderElapsed's own comment) — but
+  // Game.fastForward() drives many ticks through Game.tick() directly,
+  // without ever touching renderElapsed. An upgrade whose `startAt` lands
+  // mid-burst leaves renderElapsed sitting BEFORE state.startAt until the
+  // next real animation frame catches up, which un-clamped produced a large
+  // negative `elapsed` here — extrapolating the ramp backwards into a
+  // negative range and crashing ctx.arc's radius in drawStructures (caught
+  // live via a fastForward-shaped repro while verifying this feature).
+  // Clamping elapsed<=0 to the pre-upgrade startRange is the correct
+  // behavior anyway, not just a crash guard: from that reader's-clock
+  // perspective the ramp hasn't started yet.
+  dynamicSamRange(b, now) {
+    const state = b.samRangeUpgrade;
+    if (!state) return this.samRange(b.level);
+    const elapsed = now - state.startAt;
+    if (elapsed <= 0) return state.startRange;
+    if (elapsed >= this.SAM_UPGRADE_RAMP) return this.samRange(state.targetLevel);
+    const targetRange = this.samRange(state.targetLevel);
+    return state.startRange + (targetRange - state.startRange) * elapsed / this.SAM_UPGRADE_RAMP;
+  },
+
+  // Solves "where do these two constant-velocity paths meet" — the
+  // continuous-time equivalent of SAMTargetingSystem's per-tile trajectory
+  // walk (see the section comment above). `samPos` is fixed; the nuke moves
+  // along its own fixed from/to line. An interceptor launched THIS INSTANT
+  // at SAM_MISSILE_SPEED needs travel time t solving
+  // |nukePos(now+t) - samPos| = SAM_MISSILE_SPEED * t — a standard
+  // turret-lead-the-target quadratic in t. Returns the smallest positive
+  // root and the meeting point, or null if the nuke's already gone, the
+  // quadratic has no positive real root (SAM_MISSILE_SPEED can't catch it in
+  // time), or the meeting point would land at-or-after the nuke's own
+  // detonation.
+  samSolveIntercept(samPos, nuke, now) {
+    const remaining = nuke.born + nuke.duration - now;
+    if (remaining <= 0) return null;
+    const dx = nuke.to.x - nuke.from.x, dy = nuke.to.y - nuke.from.y;
+    const vx = dx / nuke.duration, vy = dy / nuke.duration;
+    const u = (now - nuke.born) / nuke.duration;
+    const px = nuke.from.x + dx * u, py = nuke.from.y + dy * u;
+    const rx = px - samPos.x, ry = py - samPos.y;
+    const speed2 = this.SAM_MISSILE_SPEED * this.SAM_MISSILE_SPEED;
+    const a = (vx * vx + vy * vy) - speed2;
+    const bq = 2 * (rx * vx + ry * vy);
+    const cq = rx * rx + ry * ry;
+    let t;
+    if (Math.abs(a) < 1e-6) {
+      if (Math.abs(bq) < 1e-9) return null;
+      t = -cq / bq;
+    } else {
+      const disc = bq * bq - 4 * a * cq;
+      if (disc < 0) return null;
+      const sq = Math.sqrt(disc);
+      const t1 = (-bq + sq) / (2 * a), t2 = (-bq - sq) / (2 * a);
+      t = Infinity;
+      if (t1 > 1e-6) t = Math.min(t, t1);
+      if (t2 > 1e-6) t = Math.min(t, t2);
+      if (!isFinite(t)) return null;
+    }
+    // A hair of margin before the nuke's own detonation, not exactly on it —
+    // avoids a same-tick float-coincidence race between stepSamMissiles'
+    // resolution and stepNukes' own duration check.
+    if (t <= 0 || t >= remaining - 0.01) return null;
+    return { t, x: px + vx * t, y: py + vy * t };
+  },
+
+  // Config.ts's SAMTargetingSystem.computeTargetScore, translated off this
+  // game's own nuke shape (dst/nukeType/born/duration rather than a
+  // trajectory array) — a tiebreaker for which nuke a multi-charge SAM fires
+  // at first when several are interceptable the same tick: Hydrogen Bombs
+  // outrank Atom Bombs, impacts closer to the SAM outrank farther ones, and
+  // soon-to-land nukes edge out ones with more time left. The real source
+  // calls this "only a very minor tiebreaker" since every candidate here is
+  // already guaranteed interceptable — it just orders which charge answers
+  // which nuke first, not whether an interception happens at all.
+  samTargetScore(b, cand) {
+    const w = GameMap.width;
+    const dstX = cand.nuke.dst % w, dstY = (cand.nuke.dst / w) | 0;
+    const samX = b.tile % w, samY = (b.tile / w) | 0;
+    const distToSam = Math.abs(dstX - samX) + Math.abs(dstY - samY);
+    const typeBonus = cand.nuke.nukeType === 'hydrogenbomb' ? 70001 : 0;
+    const distanceBonus = Math.max(0, 200000 - distToSam * 1000);
+    const remaining = (cand.nuke.born + cand.nuke.duration) - this.elapsed;
+    const urgencyBonus = Math.max(0, 10000 - remaining * this.TICKS_PER_SEC * 100);
+    return typeBonus + distanceBonus + urgencyBonus;
+  },
+
+  // Config.ts's SAMLauncherExecution.tick, adapted to this game's continuous
+  // clock: reload any charges whose SAM_COOLDOWN has elapsed, settle a
+  // finished range ramp, then — while a charge remains free — fire at
+  // whichever interceptable, not-already-targeted enemy nuke scores highest.
+  // "Interceptable" means samSolveIntercept finds a real future meeting
+  // point AND that point sits inside the SAM's dynamic range at the tick the
+  // interceptor would actually arrive (dynamicSamRange called with a future
+  // `now`, matching the real source's own lookahead — see its own comment).
+  // Allied nukes are skipped outright rather than porting the real source's
+  // narrow endgame exception (only intercept an ally's nuke once a winner
+  // already exists and they're on the same team) — this game has no
+  // team/winner system for that exception to hook into. A SAM can fire more
+  // than one charge in the same tick, exactly like the real source's own
+  // `for (target of targets) { if (cooldown) break; launch }` loop — a
+  // level-2+ SAM with several nukes converging on it isn't limited to one
+  // shot per tick.
+  stepSAMs() {
+    const w = GameMap.width;
+    for (const b of this.buildings.values()) {
+      if (b.type !== 'sam' || !b.built) continue;
+
+      while (b.samQueue.length && this.elapsed - b.samQueue[0] >= this.SAM_COOLDOWN) b.samQueue.shift();
+      if (b.samRangeUpgrade && this.elapsed - b.samRangeUpgrade.startAt >= this.SAM_UPGRADE_RAMP) {
+        b.samRangeUpgrade = null;
+      }
+      if (b.samQueue.length >= b.level) continue;
+
+      const ownerId = GameMap.owner[b.tile];
+      if (ownerId < 0) continue;
+      const samPos = { x: b.tile % w + 0.5, y: ((b.tile / w) | 0) + 0.5 };
+
+      const candidates = [];
+      for (const n of this.nukes) {
+        if (n.targetedBySAM || n.ownerId === ownerId || this.areAllied(ownerId, n.ownerId)) continue;
+        const solved = this.samSolveIntercept(samPos, n, this.elapsed);
+        if (!solved) continue;
+        const distSq = (solved.x - samPos.x) ** 2 + (solved.y - samPos.y) ** 2;
+        const range = this.dynamicSamRange(b, this.elapsed + solved.t);
+        if (distSq > range * range) continue;
+        candidates.push({ nuke: n, solved, score: 0 });
+      }
+      if (!candidates.length) continue;
+      for (const c of candidates) c.score = this.samTargetScore(b, c);
+      candidates.sort((x, y) => y.score - x.score);
+
+      for (const c of candidates) {
+        if (b.samQueue.length >= b.level) break;
+        b.samQueue.push(this.elapsed);
+        c.nuke.targetedBySAM = true;
+        this.samMissiles.push({
+          ownerId,
+          from: samPos, to: { x: c.solved.x, y: c.solved.y },
+          born: this.elapsed, duration: Math.max(0.05, c.solved.t),
+          target: c.nuke
+        });
+      }
+    }
+  },
+
+  // Advances every in-flight SAM interceptor (see stepSAMs) and resolves the
+  // kill once its precomputed intercept time elapses. Unlike stepShells'
+  // guarded fizzle, the target is always still in this.nukes at that point —
+  // samSolveIntercept only ever commits to an intercept that lands strictly
+  // before the nuke's own detonation (with a small safety margin — see its
+  // own comment), and targetedBySAM prevents any other SAM from
+  // double-claiming the same nuke — so there's nothing to validate here.
+  // Must run before stepNukes in Game.tick so a killed nuke never also
+  // detonates the same frame. render.js's drawSamMissiles reads
+  // from/to/born/duration directly, same as drawShells.
+  stepSamMissiles() {
+    for (let i = this.samMissiles.length - 1; i >= 0; i--) {
+      const m = this.samMissiles[i];
+      if (this.elapsed - m.born < m.duration) continue;
+      this.samMissiles.splice(i, 1);
+      const ni = this.nukes.indexOf(m.target);
+      if (ni >= 0) {
+        this.nukes.splice(ni, 1);
+        this.samFlashes.push({ x: m.to.x, y: m.to.y, born: this.elapsed });
+      }
+    }
+    for (let i = this.samFlashes.length - 1; i >= 0; i--) {
+      if (this.elapsed - this.samFlashes[i].born > this.SAM_FLASH_FX_DURATION) this.samFlashes.splice(i, 1);
     }
   }
 };

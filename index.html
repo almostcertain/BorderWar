@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0b1220">
-<title>Frontline — MVP</title>
+<title>BorderWar — MVP</title>
 <link rel="stylesheet" href="css/style.css" id="mainStyle">
 </head>
 <body>
@@ -20,6 +20,9 @@
   <button data-gold="50000">+50k gold</button>
   <button data-gold="500000">+500k gold</button>
   <button data-gold="5000000">+5M gold</button>
+  <button id="debugFastForward">Skip to mid-game</button>
+  <button id="debugNukeAtom">☢ Debug Nuke</button>
+  <button id="debugNukeHydrogen">💥 Debug H-Bomb</button>
 </div>
 
 <div id="hoverPanel" class="hidden">
@@ -50,6 +53,24 @@
   <span id="spawnBannerText"></span>
 </div>
 
+<!-- MP-4.2: diagnostic-only desync notice — UI.showDesyncWarning, driven by
+     main.js's onServerMessage handling an incoming `desync` message. Never
+     shown by anything else; click dismisses it locally (main.js), which does
+     not tell the server anything — the server's own "flagged" state for this
+     client is permanent for the match regardless. -->
+<div id="desyncBanner" class="hidden">
+  <span id="desyncBannerText"></span>
+</div>
+
+<!-- MP-4.1: reconnect catch-up progress — UI.updateCatchup, called once a
+     frame from main.js's loop with Runner.pendingTurns() straight after the
+     frame-budgeted drain. Not click-dismissible like the two banners above:
+     it isn't a one-shot notice, it's a live readout that hides itself the
+     moment the backlog is gone. -->
+<div id="catchupBanner" class="hidden">
+  <span id="catchupBannerText"></span>
+</div>
+
 <div id="radial" class="hidden"><div id="radialMenu"></div></div>
 
 <div id="hud">
@@ -59,25 +80,23 @@
     <button id="diploNo">Reject</button>
     <div id="diploBar"><div id="diploBarFill"></div></div>
   </div>
-  <div id="troopRow">
-    <span id="troopLabel">Troops</span>
-    <span id="troopValue">0</span>
-    <span id="troopCap">/ 0</span>
-    <span id="troopGrowth"></span>
-    <span id="troopMarching"></span>
-    <span id="traitorChip"></span>
-    <span id="tileValue"></span>
-  </div>
   <div id="frontsRow" class="hidden"></div>
-  <div id="popBar"><div id="popBarFill"></div><div id="popBarMarch"></div><div id="popBarPeak"></div></div>
-  <div id="goldRow">
-    <span id="goldLabel">Gold</span>
-    <span id="goldValue">0</span>
-    <span id="goldRate"></span>
+  <div id="statusRow">
+    <div id="growthChip"><span id="troopGrowth"></span></div>
+    <div id="popBar">
+      <div id="popBarFill"></div>
+      <div id="popBarMarch"></div>
+      <div id="popBarPeak"></div>
+      <span id="traitorChip"></span>
+      <div id="popBarLabel">
+        <span id="troopValue">0</span><span id="popBarSep">/</span><span id="troopCap">0</span>
+      </div>
+    </div>
+    <div id="goldChip"><span class="hpIcon">🪙</span><span id="goldValue">0</span></div>
   </div>
-  <div id="sliderRow">
+  <div id="ratioRow">
+    <span id="ratioLabel"><span id="ratioValue">20%</span> <span id="ratioTroops"></span></span>
     <input id="ratio" type="range" min="5" max="100" step="5" value="20">
-    <span id="ratioValue">20%</span>
   </div>
   <div id="buildBar"></div>
   <div id="hint">Tap land to attack · right-click or hold a nation for diplomacy · drag to pan</div>
@@ -85,19 +104,71 @@
 
 <div id="overlay">
   <div class="panel">
-    <h1>Frontline</h1>
+    <h1>BorderWar</h1>
     <p>Expand across the map. Tap neutral land or an enemy nation to send troops along your border.</p>
-    <label>Map
-      <select id="mapSize">
-        <option value="small">Small</option>
-        <option value="medium" selected>Medium</option>
-        <option value="large">Large</option>
-        <option value="xlarge">Extra Large</option>
-      </select>
-    </label>
-    <label>Bots <input id="botCount" type="number" min="2" max="31" value="9"></label>
-    <label>Tribes <input id="tribeCount" type="number" min="0" max="80" value="16"></label>
-    <button id="startBtn">Start Game</button>
+
+    <!-- MP-2.3: mode choice above the existing singleplayer flow, which is
+         otherwise untouched below (#mapSize/#botCount/#tribeCount/#startBtn
+         keep their exact ids and behavior — main.js's start() reads them the
+         same way it always has). Host/Join are two more panels reusing the
+         same Transport/onConnect/onServerMessage pipeline with local:false;
+         see js/main.js's "Multiplayer lobby" section. -->
+    <div id="modeTabs">
+      <button type="button" class="modeTab active" data-mode="sp">Singleplayer</button>
+      <button type="button" class="modeTab" data-mode="host">Host</button>
+      <button type="button" class="modeTab" data-mode="join">Join</button>
+    </div>
+
+    <div id="spMode" class="modeBody">
+      <label>Map
+        <select id="mapSize">
+          <option value="small">Small</option>
+          <option value="medium" selected>Medium</option>
+          <option value="large">Large</option>
+          <option value="xlarge">Extra Large</option>
+        </select>
+      </label>
+      <label>Bots <input id="botCount" type="number" min="2" max="31" value="9"></label>
+      <label>Tribes <input id="tribeCount" type="number" min="0" max="80" value="16"></label>
+      <button id="startBtn">Start Game</button>
+    </div>
+
+    <div id="hostMode" class="modeBody hidden">
+      <label>Username <input id="hostUsername" type="text" maxlength="20" placeholder="You"></label>
+      <label>Map
+        <select id="hostMapSize">
+          <option value="small">Small</option>
+          <option value="medium" selected>Medium</option>
+          <option value="large">Large</option>
+          <option value="xlarge">Extra Large</option>
+        </select>
+      </label>
+      <label>Bots <input id="hostBotCount" type="number" min="0" max="31" value="9"></label>
+      <label>Tribes <input id="hostTribeCount" type="number" min="0" max="80" value="16"></label>
+      <button id="hostCreateBtn">Create Lobby</button>
+
+      <div id="hostLobby" class="hidden">
+        <div class="lobbyLabel">Join code</div>
+        <div id="lobbyCode"></div>
+        <div class="lobbyLabel">Players</div>
+        <ul id="lobbyRoster" class="lobbyRoster"></ul>
+        <button id="hostStartBtn" class="hidden">Start Game</button>
+      </div>
+    </div>
+
+    <div id="joinMode" class="modeBody hidden">
+      <label>Username <input id="joinUsername" type="text" maxlength="20" placeholder="You"></label>
+      <label>Join code <input id="joinCode" type="text" maxlength="12" placeholder="ABC123"></label>
+      <button id="joinBtn">Join Lobby</button>
+
+      <div id="joinLobby" class="hidden">
+        <div class="lobbyLabel">Players</div>
+        <ul id="joinRoster" class="lobbyRoster"></ul>
+        <div id="joinWaiting">Waiting for the host to start…</div>
+      </div>
+    </div>
+
+    <div id="lobbyError" class="hidden"></div>
   </div>
 </div>
 
@@ -117,7 +188,26 @@
   // serving that copy through every later CSS edit regardless of reload.
   const V = Date.now();
   document.getElementById('mainStyle').href = 'css/style.css?v=' + V;
-  ['noise', 'map', 'game', 'ai', 'render', 'input', 'ui', 'radial', 'main'].forEach(name => {
+  // Nested paths work as-is: the entry is just spliced into 'js/<name>.js'.
+  // 'net/hash' loads after 'game' because it reads Game/GameMap at call time
+  // and Game.COSMETIC_STATE when it is defined.
+  // 'net/protocol' has no dependencies at all — it is pure data and pure
+  // functions, deliberately, so the Node server can require the same file
+  // (see its header). Its position here is therefore free; it sits with the
+  // other net/ modules.
+  // 'net/executor' must come after 'net/protocol' (it validates through it)
+  // and after 'game' (it dispatches into it) — both are read at call time, so
+  // this is really only a readability ordering, but it is the one that matches
+  // the dependency.
+  // 'net/runner' comes after 'net/executor' and 'net/hash' because it drives
+  // both — applying a turn's intents through the Executor, then digesting state
+  // through Hash on the emission cadence. Same call-time caveat as the others:
+  // the ordering documents the dependency, it does not create it.
+  // 'net/localserver' then 'net/transport': the transport routes into the local
+  // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
+  // is the dependency order even though — as everywhere else in net/ — every
+  // one of those references is resolved at call time and not at load time.
+  ['noise', 'map', 'fx', 'game', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'ai', 'render', 'input', 'ui', 'radial', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

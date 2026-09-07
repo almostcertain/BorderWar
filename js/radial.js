@@ -92,6 +92,18 @@ const Radial = {
   // have no Info panel or radial Attack (attack is a direct tap on the map
   // here), so north and west stay empty — but Boat/Betray at east and
   // Peace/Renew at south match their real layout, not a guess.
+  // Note the split each slot now makes. `note`/`disabled` come from the
+  // *BlockReason validators, run right here on the current state, so a wedge
+  // that cannot be pressed says so the instant the menu opens — no round trip.
+  // `act` sends an intent and answers nothing: whether the action actually
+  // happened is decided a turn later, inside the Executor, by the same
+  // validators re-run on every client (MP-1.5, §5). Advisory here,
+  // authoritative there.
+  //
+  // `me` stays in this file: it is Game.me, a view pointer, and every use of it
+  // below is about what to draw for the player looking at the screen. It is
+  // deliberately absent from the intents themselves — the server stamps the
+  // author, so a client cannot act as anyone but itself.
   slots() {
     const me = Game.me, t = this.targetId;
     const out = [null, null, null, null];
@@ -104,14 +116,17 @@ const Radial = {
         // Betray takes the east slot Boat would otherwise hold — you can't
         // invade an ally, so the moment one is boat-blocked it opens up for
         // the other action that only makes sense against one.
-        out[1] = { icon: '🗡', label: 'Betray', cls: 'danger', act: () => Game.breakAlliance(me, t) };
+        out[1] = {
+          icon: '🗡', label: 'Betray', cls: 'danger',
+          act: () => Transport.sendIntent(Protocol.intent.breakAlliance(t))
+        };
         if (Game.extendWindowOpen(al)) {
           const waiting = Game.agreedToExtend(al, me);
           out[2] = {
             icon: '⏳', label: waiting ? 'Sent' : 'Renew', cls: 'good',
             note: waiting ? 'Awaiting reply' : Math.ceil(al.expiresAt - Game.elapsed) + 's left',
             disabled: waiting,
-            act: () => Game.requestExtension(me, t)
+            act: () => Transport.sendIntent(Protocol.intent.allianceExtension(t))
           };
         }
       } else {
@@ -119,7 +134,7 @@ const Radial = {
         out[2] = {
           icon: '🤝', label: 'Peace', cls: 'good',
           note: reason, disabled: !!reason,
-          act: () => Game.requestAlliance(me, t)
+          act: () => Transport.sendIntent(Protocol.intent.allianceRequest(t))
         };
       }
     }
@@ -134,7 +149,7 @@ const Radial = {
       out[1] = {
         icon: '⛵', label: 'Boat', cls: 'good',
         note: reason, disabled: !!reason,
-        act: () => Game.launchNavalInvasion(me, this.tile, troops)
+        act: () => Transport.sendIntent(Protocol.intent.boat(this.tile, troops))
       };
     }
 

@@ -1,0 +1,14 @@
+{
+  "name": "borderwar-server",
+  "version": "0.0.1",
+  "private": true,
+  "description": "MP-2.1 server skeleton: static file host + WS upgrade point. No game logic — see docs/multiplayer-architecture.md §6, §9 Phase 2.",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  }
+}

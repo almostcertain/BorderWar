@@ -99,15 +99,19 @@ const Render = {
     if (!p) { this.hoverCtx.putImageData(this.hoverImage, 0, 0); return; }
 
     // If the tile actually under the cursor sits in a patch of this nation's
-    // land that's fully walled in by ours, tint just that patch gold instead
-    // of the plain whole-nation wash — a visible "tap to annex free" cue
-    // ahead of the click, and distinct from hovering their untouched
-    // mainland (same nation, same id, not enclosed) which still gets the
-    // ordinary tint below.
+    // land that's fully walled in by ours, tint gold instead of the plain
+    // whole-nation wash — a visible "tap to annex free" cue ahead of the
+    // click, and distinct from hovering their untouched mainland (same
+    // nation, same id, not enclosed) which still gets the ordinary tint
+    // below. Every walled-in patch of theirs is tinted, not just the hovered
+    // one, because that is what the tap now takes (see UI.onTap) — after a
+    // nuke that lights up the whole scatter of survivors at once. The full
+    // sweep only runs once the cheap single walk has confirmed the cursor is
+    // actually on a pocket, so ordinary hovering never pays for it.
     const region = id !== Game.me ? Game.enclosedRegion(UI.hoverTile, Game.me) : null;
     if (region) {
       const c = this.packed(255, 215, 60, 130);
-      for (const t of region) px[t] = c;
+      for (const r of Game.enclosedPocketsOf(id, Game.me)) for (const t of r) px[t] = c;
     } else {
       // Low alpha, plain white: brightens whatever colour is already there
       // rather than imposing one of its own, so it reads the same over a
@@ -151,13 +155,40 @@ const Render = {
   // two can never drift apart on what a tile is supposed to look like.
   paintTile(i, x, y, w, h, owner, px) {
     const o = owner[i];
-    if (o < 0) { px[i] = this.terrain[i]; return; }
-    const edge =
-      (x > 0 && owner[i - 1] !== o) ||
-      (x < w - 1 && owner[i + 1] !== o) ||
-      (y > 0 && owner[i - w] !== o) ||
-      (y < h - 1 && owner[i + w] !== o);
-    px[i] = edge ? this.borderColor[o] : this.fillColor[o][GameMap.terrain[i]];
+    let color;
+    if (o < 0) {
+      color = this.terrain[i];
+    } else {
+      const edge =
+        (x > 0 && owner[i - 1] !== o) ||
+        (x < w - 1 && owner[i + 1] !== o) ||
+        (y > 0 && owner[i - w] !== o) ||
+        (y < h - 1 && owner[i + w] !== o);
+      color = edge ? this.borderColor[o] : this.fillColor[o][GameMap.terrain[i]];
+    }
+    // Irradiated land (see Game.fallout/detonateNuke) reads as a sickly
+    // warning wash over whatever it would otherwise look like — almost
+    // always bare unclaimed terrain (GameImpl's own setFallout throws on an
+    // owned tile), so this only fires for the o<0 branch above in practice,
+    // but blending rather than overriding keeps it correct either way.
+    if (Game.fallout && Game.fallout.size && Game.fallout.has(i)) color = this.tintFallout(color);
+    px[i] = color;
+  },
+
+  // Fixed-ratio blend toward FALLOUT_TINT, done in unpacked RGB space and
+  // repacked — see the `packed` helper this mirrors. mix=0.45 keeps the
+  // underlying terrain/border tone (and therefore ownership, still legible
+  // at a glance) rather than replacing it outright.
+  FALLOUT_TINT: [190, 210, 70],
+  tintFallout(color) {
+    const r = color & 0xff, g = (color >> 8) & 0xff, b = (color >> 16) & 0xff, a = (color >>> 24) & 0xff;
+    const t = this.FALLOUT_TINT, mix = 0.45;
+    return this.packed(
+      (r * (1 - mix) + t[0] * mix) | 0,
+      (g * (1 - mix) + t[1] * mix) | 0,
+      (b * (1 - mix) + t[2] * mix) | 0,
+      a
+    );
   },
 
   buildTiles() {
@@ -256,6 +287,10 @@ const Render = {
     this.drawTradeShips();
     this.drawWarships();
     this.drawShells();
+    this.drawSamMissiles();
+    this.drawNukes();
+    this.drawNukeBlasts();
+    this.drawSamFlashes();
     this.drawGoldPopups();
     this.drawSelectionBox();
   },
@@ -382,6 +417,27 @@ const Render = {
       ctx.setLineDash([]);
     }
 
+    // Same idea for SAM Launchers, just with a per-building radius (
+    // Game.dynamicSamRange, which grows with level and ramps smoothly right
+    // after an upgrade — see its own comment) instead of Fort's fixed
+    // FORT_RANGE, and a solid rather than dashed ring so the two structures'
+    // protection zones stay visually distinct even where they overlap.
+    for (const b of Game.buildings.values()) {
+      if (b.type !== 'sam' || !b.built) continue;
+      const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+      const owner = GameMap.owner[b.tile];
+      const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
+      const rr = Game.dynamicSamRange(b, Game.renderElapsed) * s;
+      ctx.beginPath();
+      ctx.arc(px, py, rr, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.05)`;
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
+      ctx.strokeStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.3)`;
+      ctx.stroke();
+    }
+
     const r = this.structureRadius() * this.dpr;
     ctx.lineWidth = Math.max(1.5, r * 0.18);   // reset per frame; the bar below borrows this ctx
     for (const b of Game.buildings.values()) {
@@ -471,6 +527,47 @@ const Render = {
           ctx.stroke();
 
           ctx.lineCap = 'butt';
+        } else if (b.type === 'silo') {
+          // Missile nose cone atop a squat silo body, unmistakably distinct
+          // from the blocky city/factory silhouettes and the hollow anchor —
+          // a solid filled triangle-plus-rectangle rocket silhouette.
+          const bodyW = r * 0.5, bodyTop = py - r * 0.05, bodyBot = py + r * 0.62;
+          ctx.fillRect(px - bodyW / 2, bodyTop, bodyW, bodyBot - bodyTop);
+          ctx.beginPath();
+          ctx.moveTo(px, py - r * 0.72);
+          ctx.lineTo(px + bodyW / 2, bodyTop);
+          ctx.lineTo(px - bodyW / 2, bodyTop);
+          ctx.closePath();
+          ctx.fill();
+          // Two small fins flaring out from the base.
+          const finW = r * 0.28;
+          ctx.beginPath();
+          ctx.moveTo(px - bodyW / 2, bodyBot - r * 0.2);
+          ctx.lineTo(px - bodyW / 2 - finW, bodyBot);
+          ctx.lineTo(px - bodyW / 2, bodyBot);
+          ctx.closePath();
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(px + bodyW / 2, bodyBot - r * 0.2);
+          ctx.lineTo(px + bodyW / 2 + finW, bodyBot);
+          ctx.lineTo(px + bodyW / 2, bodyBot);
+          ctx.closePath();
+          ctx.fill();
+        } else if (b.type === 'sam') {
+          // A dish (arc) on a short mast, distinct from the Silo's solid
+          // rocket silhouette — this fires interceptors, it doesn't launch.
+          ctx.lineWidth = Math.max(1.5, r * 0.16);
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineCap = 'round';
+          const mastTop = py - r * 0.05, mastBot = py + r * 0.6;
+          ctx.beginPath();
+          ctx.moveTo(px, mastTop);
+          ctx.lineTo(px, mastBot);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(px, mastTop + r * 0.1, r * 0.42, Math.PI * 1.15, Math.PI * 1.85);
+          ctx.stroke();
+          ctx.lineCap = 'butt';
         } else {
           const bw = r * 0.22, gap = r * 0.12;
           const heights = [r * 0.5, r * 0.85, r * 0.62];
@@ -513,6 +610,39 @@ const Render = {
         ctx.strokeText(String(b.level), px, ly);
         ctx.fillText(String(b.level), px, ly);
       }
+
+      // Charge pips below the disc, one per level — filled = ready to fire,
+      // hollow = that charge's own independent SAM_COOLDOWN is still
+      // counting down (see Game.stepSAMs). Makes "a level-2 SAM has two
+      // separate charges, not one shared cooldown" legible at a glance
+      // instead of only inferable from watching it fire twice.
+      if (b.built && b.type === 'sam') {
+        const reloading = b.samQueue.length;
+        const ready = b.level - reloading;
+        const pipR = Math.max(1.5 * this.dpr, r * 0.12);
+        const gap = pipR * 2.6;
+        // Clear the upgrade progress bar (drawn just above, while
+        // b.upgrading) instead of overlapping it — a SAM can be mid-upgrade
+        // and still have charges to show at the same time.
+        const barH = Math.max(2 * this.dpr, r * 0.24);
+        const py2 = b.upgrading ? py + r + barH * 1.3 + barH + pipR * 1.6 : py + r + pipR * 1.6;
+        let px2 = px - gap * (b.level - 1) / 2;
+        for (let i = 0; i < b.level; i++) {
+          ctx.beginPath();
+          ctx.arc(px2, py2, pipR, 0, Math.PI * 2);
+          if (i < ready) {
+            ctx.fillStyle = '#8be08b';
+            ctx.fill();
+          } else {
+            ctx.fillStyle = 'rgba(8, 14, 26, 0.85)';
+            ctx.fill();
+            ctx.lineWidth = Math.max(1, pipR * 0.35);
+            ctx.strokeStyle = '#8be08b';
+            ctx.stroke();
+          }
+          px2 += gap;
+        }
+      }
     }
   },
 
@@ -529,6 +659,19 @@ const Render = {
     return this._warshipLaunchResult;
   },
 
+  // Same caching idea as warshipLaunchPreview just above, for
+  // Game.resolveNukeLaunch — cheap by comparison (no seaPath), but the
+  // Silo scan is still no reason to redo it every animation frame while the
+  // mouse sits still over the same tile.
+  nukeLaunchPreview(nukeType, tile) {
+    if (this._nukeLaunchTile !== tile || this._nukeLaunchType !== nukeType) {
+      this._nukeLaunchTile = tile;
+      this._nukeLaunchType = nukeType;
+      this._nukeLaunchResult = Game.resolveNukeLaunch(Game.me, nukeType, tile);
+    }
+    return this._nukeLaunchResult;
+  },
+
   // Where the armed structure would land. Mouse only — touch has no hover, so
   // there the hint line under the build bar is the whole of the feedback.
   drawPlacement() {
@@ -543,16 +686,25 @@ const Render = {
     // tile, same idea render.js's own hoverAnnexAt throttle uses for a
     // different expensive per-frame check.
     const warshipPreview = UI.placing === 'warship' ? this.warshipLaunchPreview(tile) : null;
+    const isNuke = UI.placing === 'atombomb' || UI.placing === 'hydrogenbomb';
+    const nukePreview = isNuke ? this.nukeLaunchPreview(UI.placing, tile) : null;
+    const isDebugNuke = UI.placing === 'debugnuke';
     // Hovering an existing structure of the same type while armed previews an
     // upgrade instead of a blocked build — same ghost, different legality
-    // check, matching what UI.onTap actually does on tap. Warship has no
-    // buildings-map entry (and no upgrade) at all — it's always checked
-    // against the cached resolution above instead.
+    // check, matching what UI.onTap actually does on tap. Warship and the
+    // two bomb types have no buildings-map entry (and no upgrade) at all —
+    // they're always checked against their own cached resolution instead.
+    // The debug nuke has no legality check at all (see Game.debugNuke) — any
+    // tile is always a valid click for either half of its two-click flow.
     const ok = UI.placing === 'warship'
       ? warshipPreview.ok
-      : (hoverB && hoverB.type === UI.placing)
-        ? Game.canUpgrade(Game.me, tile)
-        : Game.canBuild(Game.me, UI.placing, tile);
+      : isNuke
+        ? nukePreview.ok
+        : isDebugNuke
+          ? true
+          : (hoverB && hoverB.type === UI.placing)
+            ? Game.canUpgrade(Game.me, tile)
+            : Game.canBuild(Game.me, UI.placing, tile);
 
     const px = (tile % w - this.cam.x) * s + cw / 2;
     const py = (((tile / w) | 0) - this.cam.y) * s + ch / 2;
@@ -582,6 +734,21 @@ const Render = {
       ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
       ctx.stroke();
       ctx.setLineDash([]);
+    }
+
+    // SAM Launcher placement: show the range a fresh (level-1) SAM would
+    // cover. Skipped on the upgrade-hover case — an existing SAM's range
+    // ring is already drawn every frame in drawStructures above, so a second
+    // one here would just double up.
+    if (UI.placing === 'sam' && !(hoverB && hoverB.type === 'sam')) {
+      const cx = px + s / 2, cy = py + s / 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, Game.samRange(1) * s, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(139, 224, 139, 0.09)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
+      ctx.strokeStyle = 'rgba(139, 224, 139, 0.55)';
+      ctx.stroke();
     }
 
     // Warship placement: a click can land anywhere now (Game.resolveWarship
@@ -615,6 +782,120 @@ const Render = {
       }
       ctx.stroke();
       ctx.setLineDash([]);
+    }
+
+    // Nuke targeting: inner (guaranteed-kill) and outer (falling-off blast)
+    // radii at the hovered tile — Game.NUKE_MAGNITUDES for whichever bomb is
+    // armed — plus a straight dashed line back to whichever ready Silo would
+    // actually launch it, once resolveNukeLaunch confirms one's available.
+    // The line is drawn even when nukePreview isn't ok (no Silo/on cooldown/
+    // short on gold), same restraint the tile square/ring below already
+    // gives every other placement — only the radii need a real launch to be
+    // worth showing.
+    if (isNuke) {
+      const mag = Game.NUKE_MAGNITUDES[UI.placing];
+      const cx = px + s / 2, cy = py + s / 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, mag.outer * s, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 120, 90, 0.06)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, this.dpr * 1.2);
+      ctx.strokeStyle = 'rgba(255, 120, 90, 0.45)';
+      ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, mag.inner * s, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 70, 40, 0.14)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
+      ctx.strokeStyle = 'rgba(255, 90, 60, 0.8)';
+      ctx.stroke();
+
+      if (nukePreview.ok) {
+        // Same parabola drawNukes' contrail traces for a nuke actually in
+        // flight (lerp from Silo to target, sine-arced upward by height
+        // scaled off trip distance) so the preview line IS the trajectory,
+        // not just a straight stand-in — matters once missile defense needs
+        // to read where an incoming nuke will actually pass overhead.
+        const from = { x: nukePreview.silo.tile % w, y: (nukePreview.silo.tile / w) | 0 };
+        const to = { x: tile % w, y: (tile / w) | 0 };
+        const dist = Math.hypot(to.x - from.x, to.y - from.y);
+        const arcHeight = Math.min(dist * 0.35, 40);
+        const steps = Math.max(2, Math.ceil(dist));
+        ctx.setLineDash([6 * this.dpr, 5 * this.dpr]);
+        ctx.lineWidth = Math.max(1, this.dpr * 1.2);
+        ctx.strokeStyle = 'rgba(255, 160, 90, 0.8)';
+        ctx.beginPath();
+        for (let i = 0; i <= steps; i++) {
+          const u = i / steps;
+          const ua = Math.sin(Math.PI * u);
+          const ux = (from.x + (to.x - from.x) * u + 0.5 - this.cam.x) * s + cw / 2;
+          const uy = (from.y + (to.y - from.y) * u - ua * arcHeight + 0.5 - this.cam.y) * s + ch / 2;
+          if (i === 0) ctx.moveTo(ux, uy); else ctx.lineTo(ux, uy);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    // Debug panel nuke: same blast-radius ghost as the real nuke preview
+    // above, keyed off UI.debugNukeType instead of UI.placing since
+    // 'debugnuke' isn't itself a bomb type. Once the first click has picked
+    // a launch point (UI.debugNukeSrc >= 0), also traces the same arced
+    // trajectory the real preview draws from its resolved Silo — here from
+    // that explicit source tile instead — plus a small marker pinning it in
+    // place, since the tile-square ghost below always tracks the mouse
+    // (now hovering the destination for the second click), not the source.
+    if (isDebugNuke) {
+      const mag = Game.NUKE_MAGNITUDES[UI.debugNukeType];
+      const cx = px + s / 2, cy = py + s / 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, mag.outer * s, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 120, 90, 0.06)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, this.dpr * 1.2);
+      ctx.strokeStyle = 'rgba(255, 120, 90, 0.45)';
+      ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, mag.inner * s, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 70, 40, 0.14)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
+      ctx.strokeStyle = 'rgba(255, 90, 60, 0.8)';
+      ctx.stroke();
+
+      if (UI.debugNukeSrc >= 0) {
+        const from = { x: UI.debugNukeSrc % w, y: (UI.debugNukeSrc / w) | 0 };
+        const to = { x: tile % w, y: (tile / w) | 0 };
+        const dist = Math.hypot(to.x - from.x, to.y - from.y);
+        const arcHeight = Math.min(dist * 0.35, 40);
+        const steps = Math.max(2, Math.ceil(dist));
+        ctx.setLineDash([6 * this.dpr, 5 * this.dpr]);
+        ctx.lineWidth = Math.max(1, this.dpr * 1.2);
+        ctx.strokeStyle = 'rgba(255, 160, 90, 0.8)';
+        ctx.beginPath();
+        for (let i = 0; i <= steps; i++) {
+          const u = i / steps;
+          const ua = Math.sin(Math.PI * u);
+          const ux = (from.x + (to.x - from.x) * u + 0.5 - this.cam.x) * s + cw / 2;
+          const uy = (from.y + (to.y - from.y) * u - ua * arcHeight + 0.5 - this.cam.y) * s + ch / 2;
+          if (i === 0) ctx.moveTo(ux, uy); else ctx.lineTo(ux, uy);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        const srcx = (from.x + 0.5 - this.cam.x) * s + cw / 2;
+        const srcy = (from.y + 0.5 - this.cam.y) * s + ch / 2;
+        ctx.beginPath();
+        ctx.arc(srcx, srcy, Math.max(s * 0.35, 5 * this.dpr), 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 160, 90, 0.9)';
+        ctx.fill();
+      }
     }
 
     // Port joins the rail network exactly like City does (see
@@ -665,9 +946,71 @@ const Render = {
     ctx.stroke();
   },
 
-  // Live troop counter on every active front, sat on the leading edge.
+  // Partitions an attack's live frontier into disconnected segments using
+  // 8-connected BFS (diagonal touches still count as one front — otherwise a
+  // border running at 45 degrees fragments into a chain of singletons), then
+  // returns one representative tile per segment: whichever tile in the
+  // cluster sits closest to that cluster's own centroid, so the label always
+  // lands on real border rather than in the gap between two fronts.
+  // Ported from OpenFront's AttackImpl.clusterBorderTiles — same 30-tile
+  // minimum and top-2 cap, so a nation fighting on two separated fronts gets
+  // a number on each, but three-plus fragments (or a second sliver too small
+  // to matter) still collapse down to the biggest ones.
+  clusterBorderTiles(tiles, minSize, maxClusters) {
+    if (tiles.length === 0) return [];
+    const w = GameMap.width, h = GameMap.height;
+    const borderSet = new Set(tiles);
+    const visited = new Set();
+    const clusters = [];
+
+    for (const start of tiles) {
+      if (visited.has(start)) continue;
+      const queue = [start];
+      visited.add(start);
+      let qi = 0, sumX = 0, sumY = 0, count = 0;
+      while (qi < queue.length) {
+        const t = queue[qi++];
+        const tx = t % w, ty = (t / w) | 0;
+        sumX += tx; sumY += ty; count++;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = tx + dx, ny = ty + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const nt = ny * w + nx;
+            if (borderSet.has(nt) && !visited.has(nt)) {
+              visited.add(nt);
+              queue.push(nt);
+            }
+          }
+        }
+      }
+
+      const cx = sumX / count, cy = sumY / count;
+      let best = queue[0], bestDist = Infinity;
+      for (const t of queue) {
+        const tx = t % w, ty = (t / w) | 0;
+        const ddx = tx - cx, ddy = ty - cy;
+        const dist = ddx * ddx + ddy * ddy;
+        if (dist < bestDist) { bestDist = dist; best = t; }
+      }
+      clusters.push({ tile: best, size: count });
+    }
+
+    clusters.sort((a, b) => b.size - a.size);
+    if (clusters.length <= 1) return clusters.map(c => c.tile);
+    const significant = clusters.filter(c => c.size >= minSize);
+    if (significant.length === 0) return [clusters[0].tile];
+    return significant.slice(0, maxClusters).map(c => c.tile);
+  },
+
+  // Live troop counter on every active front, sat on the leading edge(s).
   // Read live from the attack each frame, so reinforcing a push simply makes
-  // the number climb rather than spawning a second marker.
+  // the number climb rather than spawning a second marker. A single nation
+  // can be fighting the same enemy across two disconnected stretches of
+  // border at once, so each front is clustered and labelled independently
+  // rather than averaged into one point hovering in the no-man's-land
+  // between them.
   drawFronts() {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
@@ -682,36 +1025,33 @@ const Render = {
       // every Tribe front is noise nobody reads.
       if (a.attacker !== Game.me && a.target !== Game.me) continue;
       if (a.target === Game.me && a.attacker !== Game.me && Game.players[a.attacker].isTribe) continue;
-      const live = a.heapTile.length;
-      if (live <= 0) continue;
+      // Unclaimed land isn't contested — there's no defender to fight over
+      // the number with, so it's just noise on an ordinary expansion.
+      if (a.target < 0) continue;
+      if (a.heapTile.length <= 0) continue;
 
-      // Centroid of the leading edge, sampled so a huge front stays cheap.
-      const step = Math.max(1, Math.floor(live / 96));
-      let sx = 0, sy = 0, n = 0;
-      for (let i = 0; i < a.heapTile.length; i += step) {
-        const t = a.heapTile[i];
-        sx += t % w; sy += (t / w) | 0; n++;
-      }
-      if (!n) continue;
-
-      const px = (sx / n + 0.5 - this.cam.x) * s + cw / 2;
-      const py = (sy / n + 0.5 - this.cam.y) * s + ch / 2;
-      if (px < -60 || py < -60 || px > cw + 60 || py > ch + 60) continue;
+      const fronts = this.clusterBorderTiles(a.heapTile, 30, 2);
+      if (!fronts.length) continue;
 
       // Every front reaching this point already involves the player one way
       // or the other: blue for a push they're making, red for one landing on
       // them. A retreating front reads as grey — it's on its way out, not
       // fighting for the ground its number still sits on.
       const colour = a.retreating ? '#9aa4b2' : (a.attacker === Game.me ? '#6db4ff' : '#ff6b6b');
-
       const font = Math.max(13 * this.dpr, Math.min(19 * this.dpr, s * 1.6));
       ctx.font = '600 ' + font.toFixed(1) + 'px system-ui, sans-serif';
       ctx.lineWidth = Math.max(2.5, font * 0.34);
       ctx.strokeStyle = 'rgba(0,0,0,0.8)';
       ctx.fillStyle = colour;
       const text = formatCountTight(a.troops);
-      ctx.strokeText(text, px, py);
-      ctx.fillText(text, px, py);
+
+      for (const tile of fronts) {
+        const px = (tile % w + 0.5 - this.cam.x) * s + cw / 2;
+        const py = ((tile / w | 0) + 0.5 - this.cam.y) * s + ch / 2;
+        if (px < -60 || py < -60 || px > cw + 60 || py > ch + 60) continue;
+        ctx.strokeText(text, px, py);
+        ctx.fillText(text, px, py);
+      }
     }
   },
 
@@ -1023,10 +1363,10 @@ const Render = {
     if (!Game.shells.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height;
-    const r = Math.max(2 * this.dpr, Math.min(5 * this.dpr, s * 0.3));
+    const r = Math.max(3 * this.dpr, Math.min(7 * this.dpr, s * 0.4));
 
     for (const sh of Game.shells) {
-      const t = Math.min(1, (Game.elapsed - sh.born) / sh.duration);
+      const t = Math.min(1, (Game.renderElapsed - sh.born) / sh.duration);
       const tx = sh.from.x + (sh.to.x - sh.from.x) * t;
       const ty = sh.from.y + (sh.to.y - sh.from.y) * t;
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
@@ -1038,7 +1378,7 @@ const Render = {
       // Blink driven by elapsed time (not travel progress) so it reads as a
       // hot, flickering tracer the whole way, not something fading in/out
       // with distance.
-      const blink = 0.5 + 0.5 * Math.sin(Game.elapsed * 30 + sh.born * 17);
+      const blink = 0.5 + 0.5 * Math.sin(Game.renderElapsed * 30 + sh.born * 17);
 
       ctx.beginPath();
       ctx.arc(px, py, r * (1.3 + blink * 0.5), 0, Math.PI * 2);
@@ -1049,6 +1389,191 @@ const Render = {
       ctx.arc(px, py, r * 0.55, 0, Math.PI * 2);
       ctx.fillStyle = blink > 0.5 ? '#fff8dc' : '#ffcf6b';
       ctx.fill();
+    }
+  },
+
+  // A nuke in flight — see Game.launchNuke (fixed from/to tile-space points
+  // and a born/duration pair, exactly like a warship's own shell) and
+  // Game.stepNukes (detonates once duration elapses). Unlike a shell's
+  // straight lerp, this arcs: a real ballistic missile climbs and falls
+  // rather than skimming the ground, and OpenFront's own nuke path is a
+  // literal parabola (ParabolaUniversalPathFinder) — this reproduces the
+  // LOOK of that with a cheap sine offset in screen space rather than
+  // porting the real curve-fitting pathfinder, since travel duration (the
+  // part that actually matters for gameplay) is already exact off the
+  // straight-line distance in Game.launchNuke. Warhead drawn as a plain
+  // disc — round, so unlike the old rocket silhouette it needs no tangent/
+  // angle bookkeeping to orient itself along the arc.
+  drawNukes() {
+    if (!Game.nukes.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height;
+
+    for (const n of Game.nukes) {
+      const t = Math.min(1, (Game.renderElapsed - n.born) / n.duration);
+      const arc = Math.sin(Math.PI * t);
+      // Arc height scales with the trip's own length (in tile-space) so a
+      // short hop between neighbouring Silos doesn't rocket absurdly high
+      // relative to how far it's actually travelling.
+      const dist = Math.hypot(n.to.x - n.from.x, n.to.y - n.from.y);
+      const arcHeight = Math.min(dist * 0.35, 40);
+
+      // arcHeight is in tile-space units, same as from/to, so it scales to
+      // pixels uniformly with everything else below via the shared `* s`.
+      const tx = n.from.x + (n.to.x - n.from.x) * t;
+      const ty = n.from.y + (n.to.y - n.from.y) * t - arc * arcHeight;
+      const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -30 || py < -30 || px > cw + 30 || py > ch + 30) continue;
+
+      const owner = Game.players[n.ownerId];
+      const col = owner ? owner.color : [255, 255, 255];
+      const colour = `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
+      const radius = Math.max(6 * this.dpr, Math.min(14 * this.dpr, s * 0.45));
+
+      // Contrail: the parabola traced from launch (Silo) up to the nuke's
+      // current position, left on screen for the rest of the flight — same
+      // "shows you where it came from" idea as a boat's own trail (see
+      // drawBoats/updateBoatTrail), just rebuilt fresh off the arc formula
+      // above every frame instead of cached tile-by-tile, since a nuke's
+      // whole flight is a few seconds and a handful of sample points, not a
+      // boat's much longer sea route. Stroked via the same camera-matching
+      // transform trick drawBoats uses so it stays correct across pan/zoom.
+      const steps = Math.max(2, Math.ceil(t * 24));
+      ctx.setTransform(s, 0, 0, s, cw / 2 - this.cam.x * s, ch / 2 - this.cam.y * s);
+      ctx.beginPath();
+      for (let i = 0; i <= steps; i++) {
+        const u = t * i / steps;
+        const ua = Math.sin(Math.PI * u);
+        const ux = n.from.x + (n.to.x - n.from.x) * u + 0.5;
+        const uy = n.from.y + (n.to.y - n.from.y) * u - ua * arcHeight + 0.5;
+        if (i === 0) ctx.moveTo(ux, uy); else ctx.lineTo(ux, uy);
+      }
+      ctx.lineWidth = Math.max(1, this.dpr) / s;
+      ctx.strokeStyle = colour;
+      ctx.globalAlpha = 0.45;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+      // Warhead as a plain filled disc at the tip — orientation-free, so no
+      // tangent/angle computation needed unlike the old rocket silhouette.
+      ctx.beginPath();
+      ctx.arc(px, py, radius, 0, Math.PI * 2);
+      ctx.fillStyle = colour;
+      ctx.fill();
+    }
+  },
+
+  // The shockwave left by a detonation — see Game.detonateNuke's push to
+  // nukeBlasts and Game.stepNukes' own aging/pruning. An expanding ring from
+  // inner to outer radius over NUKE_BLAST_FX_DURATION, fading out, plus a
+  // brief bright flash at the core — purely cosmetic feedback, since the
+  // actual lasting effect (the crater) is already visible in the terrain
+  // itself the instant GameMap.owner flips to WATER.
+  drawNukeBlasts() {
+    if (!Game.nukeBlasts.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height;
+
+    for (const b of Game.nukeBlasts) {
+      const t = Math.min(1, (Game.renderElapsed - b.born) / Game.NUKE_BLAST_FX_DURATION);
+      const px = (b.x + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (b.y + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -b.outer * s || py < -b.outer * s || px > cw + b.outer * s || py > ch + b.outer * s) continue;
+
+      const alpha = Math.max(0, 1 - t);
+      const ringR = (b.inner + (b.outer - b.inner) * t) * s;
+      ctx.beginPath();
+      ctx.arc(px, py, ringR, 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(1.5, s * 0.06 * alpha);
+      ctx.strokeStyle = `rgba(255, 150, 60, ${0.7 * alpha})`;
+      ctx.stroke();
+
+      if (t < 0.35) {
+        const flashAlpha = (1 - t / 0.35) * 0.6;
+        ctx.beginPath();
+        ctx.arc(px, py, b.inner * s, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 240, 200, ${flashAlpha})`;
+        ctx.fill();
+      }
+    }
+  },
+
+  // A SAM's in-flight interceptor — see Game.stepSAMs (spawns one, on a
+  // precomputed straight-line course toward the intercept point) and
+  // stepSamMissiles (resolves it). Same fixed from/to/born/duration lerp and
+  // blink treatment as drawShells, just cooler-toned (icy blue-white rather
+  // than warm tracer-orange) so the two projectile types read as visually
+  // distinct at a glance — one is offense landing damage, this one is
+  // defense hunting a nuke.
+  drawSamMissiles() {
+    if (!Game.samMissiles.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    const r = Math.max(3 * this.dpr, Math.min(7 * this.dpr, s * 0.4));
+
+    for (const m of Game.samMissiles) {
+      // Clamped on both ends, not just the upper one Game.dynamicSamRange's
+      // own comment already explains: Game.fastForward() can spawn one of
+      // these with `born` set from an `elapsed` far ahead of renderElapsed
+      // (which only advances inside main.js's normal frame loop), leaving t
+      // negative until the next real frame catches up.
+      const t = Math.max(0, Math.min(1, (Game.renderElapsed - m.born) / m.duration));
+      const tx = m.from.x + (m.to.x - m.from.x) * t;
+      const ty = m.from.y + (m.to.y - m.from.y) * t;
+      const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -20 || py < -20 || px > cw + 20 || py > ch + 20) continue;
+
+      const blink = 0.5 + 0.5 * Math.sin(Game.renderElapsed * 34 + m.born * 17);
+
+      ctx.beginPath();
+      ctx.arc(px, py, r * (1.2 + blink * 0.4), 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(150, 220, 255, ${0.3 + blink * 0.35})`;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(px, py, r * 0.5, 0, Math.PI * 2);
+      ctx.fillStyle = blink > 0.5 ? '#ffffff' : '#bfe9ff';
+      ctx.fill();
+    }
+  },
+
+  // An intercept kill — see Game.stepSamMissiles' push to samFlashes and its
+  // own aging/pruning. A quick expanding ring, deliberately smaller and much
+  // faster than drawNukeBlasts' own shockwave — this is confirming a nuke
+  // got shot down before it could go off, not the detonation itself.
+  drawSamFlashes() {
+    if (!Game.samFlashes.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height;
+
+    for (const f of Game.samFlashes) {
+      // Lower-bound clamp is load-bearing, not just tidy: an unclamped
+      // negative t here fed straight into `maxR * t` below as a ctx.arc
+      // radius — see drawSamMissiles' own comment on why t can go negative
+      // (Game.fastForward), and Game.dynamicSamRange's comment for the first
+      // place this exact crash shape was caught.
+      const t = Math.max(0, Math.min(1, (Game.renderElapsed - f.born) / Game.SAM_FLASH_FX_DURATION));
+      const px = (f.x + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (f.y + 0.5 - this.cam.y) * s + ch / 2;
+      const maxR = 4 * s;
+      if (px < -maxR || py < -maxR || px > cw + maxR || py > ch + maxR) continue;
+
+      const alpha = Math.max(0, 1 - t);
+      ctx.beginPath();
+      ctx.arc(px, py, maxR * t, 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(1.5, s * 0.05 * alpha);
+      ctx.strokeStyle = `rgba(150, 220, 255, ${0.8 * alpha})`;
+      ctx.stroke();
+
+      if (t < 0.4) {
+        ctx.beginPath();
+        ctx.arc(px, py, s * 0.6, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 255, 255, ${(1 - t / 0.4) * 0.7})`;
+        ctx.fill();
+      }
     }
   },
 
@@ -1071,22 +1596,30 @@ const Render = {
   },
 
   // "+gold" labels that drift up and fade out over each city a train just
-  // paid — Game.stepTrains spawns and ages these, this just draws whatever's
-  // still alive. Same warm-gold palette as the level badge in drawStructures
-  // so a payout reads as the same kind of "you got richer" as leveling up.
+  // paid — Game.stepTrains/stepTradeShips record these through Fx.goldPopup
+  // for every owner alike, and this is where they become the local player's
+  // view of them: the ownerId filter below is the only thing that decides
+  // whose money the viewer watches tick up (a payout at a foreign or allied
+  // city is not theirs to see). Ageing is on the render clock too, so nothing
+  // about these labels touches the simulation. Same warm-gold palette as the
+  // level badge in drawStructures so a payout reads as the same kind of "you
+  // got richer" as leveling up.
   drawGoldPopups() {
-    if (!Game.goldPopups.length) return;
+    const now = Game.renderElapsed;
+    Fx.prune(now);
+    if (!Fx.goldPopups.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
-    const life = Game.GOLD_POPUP_LIFETIME;
+    const life = Fx.GOLD_POPUP_LIFETIME;
 
-    for (const g of Game.goldPopups) {
+    for (const g of Fx.goldPopups) {
+      if (g.ownerId !== Game.me) continue;
       const tx = g.tile % w, ty = (g.tile / w) | 0;
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -60 || py < -60 || px > cw + 60 || py > ch + 60) continue;
 
-      const frac = Math.min(1, g.age / life);
+      const frac = Math.max(0, Math.min(1, (now - g.born) / life));
       const rise = frac * 22 * this.dpr;
       const alpha = 1 - frac;
 

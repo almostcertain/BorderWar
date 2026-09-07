@@ -359,7 +359,20 @@ const GameMap = {
         let ok = true;
         for (const s of spawns) {
           const sx = s % this.width, sy = (s / this.width) | 0;
-          if (Math.hypot(sx - x, sy - y) < minDist) { ok = false; break; }
+          // sqrt(dx*dx + dy*dy), never Math.hypot. Every client generates the
+          // map itself from the shared seed, so a single tile of disagreement
+          // here is an instant, total desync of everything downstream — and
+          // Math.hypot is one of the calls ECMA-262 leaves
+          // implementation-approximated, so V8/SpiderMonkey/JavaScriptCore can
+          // differ in the last ulp and straddle the `< minDist` comparison.
+          // The multiplies, the add and the sqrt are all IEEE-754 operations
+          // that every engine must round identically, so this form is exact
+          // rather than merely quantized — which is why it is preferred to
+          // Game.det.hypot here, in what is easily the hottest loop that
+          // touches a hazardous call (up to 8000 candidate tiles x every
+          // spawn already placed, x 12 relaxation attempts).
+          const dx = sx - x, dy = sy - y;
+          if (Math.sqrt(dx * dx + dy * dy) < minDist) { ok = false; break; }
         }
         if (ok) spawns.push(i);
       }
