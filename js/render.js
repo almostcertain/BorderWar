@@ -1696,7 +1696,8 @@ const Render = {
   // so the same rebuild costs ~1.3ms a frame instead of 32ms in one.
   computeLabelSlice(playerId) {
     const w = GameMap.width, owner = GameMap.owner;
-    const seen = this.seenBuf, queue = this.queueBuf, nb = new Int32Array(4);
+    const seen = this.seenBuf, queue = this.queueBuf;
+    const nb = this.labelNb || (this.labelNb = new Int32Array(4));
     const labels = this.labelsPending;
 
     {

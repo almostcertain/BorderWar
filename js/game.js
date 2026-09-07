@@ -278,6 +278,42 @@ const Game = {
   // (first paint) where every tile, including never-touched water/neutral
   // ground, needs its initial color.
   dirtyTiles: null,
+
+  // The repaint queue is a deduping tile set that is filled and drained every
+  // single frame, and during a real push it reached 42,000 entries in one
+  // tick (measured, Extra Large). As a Set that meant thousands of add()s per
+  // tick plus a multi-hundred-KB backing store handed to the collector every
+  // frame — the largest single source of GC churn in the game, and it is
+  // render bookkeeping, not simulation state (nothing hashes it; see
+  // net/hash.js).
+  //
+  // A flag byte per tile does the deduping instead, and a plain array holds
+  // the order. Neither is reallocated: clear() walks the list to reset only
+  // the bytes actually set, and the list keeps its capacity between frames,
+  // so a steady state costs zero allocation. Keeps the Set surface the
+  // renderer already uses — add/size/clear and for..of.
+  makeDirtyTiles(size) {
+    return {
+      flag: new Uint8Array(size),
+      list: [],
+      count: 0,
+      get size() { return this.count; },
+      add(i) {
+        if (this.flag[i]) return;
+        this.flag[i] = 1;
+        this.list[this.count++] = i;
+      },
+      clear() {
+        const f = this.flag, l = this.list, n = this.count;
+        for (let k = 0; k < n; k++) f[l[k]] = 0;
+        this.count = 0;
+      },
+      *[Symbol.iterator]() {
+        for (let k = 0; k < this.count; k++) yield this.list[k];
+      }
+    };
+  },
+
   // The sim's one and only timestep. Under deterministic lockstep every
   // client has to advance the world by the exact same amount on the exact
   // same turn, so nothing in the simulation may ever see a wall-clock `dt`:
@@ -386,7 +422,7 @@ const Game = {
     this.nextAttackId = 1;
     this.boats = [];
     this.nextBoatId = 1;
-    this.dirtyTiles = new Set();
+    this.dirtyTiles = this.makeDirtyTiles(GameMap.owner.length);
     this.buildings = new Map();
     this.railroads = [];
     this.nextRailId = 1;
@@ -1868,6 +1904,28 @@ const Game = {
     return this.SEA_COST_SCALE;
   },
 
+  // Scratch space seaPath reuses across calls, sized to the map and built on
+  // first use (a match that never launches a boat never pays for it). The
+  // heap is sized to the guard rather than the map: the search stops after
+  // SEA_PATH_GUARD pops, and every pop can push at most 3 new tiles, so it
+  // can never outgrow that bound.
+  seaArena(size) {
+    let a = this._seaArena;
+    if (!a || a.size !== size) {
+      const cap = this.SEA_PATH_GUARD * 4;
+      a = this._seaArena = {
+        size,
+        hasG: new Uint8Array(size),
+        closed: new Uint8Array(size),
+        gVal: new Int32Array(size),
+        from: new Int32Array(size),
+        heapId: new Int32Array(cap),
+        heapPri: new Int32Array(cap)
+      };
+    }
+    return a;
+  },
+
   // Weighted A* over WATER tiles, seeded from every water tile adjacent to
   // `sourceTiles`, stopping the instant it pops a water tile adjacent to
   // `targetTile`. Returns the path as a tile sequence (water tiles, ending
@@ -1922,66 +1980,76 @@ const Game = {
       return Math.floor((cross * (COST_SCALE - 1)) / crossNorm / crossNorm);
     };
 
-    // Binary min-heap over (tile, priority) as parallel arrays — plain and
-    // uncached, since seaPath only runs once per boat launch, not per tick.
-    const heapId = [], heapPri = [];
+    // Search state lives in a reusable arena rather than a Map/Set/array trio
+    // built and thrown away per call. A single search explores thousands of
+    // water tiles, so those collections were the game's largest remaining
+    // source of garbage once the repaint queue was fixed — with the AI
+    // disabled a tick allocates nothing at all, and this is most of what the
+    // AI's share was. Costs are bounded well inside Int32: SEA_PATH_GUARD
+    // (200k) tiles at BASE_COST 100 plus at most a 1000 shore penalty each is
+    // ~2.2e8 against a 2.1e9 ceiling.
+    const arena = this.seaArena(owner.length);
+    const hasG = arena.hasG, gVal = arena.gVal, from = arena.from, closed = arena.closed;
+    const heapId = arena.heapId, heapPri = arena.heapPri;
+    // Only the flags need resetting; gVal/from are never read unless their
+    // tile's flag says this search wrote them.
+    hasG.fill(0); closed.fill(0);
+    let heapLen = 0;
+
     const heapPush = (id, pri) => {
-      let i = heapId.length;
-      heapId.push(id); heapPri.push(pri);
+      let i = heapLen++;
+      heapId[i] = id; heapPri[i] = pri;
       while (i > 0) {
         const p = (i - 1) >> 1;
         if (heapPri[p] <= heapPri[i]) break;
-        [heapId[p], heapId[i]] = [heapId[i], heapId[p]];
-        [heapPri[p], heapPri[i]] = [heapPri[i], heapPri[p]];
+        const tid = heapId[p]; heapId[p] = heapId[i]; heapId[i] = tid;
+        const tpr = heapPri[p]; heapPri[p] = heapPri[i]; heapPri[i] = tpr;
         i = p;
       }
     };
     const heapPop = () => {
       const top = heapId[0];
-      const lastId = heapId.pop(), lastPri = heapPri.pop();
-      if (heapId.length > 0) {
+      const lastId = heapId[--heapLen], lastPri = heapPri[heapLen];
+      if (heapLen > 0) {
         heapId[0] = lastId; heapPri[0] = lastPri;
         let i = 0;
-        const n = heapId.length;
+        const n = heapLen;
         while (true) {
           let l = i * 2 + 1, r = l + 1, smallest = i;
           if (l < n && heapPri[l] < heapPri[smallest]) smallest = l;
           if (r < n && heapPri[r] < heapPri[smallest]) smallest = r;
           if (smallest === i) break;
-          [heapId[smallest], heapId[i]] = [heapId[i], heapId[smallest]];
-          [heapPri[smallest], heapPri[i]] = [heapPri[i], heapPri[smallest]];
+          const tid = heapId[smallest]; heapId[smallest] = heapId[i]; heapId[i] = tid;
+          const tpr = heapPri[smallest]; heapPri[smallest] = heapPri[i]; heapPri[i] = tpr;
           i = smallest;
         }
       }
       return top;
     };
 
-    const gScore = new Map(), cameFrom = new Map(), closed = new Set();
     for (const s of starts) {
-      if (gScore.has(s)) continue;
-      gScore.set(s, 0);
-      cameFrom.set(s, -1);
+      if (hasG[s]) continue;
+      hasG[s] = 1; gVal[s] = 0; from[s] = -1;
       const sx = s % w, sy = (s / w) | 0;
       const h = weight * BASE_COST * (Math.abs(sx - goalX) + Math.abs(sy - goalY));
       heapPush(s, h);
     }
 
     let found = -1, guard = this.SEA_PATH_GUARD;
-    while (heapId.length > 0 && guard-- > 0) {
+    while (heapLen > 0 && guard-- > 0) {
       const current = heapPop();
-      if (closed.has(current)) continue;
-      closed.add(current);
+      if (closed[current]) continue;
+      closed[current] = 1;
       if (targetWater.has(current)) { found = current; break; }
 
-      const currentG = gScore.get(current);
+      const currentG = gVal[current];
       const n = GameMap.neighbors(current, nb);
       for (let k = 0; k < n; k++) {
         const j = nb[k];
-        if (owner[j] !== WATER || closed.has(j)) continue;
+        if (owner[j] !== WATER || closed[j]) continue;
         const tentativeG = currentG + BASE_COST + this.shoreCostPenalty(shoreDist[j]);
-        if (!gScore.has(j) || tentativeG < gScore.get(j)) {
-          gScore.set(j, tentativeG);
-          cameFrom.set(j, current);
+        if (!hasG[j] || tentativeG < gVal[j]) {
+          hasG[j] = 1; gVal[j] = tentativeG; from[j] = current;
           const jx = j % w, jy = (j / w) | 0;
           const h = weight * BASE_COST * (Math.abs(jx - goalX) + Math.abs(jy - goalY));
           heapPush(j, tentativeG + h + crossTieBreaker(jx, jy));
@@ -1992,7 +2060,7 @@ const Game = {
 
     const waterPath = [];
     let cur = found;
-    while (cur !== -1) { waterPath.push(cur); cur = cameFrom.get(cur); }
+    while (cur !== -1) { waterPath.push(cur); cur = from[cur]; }
     waterPath.reverse();
     waterPath.push(targetTile);
     return this.smoothSeaPath(waterPath);
@@ -2119,7 +2187,11 @@ const Game = {
     const attacker = this.players[attackerId];
     if (!attacker || !attacker.alive) return 'Nation defeated';
     if (troops < 20 || attacker.troops < troops) return 'Not enough troops';
-    if (this.boats.filter(b => b.attacker === attackerId).length >= this.MAX_BOATS_PER_PLAYER) {
+    // Counted, not collected — navalInvasionBlockReason is what the radial
+    // menu asks to decide whether the Boat wedge is greyed out.
+    let myBoats = 0;
+    for (const b of this.boats) if (b.attacker === attackerId) myBoats++;
+    if (myBoats >= this.MAX_BOATS_PER_PLAYER) {
       return 'Boat limit reached';
     }
     const landingTile = this.nearestOwnedCoast(tile);
@@ -2308,9 +2380,15 @@ const Game = {
     // survivor or a legitimate blocker of someone else's 95% threshold,
     // exactly as if they were still playing.
     if (this.winnerId === null) {
-      const alive = this.players.filter(p => p.alive && p.tiles.size > 0);
-      if (alive.length === 1) {
-        this.winnerId = alive[0].id;
+      // Counted in a loop rather than collected with filter(): this runs on
+      // every tick of every match, and the array it used to build was thrown
+      // away again immediately.
+      let aliveCount = 0, lastAlive = null;
+      for (const p of this.players) {
+        if (p.alive && p.tiles.size > 0) { aliveCount++; lastAlive = p; }
+      }
+      if (aliveCount === 1) {
+        this.winnerId = lastAlive.id;
       } else {
         // OpenFront's WinCheckExecution excludes irradiated land from the
         // denominator: numTilesWithoutFallout = numLandTiles -
@@ -4099,7 +4177,9 @@ const Game = {
     }
     if (ports.length === 0) return { ok: false, reason: 'Build a Port first' };
 
-    if (this.warships.filter(w => w.owner === playerId).length >= this.MAX_WARSHIPS_PER_PLAYER) {
+    let myWarships = 0;
+    for (const w of this.warships) if (w.owner === playerId) myWarships++;
+    if (myWarships >= this.MAX_WARSHIPS_PER_PLAYER) {
       return { ok: false, reason: 'Warship limit reached' };
     }
     if (p.gold < this.unitCost(p, 'warship')) return { ok: false, reason: 'Not enough gold' };
