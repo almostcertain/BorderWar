@@ -2665,13 +2665,55 @@ const Game = {
 
   // Defense fort constants, ported from OpenFront's Config.ts:
   // defensePostRange=30, defensePostDefenseBonus=5, defensePostSpeedBonus=3.
-  // A built fort within FORT_RANGE tiles of a contested tile multiplies the
+  // A built fort within fortRange() tiles of a contested tile multiplies the
   // attacker's troop cost (FORT_DEF_MULT) and movement cost (FORT_SPEED_MULT).
-  FORT_RANGE: 30,
+  //
+  // The two multipliers are theirs verbatim. The RANGE is not, and deliberately
+  // so: 30 tiles is an absolute constant tuned against the only board OpenFront
+  // actually plays on — their World map, 2000x1000 with 651,569 land tiles per
+  // their own resources/maps/world/manifest.json (map4x and map16x in that same
+  // manifest are downsampled render assets, not playable sizes). Every other
+  // quantity in a fight scales with MAP_SIZES — nation area, army cap, the
+  // length of the front — but a flat radius does not, so the protected disc's
+  // share of the world exploded as the map shrank:
+  //
+  //   pi*30^2 = 2827 tiles      as % of land (LAND_FRACTION 0.40)
+  //     small  12,500 land       22.6%
+  //     medium 50,000 land        5.7%     <- default
+  //     large  200,000 land       1.4%
+  //     xlarge 800,000 land       0.35%
+  //     OpenFront World           0.43%
+  //
+  // At medium that is 13x OpenFront's intended footprint, and the numbers stop
+  // being a tax and start being a wall: a 3,000-tile nation at 70% of cap holds
+  // ~24k troops, and committing all of it buys 3,354 tiles of open ground but
+  // only 671 inside a fort aura — while clearing one full disc costs ~101k
+  // troops against a cap of ~34k. Worse, that nation is only ~55 tiles across
+  // and the disc is 60 wide, so there is no flank to go around; in OpenFront the
+  // front is far longer than the aura and routing around a post is the answer.
+  //
+  // So hold their RELATIVE reach instead of their absolute one: 30 tiles on a
+  // 2000-wide map is 1.5% of map width, which is what FORT_RANGE_BASE /
+  // FORT_RANGE_REF_WIDTH encodes. xlarge lands on exactly 30 again, and the
+  // smaller sizes get the aura OpenFront would have given them. FORT_RANGE_MIN
+  // keeps small from collapsing to a 3.75-tile disc that a fort could not
+  // meaningfully protect anything with.
+  FORT_RANGE_BASE: 30,
+  FORT_RANGE_REF_WIDTH: 2000,
+  FORT_RANGE_MIN: 6,
   FORT_DEF_MULT: 5,
   FORT_SPEED_MULT: 3,
 
-  // True when a fully-built fort owned by `ownerId` is within FORT_RANGE
+  // Ordered base*width/ref (not base*(width/ref)) so every MAP_SIZES width
+  // lands on a value exact in binary floating point — 3.75 / 7.5 / 15 / 30,
+  // squaring to 56.25 / 225 / 900 — which a lockstep sim needs, since this
+  // feeds tileCost and stepAttack on every client.
+  fortRange() {
+    const r = this.FORT_RANGE_BASE * GameMap.width / this.FORT_RANGE_REF_WIDTH;
+    return r < this.FORT_RANGE_MIN ? this.FORT_RANGE_MIN : r;
+  },
+
+  // True when a fully-built fort owned by `ownerId` is within fortRange()
   // tiles (Euclidean) of `tile`. Iterates all buildings — typically <100
   // total — so this is cheap relative to the per-tile attack loop cost.
   // `includePending` also counts a fort still under construction — the combat
@@ -2680,7 +2722,7 @@ const Game = {
   // one it already started this same minute.
   fortInRange(tile, ownerId, includePending) {
     const w = GameMap.width, tx = tile % w, ty = (tile / w) | 0;
-    const r2 = this.FORT_RANGE * this.FORT_RANGE;
+    const fr = this.fortRange(), r2 = fr * fr;
     for (const [bt, b] of this.buildings) {
       if (b.type !== 'fort' || (!b.built && !includePending)) continue;
       if (GameMap.owner[bt] !== ownerId) continue;
@@ -3203,6 +3245,10 @@ const Game = {
 
     let guard = 20000;
     while (guard-- > 0) {
+      // OpenFront's own top-of-loop test (`if (troopCount < 1) { attack.delete() }`).
+      // A front runs out of troops here and nowhere else — see the tile-cost
+      // charge below for why that distinction matters.
+      if (a.troops < 1) break;
       if (a.heapTile.length === 0) break;
 
       // Best-scoring ground first — see frontierPriority: mostly how far the
@@ -3240,8 +3286,17 @@ const Game = {
       const move = this.terrainMoveCost(tile) * speedRatio * fortMult * falloutMult;
       if (a.progress < move) break;
 
+      // Charged unconditionally, even when it overdraws the stack. The old
+      // guard here bailed with `if (a.troops < cost) { a.troops = 0; break; }`,
+      // which deleted the entire remaining force the instant it could not
+      // afford ONE more tile — OpenFront never does that. Theirs subtracts the
+      // loss, lets troopCount go negative, and only ends the attack on the next
+      // iteration's `troopCount < 1`. The gap is proportional to the per-tile
+      // cost, so it was invisible on open ground (~11 troops thrown away) and
+      // five times worse inside a fort aura (~55), i.e. it bit hardest exactly
+      // where a push was already struggling. Now the front always gets the tile
+      // it paid for and simply stops.
       const cost = this.tileCost(attacker, defender, a.troops, GameMap.terrain[tile], tile);
-      if (a.troops < cost) { a.troops = 0; break; }
 
       this.heapPop(a);
       a.border.delete(tile);
@@ -3284,7 +3339,10 @@ const Game = {
       }
     }
 
-    if (a.troops <= 0) {
+    // Same threshold as the loop's own check, so an attack left holding a
+    // sub-troop remainder ends here rather than idling forever unable to buy a
+    // tile. Math.max guards the overdraw the tile charge above now permits.
+    if (a.troops < 1) {
       attacker.troops += Math.max(0, a.troops);
       return false;
     }
@@ -4828,9 +4886,20 @@ const Game = {
     for (const tile of toDestroy) {
       const owner = GameMap.owner[tile];
       if (owner >= 0) {
-        this.players[owner].tiles.delete(tile);
         tilesPerPlayer.set(owner, (tilesPerPlayer.get(owner) || 0) + 1);
-        GameMap.owner[tile] = NEUTRAL;
+        // Routed through setOwner rather than writing GameMap.owner directly:
+        // relinquishing a tile also moves border status for that tile AND its
+        // four neighbours, and setOwner is the only thing that keeps
+        // Player.borderTiles in step (see updateBorderTile). A raw write left
+        // every still-owned tile ringing the crater marked interior, so
+        // refreshFrontier — which scans borderTiles alone — found no frontier
+        // against the fresh NEUTRAL ground and launchAttack refused outright:
+        // a crater blown inside your own territory was simply un-retakable.
+        // setOwner does NOT clear fallout on a revert-to-NEUTRAL (only a real
+        // capture decontaminates), so the irradiation added just below stands.
+        // Buildings in the blast are already gone from step 1, so its capture
+        // branch has nothing left to find here.
+        this.setOwner(tile, NEUTRAL);
       }
       // Fallout applies to every LAND tile in the blast, owned or not —
       // verbatim queueWaterConversion's own mg.isLand(tile) guard, which has

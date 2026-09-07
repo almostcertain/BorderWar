@@ -427,7 +427,7 @@ const Render = {
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       const owner = GameMap.owner[b.tile];
       const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
-      const rr = Game.FORT_RANGE * s;
+      const rr = Game.fortRange() * s;
       ctx.beginPath();
       ctx.arc(px, py, rr, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.07)`;
@@ -442,7 +442,7 @@ const Render = {
     // Same idea for SAM Launchers, just with a per-building radius (
     // Game.dynamicSamRange, which grows with level and ramps smoothly right
     // after an upgrade — see its own comment) instead of Fort's fixed
-    // FORT_RANGE, and a solid rather than dashed ring so the two structures'
+    // fortRange(), and a solid rather than dashed ring so the two structures'
     // protection zones stay visually distinct even where they overlap.
     for (const b of Game.buildings.values()) {
       if (b.type !== 'sam' || !b.built) continue;
@@ -744,11 +744,14 @@ const Render = {
     // connect to — an empty ring here would just be noise. Drawn before the
     // tile highlight below so that small, more important square/ring sits
     // on top rather than under a dashed line.
-    // Fort placement: show the 30-tile protection radius while hovering.
+    // Fort placement: show the protection radius while hovering. Read live
+    // from Game.fortRange() rather than hardcoded at 30 — the radius scales
+    // with map size now, so the preview ring has to as well or it would
+    // promise four times the coverage a fort actually gives on medium.
     if (UI.placing === 'fort' && !(hoverB && hoverB.type === 'fort')) {
       const cx = px + s / 2, cy = py + s / 2;
       ctx.beginPath();
-      ctx.arc(cx, cy, Game.FORT_RANGE * s, 0, Math.PI * 2);
+      ctx.arc(cx, cy, Game.fortRange() * s, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(130, 215, 255, 0.09)';
       ctx.fill();
       ctx.lineWidth = Math.max(1, this.dpr * 1.5);

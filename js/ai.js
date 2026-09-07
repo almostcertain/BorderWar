@@ -514,20 +514,34 @@ const AI = {
 
   // Fort placed exactly on the front line was found to die for free: the
   // instant the enemy took a single tile it stood on, it was destroyed
-  // before its FORT_RANGE bonus ever mattered (a fort is destroyed, not
+  // before its protection bonus ever mattered (a fort is destroyed, not
   // captured, when its tile changes hands — see Game.setOwner's fort
-  // branch). Set back FORT_BORDER_BUFFER tiles from
+  // branch). Set back fortBorderBuffer() tiles from
   // the border/coast instead — still border-adjacent by preference (the
   // opposite of buildSite's interior bias) so it covers contested ground
   // with its protection radius, just no longer the literal first tile lost.
   // The defense/speed bonus doesn't stack (Game.fortInRange is a boolean
   // "any fort in range", not a count), so a second fort inside an existing
-  // one's FORT_RANGE buys nothing but wastes gold and a build slot — skip
+  // one's radius buys nothing but wastes gold and a build slot — skip
   // any candidate tile already covered, built or still under construction.
-  FORT_BORDER_BUFFER: 4,
+  //
+  // The setback is a FRACTION of the protection radius, not the flat 4 tiles
+  // this held while Game.fortRange() was a flat 30. Those two numbers are the
+  // same knob read twice: the buffer buys survivability by trading away
+  // forward coverage, and 4/30 is the ratio that was tuned. Left absolute, a
+  // medium-map fort (radius 7.5) set back 4 tiles would reach only 3.5 tiles
+  // past the border — a bot spending up to 250k gold on an aura that covers
+  // essentially none of the ground being fought over. Scaled, xlarge still
+  // gets exactly 4 and the smaller sizes get 1-2.
+  FORT_BUFFER_RATIO: 4 / 30,
+
+  fortBorderBuffer() {
+    return Math.max(1, Math.round(Game.fortRange() * this.FORT_BUFFER_RATIO));
+  },
 
   fortSite(p) {
     if (p.tiles.size === 0) return -1;
+    const buffer = this.fortBorderBuffer();
     let fallback = -1;
     let fallbackDepth = -1;
     for (let attempt = 0; attempt < 15; attempt++) {
@@ -538,9 +552,9 @@ const AI = {
       // at the buffer — small nations that don't own enough depth anywhere
       // still get their best available candidate via fallbackDepth rather
       // than skipping the fort entirely.
-      const depth = this.interiorDepth(p, tile, this.FORT_BORDER_BUFFER);
+      const depth = this.interiorDepth(p, tile, buffer);
       if (depth > fallbackDepth) { fallback = tile; fallbackDepth = depth; }
-      if (depth >= this.FORT_BORDER_BUFFER) return tile;
+      if (depth >= buffer) return tile;
     }
     return fallback;
   },
