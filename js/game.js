@@ -307,6 +307,8 @@ const Game = {
   renderElapsed: 0,
   nbuf: new Int32Array(4),
   abuf: new Int32Array(4),   // separate scratch so adjacency checks can't clobber nbuf
+  bbuf: new Int32Array(4),   // scratch for setOwner's own border bookkeeping
+  bbuf2: new Int32Array(4),  // nested scratch updateBorderTile uses per-neighbour, so it can't clobber bbuf mid-update
 
   // Real OpenFront dimensions, not estimates. Their featured "World" map — the
   // default/flagship map, rank 1 in their own catalogue — ships in three
@@ -484,6 +486,10 @@ const Game = {
         // batch actually completes, since `units` itself stays put till then.
         unitsPending: { city: 0, fort: 0 },
         tiles: new Set(),
+        // Owned tiles with at least one non-owned neighbour — kept in sync by
+        // setOwner's border bookkeeping. refreshFrontier scans this instead
+        // of all of `tiles` so rescanning a front costs perimeter, not area.
+        borderTiles: new Set(),
         alive: true,
         allies: new Set(),
         // How each nation feels about every other, on OpenFront's [-100, 100]
@@ -695,6 +701,22 @@ const Game = {
       this.fallout.delete(i);
     }
 
+    // Border bookkeeping: only tile i and its immediate neighbours can have
+    // moved in or out of border status. A neighbour's own owner didn't
+    // change here, and i was "not that owner" both before and after unless
+    // it's old or newOwner, so no third party's border status is affected —
+    // only those two players' sets need rechecking, over just these tiles.
+    const bb = this.bbuf;
+    const bn = GameMap.neighbors(i, bb);
+    const n0 = bn > 0 ? bb[0] : -1, n1 = bn > 1 ? bb[1] : -1,
+          n2 = bn > 2 ? bb[2] : -1, n3 = bn > 3 ? bb[3] : -1;
+    this.updateBorderTile(old, i);
+    this.updateBorderTile(newOwner, i);
+    if (n0 >= 0) { this.updateBorderTile(old, n0); this.updateBorderTile(newOwner, n0); }
+    if (n1 >= 0) { this.updateBorderTile(old, n1); this.updateBorderTile(newOwner, n1); }
+    if (n2 >= 0) { this.updateBorderTile(old, n2); this.updateBorderTile(newOwner, n2); }
+    if (n3 >= 0) { this.updateBorderTile(old, n3); this.updateBorderTile(newOwner, n3); }
+
     // A structure belongs to whoever holds the ground under it. Routing capture
     // through the one function that moves a tile means a city changes hands the
     // instant its tile does — no separate bookkeeping to fall out of step, and
@@ -770,6 +792,24 @@ const Game = {
     if (x < w - 1) this.dirtyTiles.add(i + 1);
     if (y > 0) this.dirtyTiles.add(i - w);
     if (y < h - 1) this.dirtyTiles.add(i + w);
+  },
+
+  // Recomputes whether `tile` counts as a border tile for `playerId` — owned
+  // by them with at least one neighbour NOT owned by them — and updates
+  // their borderTiles set to match. Called by setOwner on the tile that
+  // changed hands and each of its neighbours, for whichever of old/newOwner
+  // they belong to; `playerId` may be NEUTRAL/WATER (< 0), which has no set
+  // to touch. Uses bbuf2 rather than bbuf since setOwner is still holding a
+  // neighbour list of its own in bbuf while it calls this.
+  updateBorderTile(playerId, tile) {
+    if (playerId < 0) return;
+    const player = this.players[playerId];
+    if (GameMap.owner[tile] !== playerId) { player.borderTiles.delete(tile); return; }
+    const nb = this.bbuf2;
+    const n = GameMap.neighbors(tile, nb);
+    let isBorder = false;
+    for (let k = 0; k < n; k++) if (GameMap.owner[nb[k]] !== playerId) { isBorder = true; break; }
+    if (isBorder) player.borderTiles.add(tile); else player.borderTiles.delete(tile);
   },
 
   // --- Structures ----------------------------------------------------------
@@ -2754,11 +2794,18 @@ const Game = {
   // slow advance drains it faster than conquests refill it, so without this an
   // attack aborts with most of its troops unspent and every front churns
   // without ever breaking. Returns false when the two no longer touch at all.
+  //
+  // Scans attacker.borderTiles (owned tiles with a non-owned neighbour, kept
+  // live by setOwner/updateBorderTile) rather than every tile the attacker
+  // owns — only a border tile can possibly neighbour the target, so this is
+  // exactly equivalent, just perimeter-sized instead of area-sized. A launch
+  // (or troop top-up) against a sprawling empire used to re-walk its entire
+  // territory synchronously on every click; this is the fix for that hitch.
   refreshFrontier(a) {
     const attacker = this.players[a.attacker];
     const seen = new Set(), nb = this.nbuf;
     a.heapTile = []; a.heapPrio = []; a.seen = seen;
-    for (const i of attacker.tiles) {
+    for (const i of attacker.borderTiles) {
       const n = GameMap.neighbors(i, nb);
       for (let k = 0; k < n; k++) {
         const j = nb[k];
