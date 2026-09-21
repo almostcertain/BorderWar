@@ -699,10 +699,9 @@ const Render = {
         ctx.fillRect(bx, by, barW * pct, barH);
       }
 
-      // Level, above the disc — only once there's something to say. A fresh
-      // level-1 structure looks identical to the old unleveled ones, so nobody
-      // has to parse a permanent "1" on every single city on the map.
-      if (b.built && b.level > 1) {
+      // Level, above the disc — always shown once built, level 1 included, so
+      // a structure's level can be read straight off the map.
+      if (b.built && b.level >= 1) {
         const badgeFont = Math.max(9 * this.dpr, Math.min(15 * this.dpr, r * 0.6));
         ctx.font = '700 ' + badgeFont.toFixed(1) + 'px system-ui, sans-serif';
         ctx.textAlign = 'center';
