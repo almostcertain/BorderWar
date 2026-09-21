@@ -271,6 +271,7 @@ const UI = {
     this.diplo = null;
     this.dismissed.clear();
     this.placing = null;
+    this.debugOpen = false;
     this.debugNukeType = null;
     this.debugNukeSrc = -1;
     this.placeHover = -1;
