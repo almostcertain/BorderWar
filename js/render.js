@@ -60,6 +60,7 @@ const Render = {
     this.tileCtx = this.tileCanvas.getContext('2d');
     this.image = this.tileCtx.createImageData(w, h);
     this.pixels = new Uint32Array(this.image.data.buffer);
+    this.qHead = this.qTail = 0;   // a previous match's pending reveal is meaningless here
 
     // Unclaimed ground, one tone per terrain: grassy plains, dun highland,
     // bare grey mountain.
@@ -256,6 +257,70 @@ const Render = {
     this.tileCtx.putImageData(this.image, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
   },
 
+  // --- Paced territory reveal ------------------------------------------------
+  // The sim only advances on a turn (Protocol.TURN_INTERVAL_MS, 100ms), and a
+  // whole turn's conquests land in one tick, so painting them the frame they
+  // arrive makes a front visibly step ten times a second regardless of how
+  // fast the display is. This spreads each turn's changed tiles across the
+  // next REVEAL_MS of frames instead, in conquest order (the dirty list is
+  // insertion-ordered), so the edge sweeps forward rather than jumping.
+  //
+  // Pure presentation: the sim, the wire and the state hash never see it.
+  // The canvas trails GameMap.owner by at most REVEAL_MS, and every tile is
+  // painted from the *current* owner when its slot comes up, so it always
+  // converges to exactly what buildTiles() would draw. Set smoothTerritory
+  // false to fall back to the old paint-on-arrival behaviour.
+  smoothTerritory: true,
+  REVEAL_MS: 90,          // a little under one turn, so a batch is done before the next lands
+  qTile: new Int32Array(1 << 16),
+  qTime: new Float64Array(1 << 16),
+  qHead: 0,
+  qTail: 0,
+
+  // Moves this frame's dirty tiles into the reveal queue, timestamped across
+  // [now, now + REVEAL_MS]. Anything still queued from the previous turn is
+  // flushed first: turns arriving faster than REVEAL_MS (debug burst, catch-up,
+  // a sped-up local game) degrade gracefully to paint-on-arrival instead of
+  // building up lag.
+  enqueueDirty(dirty, now) {
+    const n = dirty.size;
+    if (this.qHead < this.qTail) this.releaseTiles(Infinity);
+    if (this.qTile.length < n) {
+      let cap = this.qTile.length;
+      while (cap < n) cap *= 2;
+      this.qTile = new Int32Array(cap);
+      this.qTime = new Float64Array(cap);
+    }
+    const T = this.qTile, TM = this.qTime, step = this.REVEAL_MS / n;
+    let k = 0;
+    for (const i of dirty) { T[k] = i; TM[k] = now + step * k; k++; }
+    this.qHead = 0;
+    this.qTail = n;
+  },
+
+  // Paints every queued tile whose slot has come up (all of them for
+  // Infinity), one bounding-box blit for the lot.
+  releaseTiles(now) {
+    const T = this.qTile, TM = this.qTime, tail = this.qTail;
+    let head = this.qHead;
+    if (head >= tail) return;
+    const w = GameMap.width, h = GameMap.height;
+    const owner = GameMap.owner, px = this.pixels;
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    while (head < tail && TM[head] <= now) {
+      const i = T[head++];
+      const x = i % w, y = (i / w) | 0;
+      this.paintTile(i, x, y, w, h, owner, px);
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    this.qHead = head;
+    if (maxX < 0) return;
+    this.tileCtx.putImageData(this.image, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
+  },
+
   clampCamera() {
     const viewW = this.canvas.width / (this.cam.scale * this.dpr);
     const viewH = this.canvas.height / (this.cam.scale * this.dpr);
@@ -289,6 +354,14 @@ const Render = {
       this.buildTiles();
       Game.dirty = false;
       Game.dirtyTiles.clear();
+      this.qHead = this.qTail = 0;   // the full rebuild already painted everything queued
+    } else if (this.smoothTerritory) {
+      const now = performance.now();
+      if (Game.dirtyTiles.size) {
+        this.enqueueDirty(Game.dirtyTiles, now);
+        Game.dirtyTiles.clear();
+      }
+      this.releaseTiles(now);
     } else if (Game.dirtyTiles.size) {
       this.buildTilesIncremental(Game.dirtyTiles);
       Game.dirtyTiles.clear();
