@@ -40,11 +40,39 @@ const Fx = {
   // `born` is non-decreasing and prune() can trim from the front.
   goldPopups: [],
 
+  // Seconds a conquest-spoils label stays up. Longer and bigger than a trade
+  // payout's — a kill is a moment worth reading, not a background trickle.
+  KILL_POPUP_LIFETIME: 1.5,
+
+  // { tile, amount, ownerId, born } — same shape and ordering guarantee as
+  // goldPopups, kept in its own list because prune() relies on one uniform
+  // lifetime per list. Kills are rare, so it needs no cap.
+  killPopups: [],
+
   // Called from Game.init. Effects are per-match, same as everything they
   // decorate; carrying a previous match's popups into a new map would draw
   // them over unrelated tiles.
   reset() {
     this.goldPopups.length = 0;
+    this.killPopups.length = 0;
+  },
+
+  // Record the spoils of eliminating a nation/tribe/player over `tile`. Called
+  // unconditionally by the sim; the renderer shows it only to `ownerId`.
+  killPopup(tile, amount, ownerId) {
+    const born = Game.elapsed;
+    const list = this.killPopups, life = this.KILL_POPUP_LIFETIME;
+    let i = 0;
+    while (i < list.length && born - list[i].born >= life) i++;
+    if (i > 0) list.splice(0, i);
+    list.push({ tile, amount, ownerId, born });
+  },
+
+  pruneKills(now) {
+    const list = this.killPopups, life = this.KILL_POPUP_LIFETIME;
+    let i = 0;
+    while (i < list.length && now - list[i].born >= life) i++;
+    if (i > 0) list.splice(0, i);
   },
 
   // Record a payout label over `tile`. Called unconditionally by the sim for

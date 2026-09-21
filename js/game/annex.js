@@ -270,6 +270,8 @@ Object.assign(Game, {
     if (tiles.length === 0) return;
     const loser = this.players[GameMap.owner[tiles[0]]];
     const wipesThem = loser.tiles.size === tiles.length;
+    const spoils = wipesThem ? (loser.isHuman ? loser.gold / 2 : loser.gold) : 0;
+    if (wipesThem) this.spoilsPopup(loser.tiles, spoils, byPlayerId);
 
     for (const t of tiles) this.setOwner(t, byPlayerId);
 
@@ -278,7 +280,7 @@ Object.assign(Game, {
       // Same half-spoils rule as the conquest path above, and keyed the same
       // way — on the loser being human-controlled, never on it being the
       // viewing client, which a lockstep sim must not know about.
-      winner.gold += loser.isHuman ? loser.gold / 2 : loser.gold;
+      winner.gold += spoils;
       loser.gold = 0;
       loser.troops = 0;
       loser.alive = false;

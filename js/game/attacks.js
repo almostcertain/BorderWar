@@ -212,6 +212,24 @@ Object.assign(Game, {
   // by three rivals is carved up rather than teleporting to whoever landed last.
   DEAD_DEFENDER_TILES: 100,
 
+  // Presentation only: floats the killing blow's payout over the victim's
+  // territory. Anchors on the tile nearest the territory's centroid, so it
+  // lands inside the land even for a crescent-shaped or split nation.
+  spoilsPopup(tiles, amount, ownerId) {
+    if (!(amount >= 1) || !tiles.size) return;
+    const w = GameMap.width;
+    let sx = 0, sy = 0;
+    for (const t of tiles) { sx += t % w; sy += (t / w) | 0; }
+    const cx = sx / tiles.size, cy = sy / tiles.size;
+    let best = -1, bestD = Infinity;
+    for (const t of tiles) {
+      const dx = (t % w) - cx, dy = ((t / w) | 0) - cy;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    Fx.killPopup(best, amount, ownerId);
+  },
+
   handleDeadDefender(defenderId, attackerId) {
     const defender = this.players[defenderId];
     const attacker = this.players[attackerId];
@@ -230,7 +248,10 @@ Object.assign(Game, {
     // is no longer a single id, and a per-viewer branch would hand different
     // clients different treasuries.
     if (attacker) {
-      attacker.gold += defender.isHuman ? defender.gold / 2 : defender.gold;
+      const spoils = defender.isHuman ? defender.gold / 2 : defender.gold;
+      // Located before the carve-up below reassigns every tile.
+      this.spoilsPopup(defender.tiles, spoils, attackerId);
+      attacker.gold += spoils;
       defender.gold = 0;
     }
 

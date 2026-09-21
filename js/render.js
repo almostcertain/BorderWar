@@ -395,6 +395,7 @@ const Render = {
     this.drawNukeBlasts();
     this.drawSamFlashes();
     this.drawGoldPopups();
+    this.drawKillPopups();
     this.drawSelectionBox();
   },
 
@@ -1746,6 +1747,44 @@ const Render = {
       const k = Math.round(g.amount / 1000);
       const text = '+' + (k > 0 ? k + 'k' : g.amount);
       const ly = py - font * 1.1 - rise;
+      ctx.strokeText(text, px, ly);
+      ctx.fillText(text, px, ly);
+    }
+  },
+
+  // "+gold" pop-up over a nation, tribe or player the viewer just finished
+  // off. Same viewer-only filter and render-clock ageing as drawGoldPopups;
+  // larger, with a brief pop-in, and held fully visible for the first part of
+  // its life before fading so it's readable.
+  drawKillPopups() {
+    const now = Game.renderElapsed;
+    Fx.pruneKills(now);
+    if (!Fx.killPopups.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
+    const life = Fx.KILL_POPUP_LIFETIME;
+
+    for (const g of Fx.killPopups) {
+      if (g.ownerId !== Game.me) continue;
+      const tx = g.tile % w, ty = (g.tile / w) | 0;
+      const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -80 || py < -80 || px > cw + 80 || py > ch + 80) continue;
+
+      const frac = Math.max(0, Math.min(1, (now - g.born) / life));
+      const alpha = frac < 0.6 ? 1 : 1 - (frac - 0.6) / 0.4;
+      const pop = frac < 0.12 ? 0.6 + 0.4 * (frac / 0.12) : 1;
+      const rise = frac * 30 * this.dpr;
+
+      const font = 22 * this.dpr * pop;
+      ctx.font = '800 ' + font.toFixed(1) + 'px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = Math.max(3, font * 0.25);
+      ctx.strokeStyle = `rgba(0, 0, 0, ${(alpha * 0.9).toFixed(3)})`;
+      ctx.fillStyle = `rgba(255, 214, 90, ${alpha.toFixed(3)})`;
+      const text = '+' + formatGold(g.amount);
+      const ly = py - rise;
       ctx.strokeText(text, px, ly);
       ctx.fillText(text, px, ly);
     }
