@@ -409,7 +409,7 @@ const UI = {
       return;
     }
     banner.classList.remove('warn');
-    // MP-3.2: the spawn phase is now a fixed timed window (up to 30s with
+    // MP-3.2: the spawn phase is now a fixed timed window (up to 15s with
     // 2+ humans), not "ends the instant someone taps" — without a visible
     // countdown that reads as the game having frozen. Game.spawnPhaseTicks is
     // the phase's own turn counter (Game.ticks stays frozen at 0 throughout

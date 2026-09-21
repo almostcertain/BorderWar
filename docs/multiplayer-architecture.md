@@ -25,7 +25,7 @@ task, not a judgement call.
 
 **D1 — The spawn phase becomes a fixed timed window, in singleplayer too.**
 Matches ship the same start flow in both modes. Durations follow OpenFront's own
-(`numSpawnPhaseTurns()`): **100 turns (10 s) singleplayer, 300 turns (30 s) multiplayer**
+(`numSpawnPhaseTurns()`): **100 turns (10 s) singleplayer, 150 turns (15 s) multiplayer (originally 300 / 30 s, shortened by request)**
 — the two modes share the mechanic, not the duration, because a solo player has nobody to
 wait for. Explicitly rejected: keeping the current "match begins the instant the human
 clicks" flow for singleplayer only. Two start flows would reintroduce exactly the
@@ -875,8 +875,8 @@ Implementation facts later tasks need:
   Rework: `spawn` intents claim a provisional disc; the phase ends at
   `ticks === SPAWN_PHASE_TURNS`; anyone unspawned is auto-placed from `findSpawns`;
   a re-spawn intent before the deadline moves the disc.
-- Durations per D1: `SPAWN_PHASE_TURNS` = **100 in singleplayer, 300 in multiplayer**
-  (10 s / 30 s). Same mechanic, different duration — a solo player waits for nobody.
+- Durations per D1: `SPAWN_PHASE_TURNS` = **100 in singleplayer, 150 in multiplayer**
+  (10 s / 15 s). Same mechanic, different duration — a solo player waits for nobody.
 - **Trap left by MP-0.1, read before starting.** `Game.ticks` is incremented *after*
   `tick()`'s `spawning` and `!running` early returns, so it stays 0 for the whole spawn
   phase. That is faithful to the `elapsed` behaviour it replaced and correct for MP-0.1,
@@ -897,7 +897,7 @@ Implementation facts later tasks need:
 `Game.spawnPhaseTicks`, incremented once per `tickSpawnPhase()` call (which already runs
 exactly once per turn while `spawning`); `Game.ticks`/`elapsed` are untouched and still
 freeze at 0 during spawn, exactly as before — no `elapsed`-reader audit was needed.
-`SPAWN_PHASE_TURNS = H > 1 ? 300 : 100`, computed in `init()` from the roster size already
+`SPAWN_PHASE_TURNS = H > 1 ? 150 : 100`, computed in `init()` from the roster size already
 available, no new wire field.
 
 A genuine, concrete bug was found and fixed as part of this task, not filed separately:

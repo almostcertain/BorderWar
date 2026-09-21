@@ -356,7 +356,7 @@ const Game = {
     // Per D1: a solo player has nobody to wait for, so singleplayer keeps the
     // short window; any match with more than one human gets the long one so
     // every human has a real chance to place before the deadline.
-    this.SPAWN_PHASE_TURNS = H > 1 ? 300 : 100;
+    this.SPAWN_PHASE_TURNS = H > 1 ? 150 : 100;
 
     for (let p = 0; p < total; p++) {
       const isHuman = p < H;
