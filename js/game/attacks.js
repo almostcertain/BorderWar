@@ -99,6 +99,9 @@ Object.assign(Game, {
 
     attacker.troops -= troops;
     this.attacks.push(a);
+    // Only a brand-new front counts: topping up an existing one (above) is the
+    // same war, already paid for.
+    if (targetId >= 0) this.provokeByAttack(attacker, this.players[targetId]);
     return true;
   },
 

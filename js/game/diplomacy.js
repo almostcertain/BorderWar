@@ -37,6 +37,23 @@ Object.assign(Game, {
     p.relations.set(otherId, Math.max(-100, Math.min(100, this.relation(p, otherId) + delta)));
   },
 
+  // Marching on someone is not free of consequences: the victim's opinion of the
+  // attacker craters, and the victim's allies — who now have a reason to fear
+  // the same treatment — cool toward the attacker too. Without this an attack
+  // was invisible to the relation system, so nobody ever became an enemy by
+  // being attacked and the AI had no standing to weigh. Attacking a traitor is
+  // exempt (everyone already wants them punished), and tribes hold no opinions.
+  ATTACK_RELATION_HIT: -50,
+  ATTACK_ALLY_RELATION_HIT: -20,
+
+  provokeByAttack(attacker, target) {
+    if (attacker.isTribe || target.isTribe || this.isTraitor(target)) return;
+    this.adjustRelation(target, attacker.id, this.ATTACK_RELATION_HIT);
+    for (const allyId of target.allies) {
+      if (allyId !== attacker.id) this.adjustRelation(this.players[allyId], attacker.id, this.ATTACK_ALLY_RELATION_HIT);
+    }
+  },
+
   // OpenFront's canSendAllianceRequest. A request already coming the other way
   // is not a blocker but a shortcut — requestAlliance accepts it rather than
   // opening a mirror-image request nobody needs to answer.

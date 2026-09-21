@@ -730,6 +730,82 @@ const AI = {
   RETREAT_COOLDOWN: 60,
   RETREAT_PENALTY: 0.15,
 
+  // --- Weighing a new enemy -------------------------------------------------
+  // Score alone (contact x density) made every soft neighbour a target no
+  // matter who they were friends with or what else was going on, so bots picked
+  // fights "willy-nilly". provocation() prices the diplomatic side of a fight —
+  // the returned multiplier goes straight into the target's score, and a fresh
+  // enemy priced below RISK_FLOOR is simply not attacked at all.
+  //
+  // It only bites on a *fresh* enemy. Someone already at war with us, or who
+  // hates us, is a feud we're already in: no new cost, and a small bonus for
+  // hitting back.
+  RISK_FLOOR: 0.2,
+  FEUD_BONUS: 1.25,
+  // What a target's coalition may weigh, relative to ours, before it starts to
+  // count against attacking: past this, the multiplier is RISK_STRENGTH_EDGE/ratio.
+  RISK_STRENGTH_EDGE: 0.8,
+  RISK_TIES_PENALTY: 0.3,       // the target is allied to one of OUR allies
+  RISK_FRIEND_PENALTY: 0.4,     // relation is already Friendly — an ally in waiting
+  RISK_PROSPECT_PENALTY: 0.6,   // not hostile, and strong enough to be worth allying with
+  RISK_PER_HOSTILE: 0.6,        // per enemy we already have, i.e. per open second front
+  RISK_MAX_HOSTILES: 3,
+
+  // Real players who are, right now, a problem for p: anyone attacking it, and
+  // any neighbour whose opinion of it is already negative. Tribes don't count —
+  // they hold no grudges and their attacks are a nuisance, not a war.
+  hostiles(p, contact) {
+    const out = new Set();
+    for (const a of Game.attacks) {
+      if (a.target !== p.id || a.attacker === p.id) continue;
+      const atk = Game.players[a.attacker];
+      if (atk && atk.alive && !atk.isTribe) out.add(a.attacker);
+    }
+    if (contact) {
+      for (const id of contact.keys()) {
+        const o = id >= 0 && Game.players[id];
+        if (o && o.alive && !o.isTribe && Game.relation(p, id) < 0) out.add(id);
+      }
+    }
+    return out;
+  },
+
+  // Multiplier on a target's attractiveness for the diplomatic cost of making
+  // an enemy of `t`. 1 = free; below RISK_FLOOR = not worth it. `contact` (the
+  // borderTargets map) says which of t's allies can reach us overland; naval
+  // callers pass null and get the half-weight, since an ally has to cross water
+  // too.
+  provocation(p, t, contact, hostiles) {
+    if (t.isTribe) return 1;
+    if (hostiles.has(t.id)) return this.FEUD_BONUS;
+    // Punishing a traitor is popular; nobody minds.
+    if (Game.isTraitor(t)) return 1;
+
+    let f = 1;
+    const mine = Math.max(1, Game.totalTroops(p));
+    const theirs = Game.totalTroops(t);
+
+    // The coalition we would be up against, not just the target on its own.
+    let backing = theirs;
+    for (const allyId of t.allies) {
+      const ally = Game.players[allyId];
+      if (!ally || !ally.alive) continue;
+      if (p.allies.has(allyId)) { f *= this.RISK_TIES_PENALTY; continue; }
+      backing += Game.totalTroops(ally) * (contact && contact.has(allyId) ? 1 : 0.5);
+    }
+    const ratio = backing / mine;
+    if (ratio > this.RISK_STRENGTH_EDGE) f *= Math.max(0.1, this.RISK_STRENGTH_EDGE / ratio);
+
+    // A neighbour we're on decent terms with is worth more as a friend.
+    const rel = Game.relation(p, t.id);
+    if (rel >= this.FRIENDLY) f *= this.RISK_FRIEND_PENALTY;
+    else if (rel >= 0 && theirs >= mine * 0.7) f *= this.RISK_PROSPECT_PENALTY;
+
+    // Every enemy we already have is a front we can't give our full attention.
+    f *= Math.pow(this.RISK_PER_HOSTILE, Math.min(this.RISK_MAX_HOSTILES, hostiles.size));
+    return f;
+  },
+
   reviewAttacks(p) {
     const watch = p.attackWatch || (p.attackWatch = new Map());
     const live = new Set();
@@ -777,6 +853,7 @@ const AI = {
     const targets = this.borderTargets(p);
     if (targets.size === 0) return;
 
+    const hostiles = this.hostiles(p, targets);
     let best = null, bestScore = -Infinity;
     for (const [targetId, contact] of targets) {
       // Mid-war, this cycle exists only to look for a Tribe side-skirmish —
@@ -799,6 +876,9 @@ const AI = {
         if (Game.relation(p, targetId) < 0) score *= 1.5;
         if (t.isTribe) score *= this.tribePriorityMult();
         score *= this.retreatPenalty(p, targetId);
+        const risk = this.provocation(p, t, targets, hostiles);
+        if (risk < this.RISK_FLOOR) continue;   // not worth the enemy it makes
+        score *= risk;
       }
       if (score > bestScore) { bestScore = score; best = targetId; }
     }
@@ -860,6 +940,7 @@ const AI = {
     const homeCoast = this.coastalTiles(p);
     if (homeCoast.length === 0) return;
 
+    const hostiles = this.hostiles(p, null);
     const candidates = [];
     for (const lm of GameMap.landmasses) {
       let bestTile = -1, bestTileScore = -Infinity, bestTarget = -1;
@@ -872,7 +953,7 @@ const AI = {
         // too would just waste one.
         if (Game.onSameLandmass(p.id, tile)) continue;
         const dist = this.nearestDist(homeCoast, tile);
-        const score = this.navalScore(p, owner, lm.size, dist);
+        const score = this.navalScore(p, owner, lm.size, dist, hostiles);
         if (score > bestTileScore) { bestTileScore = score; bestTile = tile; bestTarget = owner; }
       }
       if (bestTile >= 0) candidates.push({ tile: bestTile, target: bestTarget, score: bestTileScore });
@@ -890,7 +971,7 @@ const AI = {
     }
   },
 
-  navalScore(p, targetId, opportunity, dist) {
+  navalScore(p, targetId, opportunity, dist, hostiles) {
     const distFactor = this.navalDistanceFactor(dist);
     if (targetId === NEUTRAL) return opportunity * 1.4 * distFactor;
     const t = Game.players[targetId];
@@ -902,7 +983,9 @@ const AI = {
     if (Game.isTraitor(t)) score *= 2;
     if (Game.relation(p, targetId) < 0) score *= 1.5;
     if (t.isTribe) score *= this.tribePriorityMult();
-    return score * distFactor * this.retreatPenalty(p, targetId);
+    const risk = this.provocation(p, t, null, hostiles);
+    if (risk < this.RISK_FLOOR) return -Infinity;   // same veto as think()
+    return score * risk * distFactor * this.retreatPenalty(p, targetId);
   },
 
   // 1 at dist=0, fading to 0.5 at "comfortable raiding range" (scaled off the
