@@ -123,6 +123,8 @@
          same way it always has). Host/Join are two more panels reusing the
          same Transport/onConnect/onServerMessage pipeline with local:false;
          see js/main.js's "Multiplayer lobby" section. -->
+    <label id="nameRow">Name <input id="playerName" type="text" maxlength="20" placeholder="You" autocomplete="off" spellcheck="false"></label>
+
     <div id="modeTabs">
       <button type="button" class="modeTab active" data-mode="sp">Singleplayer</button>
       <button type="button" class="modeTab" data-mode="host">Host</button>
@@ -144,7 +146,6 @@
     </div>
 
     <div id="hostMode" class="modeBody hidden">
-      <label>Username <input id="hostUsername" type="text" maxlength="20" placeholder="You"></label>
       <label>Map
         <select id="hostMapSize">
           <option value="small">Small</option>
@@ -169,7 +170,6 @@
     </div>
 
     <div id="joinMode" class="modeBody hidden">
-      <label>Username <input id="joinUsername" type="text" maxlength="20" placeholder="You"></label>
       <label>Join code <input id="joinCode" type="text" maxlength="12" placeholder="ABC123"></label>
       <button id="joinBtn">Join Lobby</button>
 

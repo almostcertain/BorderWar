@@ -885,6 +885,8 @@ html, body {
   text-align: center;
 }
 
+#nameRow input { margin-left: 6px; width: 180px; }
+
 .lobbyLabel {
   font-size: 12px;
   opacity: 0.6;

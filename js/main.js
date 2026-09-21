@@ -122,7 +122,7 @@
 
   function hostLobby() {
     const gameID = randomGameID();
-    const username = UI.getHostUsername() || 'Host';
+    const username = UI.getPlayerName() || 'Host';
     myRole = 'host';
     iAmHost = false; // confirmed once this connection's own lobby_info arrives
     inLobby = true;
@@ -310,7 +310,7 @@
     Transport.connect(onConnect, onServerMessage, {
       local: true,
       gameID: 'local',
-      username: 'You',
+      username: UI.getPlayerName() || 'You',
       seed: (Math.random() * 1e9) | 0,
       mapSize: mapSize,
       bots: bots,
