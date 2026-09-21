@@ -253,7 +253,7 @@ const Game = {
     xlarge: { width: 2000, height: 1000 }   // OpenFront's World, full resolution
   },
 
-  // gameStartInfo is {gameID, seed, config:{mapSize,bots,tribes},
+  // gameStartInfo is {gameID, seed, config:{mapSize,bots,tribes,difficulty?},
   // players:[{clientID,username,playerId}]} — the exact shape LocalServer.start
   // and server/gameserver.js's start() both produce (docs/multiplayer-
   // architecture.md §4, §9 Phase 2). myPlayerId is a plain integer, the
@@ -267,6 +267,10 @@ const Game = {
     this.rng = mulberry32(seed);
     const size = this.MAP_SIZES[sizeKey] || this.MAP_SIZES.medium;
     this.sizeKey = sizeKey in this.MAP_SIZES ? sizeKey : 'medium';
+    // Nation tier for the whole match (economy.js NATION_DIFFICULTY, ai.js
+    // PROFILES). Set on every init so a previous match's tier can't leak in;
+    // anything unrecognised — including a lobby that sends none — is Medium.
+    this.difficulty = this.DIFFICULTIES.includes(config.difficulty) ? config.difficulty : this.DEFAULT_DIFFICULTY;
     GameMap.generate(size.width, size.height, seed);
 
     // Player id space: 0..H-1 are humans, one per roster entry (real
@@ -378,7 +382,7 @@ const Game = {
         // once H + enough bots exceeds 32.
         name = BOT_NAMES[(p - H) % BOT_NAMES.length];
         color = PLAYER_COLORS[(p - H + 1) % PLAYER_COLORS.length];
-        startTroops = this.START_TROOPS_BOT;
+        startTroops = this.nationDifficulty().startTroops;
       }
       this.players.push({
         id: p,

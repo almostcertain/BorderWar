@@ -45,6 +45,7 @@
   const sizeSelect = document.getElementById('mapSize');
   const botInput = document.getElementById('botCount');
   const tribeInput = document.getElementById('tribeCount');
+  const difficultySelect = document.getElementById('difficulty');
 
   // Singleplayer and the host lobby panel share the same size -> defaults
   // behavior, so both map selects are wired through here.
@@ -322,7 +323,8 @@
       seed: (Math.random() * 1e9) | 0,
       mapSize: mapSize,
       bots: bots,
-      tribes: tribes
+      tribes: tribes,
+      difficulty: difficultySelect.value
     });
   }
 

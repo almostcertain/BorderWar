@@ -162,7 +162,7 @@ const Transport = {
   //
   //   onconnect()        called once the link is up, before any message.
   //   onmessage(msg)     every server->client message (§4's second table).
-  //   opts               { local, gameID, seed, mapSize, bots, tribes,
+  //   opts               { local, gameID, seed, mapSize, bots, tribes, difficulty,
   //                        username, spectator }
   //                      `local` defaults to true. In local mode the rest are
   //                      the lobby settings a real server would have decided,
