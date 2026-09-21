@@ -1,5 +1,5 @@
 const UI = {
-  ratio: 0.2,
+  ratio: 0.2, // kept equal to DEFAULT_RATIO
   lastLeaderboard: 0,
   diplo: null,        // the offer currently on the banner, if any
   dismissed: new Set(),
@@ -32,6 +32,19 @@ const UI = {
 
   DEFAULT_HINT: 'Tap land to attack · right-click or hold for diplomacy/boat · shift-drag to select warships · drag to pan',
 
+  // Puts the attack ratio back to its default and moves the slider handle and
+  // label to match. The browser restores a range input's last value on refresh
+  // (and it keeps whatever the player dragged it to across matches), so the DOM
+  // can't be trusted to agree with this.ratio — always write both together.
+  DEFAULT_RATIO: 0.2,
+  resetRatio() {
+    this.ratio = this.DEFAULT_RATIO;
+    const pct = Math.round(this.ratio * 100);
+    document.getElementById('ratio').value = pct;
+    document.getElementById('ratioValue').textContent = pct + '%';
+    this.updateRatioTroops();
+  },
+
   setup() {
     const slider = document.getElementById('ratio');
     const label = document.getElementById('ratioValue');
@@ -40,6 +53,7 @@ const UI = {
       label.textContent = slider.value + '%';
       this.updateRatioTroops();
     });
+    this.resetRatio();
 
     document.getElementById('diploYes').addEventListener('click', () => {
       if (this.diplo) { this.diplo.accept(); this.diplo = null; }
@@ -122,9 +136,7 @@ const UI = {
       const tag = e.target && e.target.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (e.key === 'Escape') {
-        this.placing = null;
-        this.debugNukeType = null;
-        this.debugNukeSrc = -1;
+        this.cancelPlacing();
         this.selectedWarships.clear();
         return;
       }
@@ -197,6 +209,18 @@ const UI = {
     bar.addEventListener('scroll', updateFade);
     new ResizeObserver(updateFade).observe(bar);
     updateFade();
+  },
+
+  // Puts away whatever build is armed — structure, nuke, warship or the debug
+  // nuke. Shared by Escape and right-click. Returns whether anything was armed,
+  // so right-click can tell "cancelled a placement" from "nothing to cancel".
+  cancelPlacing() {
+    const wasArmed = !!this.placing;
+    this.placing = null;
+    this.placeHover = -1;
+    this.debugNukeType = null;
+    this.debugNukeSrc = -1;
+    return wasArmed;
   },
 
   // Arming is a toggle: the same button, or the same hotkey, puts it away.
@@ -276,6 +300,7 @@ const UI = {
     this.debugNukeSrc = -1;
     this.placeHover = -1;
     this.selectedWarships.clear();
+    this.resetRatio();
     this.flashUntil = 0;
     this.spawnFlashUntil = 0;
     this.spawnBannerOpen = false;

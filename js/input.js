@@ -22,6 +22,8 @@ const Input = {
     canvas.addEventListener('wheel', e => this.onWheel(e), { passive: false });
     canvas.addEventListener('contextmenu', e => {
       e.preventDefault();
+      // With a build armed, right-click puts it away instead of opening the menu.
+      if (UI.cancelPlacing()) return;
       this.openMenu(e.clientX, e.clientY);
     });
   },
