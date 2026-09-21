@@ -788,7 +788,7 @@ html, body {
 #overlay, #endOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(6, 10, 20, 0.9);
+  background: rgba(6, 10, 20, 1);
   display: flex;
   align-items: center;
   justify-content: center;
