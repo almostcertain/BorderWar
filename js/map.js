@@ -36,20 +36,13 @@ const GameMap = {
     const cx = width / 2, cy = height / 2;
 
     // Independent field driving terrain *tier* (plains vs highland vs
-    // mountain) — deliberately decoupled from `elevation` below and sampled
-    // with Noise.ridged rather than Noise.fractal. classifyTerrain used to
-    // slice tiers off elevation's own percentiles, but elevation is
-    // dominated by the radial falloff (built to shape the coastline, high in
-    // the middle by construction) plus plain fbm, whose octaves are all
-    // smooth bumps regardless of frequency — so mountains/highlands always
-    // collapsed into one contiguous blob (or, sampled at a higher frequency,
-    // several smaller but still smooth-edged blobs) near the landmass
-    // centre. Ridged noise folds each octave into a crease instead of a
-    // bump and cascades finer creases along coarser ones, which is what
-    // actually produces winding, branching mountain-range shapes with real
-    // internal texture (see the Africa reference this was built against:
-    // many separate ranges, each with its own internal ridges, not a
-    // plateau).
+    // mountain) — deliberately decoupled from `elevation` below.
+    // classifyTerrain used to slice tiers off elevation's own percentiles,
+    // but elevation is dominated by the radial falloff (built to shape the
+    // coastline, high in the middle by construction), so mountains and
+    // highlands always collapsed into one contiguous blob near the landmass
+    // centre. This is a height field of its own, built to read like a
+    // topographic map — see rangeRoughness for the rules it follows.
     this.roughness = new Float32Array(size);
     const shape = this.rangeShape(seed);
     const low = this.rangeLowFreq(width, height, seed, scale * 1.6, shape);
@@ -85,9 +78,9 @@ const GameMap = {
     return this.landTiles;
   },
 
-  // Per-seed character of the mountain ranges, so one map's ranges run in long
-  // grained chains and the next's are lumpier and more scattered. Integer hash
-  // of the seed only — this runs in the sim, so it must not touch Game.rng.
+  // Per-seed character of the terrain: which way the ranges run, how tightly
+  // they're stretched, and how big the hills are. Integer hash of the seed
+  // only — this runs in the sim, so it must not touch Game.rng.
   rangeShape(seed) {
     const h = n => {
       let x = Math.imul((seed | 0) ^ Math.imul(n, 0x9E3779B1), 0x85EBCA6B);
@@ -100,62 +93,60 @@ const GameMap = {
     // bit between browsers, and one flipped tile would desync lockstep.
     const t = h(1) * 2 - 1, k = 1 + t * t;
     return {
-      warp: 0.8 + h(2) * 0.5,      // how far ridges are bent off their natural line
-      stretch: 1 + h(3) * 0.8,     // >1 elongates ridges along `angle` into chains
-      floor: 0.45 + h(4) * 0.1,    // ridge strength where the range mask is lowest
+      stretch: 1.3 + h(2) * 0.4,   // >1 elongates hills along the grain into ridges
+      warp: 0.25 + h(3) * 0.15,    // how far the grain bends across the map
+      scale: 1.5 + h(4) * 0.5,     // hill size: low = broad massifs, high = finer ridges
       cos: (1 - t * t) / k, sin: 2 * t / k
     };
   },
 
-  // The warp offsets and range mask are all slow noise, so they're sampled on
-  // a coarse grid and interpolated per tile rather than evaluated at every
-  // tile — on xlarge that was doubling roughness cost. Stride is 1 (exact)
-  // through 750 wide and grows with the map, keeping ~125 tiles per feature.
+  // The warp is slow noise, so it is sampled on a coarse grid and
+  // interpolated per tile rather than evaluated at every tile — on xlarge
+  // that was a large share of generation time. Stride is 1 (exact) through
+  // 750 wide and grows with the map, keeping ~125 tiles per feature.
   rangeLowFreq(width, height, seed, uvScale, shape) {
     const stride = Math.max(1, Math.round(width / 500));
     const gw = Math.ceil((width - 1) / stride) + 2, gh = Math.ceil((height - 1) / stride) + 2;
-    const grid = new Float32Array(gw * gh * 3);
+    const grid = new Float32Array(gw * gh * 2);
     for (let gy = 0; gy < gh; gy++) {
       for (let gx = 0; gx < gw; gx++) {
-        const u = gx * stride * uvScale * 0.6, v = gy * stride * uvScale * 0.6, o = (gy * gw + gx) * 3;
+        const u = gx * stride * uvScale * 0.5, v = gy * stride * uvScale * 0.5, o = (gy * gw + gx) * 2;
         grid[o] = (Noise.fractal(u, v, seed + 111, 2) - 0.5) * 2 * shape.warp;
         grid[o + 1] = (Noise.fractal(u, v, seed + 222, 2) - 0.5) * 2 * shape.warp;
-        grid[o + 2] = Noise.fractal(u, v, seed + 333, 3);
       }
     }
     return { stride, gw, grid };
   },
 
-  // Roughness at (u, v) in ridge-noise space; classifyTerrain slices tiers
-  // off it. Plain ridged noise puts ridges on the zero-crossings of a noise
-  // field, and those are always closed loops — every mountain range ringed a
-  // plain, so maps were full of same-shaped "bowls". Three things break that:
-  //  - warp: the sample point is pushed around by a slow 2-octave noise, so
-  //    loops bend into irregular, non-repeating shapes. Past ~1.2 it turns
-  //    marbled and unnatural, hence the cap in rangeShape.
-  //  - grain: one seed-wide direction stretches ridges into chains. The
-  //    direction must be uniform — varying it across the map shears the noise
-  //    into combed-hair swirls.
-  //  - range mask: ridge strength fades along its length (unwarped, slower
-  //    noise), so a ring thins out and opens into arcs, letting plains flow
-  //    between ranges instead of being sealed in.
+  // Roughness at (u, v) in noise space; classifyTerrain slices tiers off it.
+  // Tiers are level sets of a real height field, so they follow the rules of
+  // a topographic map rather than the rules of noise:
+  //  - No swirls or folds. The field is never bent hard: the warp only nudges
+  //    the sample point (capped in rangeShape), because bending past about a
+  //    third of a feature size folds the terrain into marbled whorls.
+  //  - One grain across the whole map. Ranges, ridges and spurs in a real
+  //    region all run the same way, so coordinates are stretched along a
+  //    single seed-wide direction. It must be uniform — rotating it from place
+  //    to place shears the noise into combed-hair swirls.
+  //  - Steep ground is smooth, gentle ground is detailed (Noise.eroded).
+  //  - Valleys drain outward. Ridged noise put ridges on a field's
+  //    zero-crossings, which are always closed loops, so every range ringed a
+  //    plain and maps were full of same-shaped sealed "bowls". A height field
+  //    has real peaks and slopes instead: mountains sit inside highland,
+  //    highland inside plains, and low ground runs out to the coast.
   rangeRoughness(u, v, seed, shape, low, x, y) {
-    // Bilinear read of the coarse warp/mask grid at tile (x, y).
+    // Bilinear read of the coarse warp grid at tile (x, y).
     const { stride, gw, grid } = low;
     const gx = (x / stride) | 0, gy = (y / stride) | 0;
     const fx = x / stride - gx, fy = y / stride - gy;
-    const o00 = (gy * gw + gx) * 3, o10 = o00 + 3, o01 = o00 + gw * 3, o11 = o01 + 3;
+    const o00 = (gy * gw + gx) * 2, o10 = o00 + 2, o01 = o00 + gw * 2, o11 = o01 + 2;
     const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
-    const wx = grid[o00] * w00 + grid[o10] * w10 + grid[o01] * w01 + grid[o11] * w11;
-    const wy = grid[o00 + 1] * w00 + grid[o10 + 1] * w10 + grid[o01 + 1] * w01 + grid[o11 + 1] * w11;
-    const m = grid[o00 + 2] * w00 + grid[o10 + 2] * w10 + grid[o01 + 2] * w01 + grid[o11 + 2] * w11;
-    const pu = u + wx, pv = v + wy;
+    const pu = u + grid[o00] * w00 + grid[o10] * w10 + grid[o01] * w01 + grid[o11] * w11;
+    const pv = v + grid[o00 + 1] * w00 + grid[o10 + 1] * w10 + grid[o01 + 1] * w01 + grid[o11 + 1] * w11;
+
     const a = (pu * shape.cos + pv * shape.sin) / shape.stretch;
     const b = (-pu * shape.sin + pv * shape.cos) * Math.sqrt(shape.stretch);
-
-    let t = (m - 0.35) / 0.3;
-    t = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
-    return Noise.ridged(a, b, seed + 5000, 6) * (shape.floor + (1 - shape.floor) * t);
+    return Noise.eroded(a * shape.scale, b * shape.scale, seed + 7000, 5, 0.5, 0.45);
   },
 
   // Below this, a landmass is dropped to water rather than kept as an island.
