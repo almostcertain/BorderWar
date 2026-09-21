@@ -139,11 +139,21 @@ Object.assign(Game, {
   // tiles instead of just its border was a per-frame hitch of its own for a
   // large empire. Uses nbuf so the abuf enclosedRegion walks on can't
   // clobber it mid-scan.
+  //
+  // Mainland vs cut-off piece (2026-09-21 fix). Real OpenFront holds the two
+  // to different standards: a fragment falls to any wall, mixed or not, but a
+  // nation's mainland (its largest connected piece) only falls when exactly
+  // ONE other player walls it in — `surroundedBySamePlayer`. Without that, a
+  // landlocked nation ringed by two or three neighbours was swallowed whole by
+  // whichever touched it most, on the sweep and on a tap or bot alike, which
+  // read as nations being annexed far too easily. The single-wall rule is
+  // applied here rather than behind requireDominant so the hover cue, the
+  // tap, the bots and the sweep all agree.
   enclosedPocketsOf(targetId, byPlayerId, requireDominant) {
     const me = this.players[byPlayerId];
     if (targetId < 0 || targetId === byPlayerId || !me) return [];
     const seen = new Map(), nb = this.nbuf, regions = [];
-    let run = 0;
+    let run = 0, biggest = -1;
     for (const i of me.borderTiles) {
       const n = GameMap.neighbors(i, nb);
       for (let k = 0; k < n; k++) {
@@ -151,11 +161,42 @@ Object.assign(Game, {
         if (GameMap.owner[j] !== targetId || seen.has(j)) continue;
         const found = this.enclosedRegion(j, seen, ++run);
         if (!found) continue;
+        if (found.wallCounts.size > 1) {
+          // Mixed wall: fine for a fragment, never for the mainland. Only pay
+          // for the largest-piece scan once a pocket has actually passed.
+          if (biggest < 0) biggest = this.largestLandPiece(targetId);
+          if (found.tiles.length >= biggest) continue;
+        }
         if (requireDominant && this.dominantWaller(found.wallCounts) !== byPlayerId) continue;
         regions.push(found.tiles);
       }
     }
     return regions;
+  },
+
+  // Size of the largest 4-connected piece of `playerId`'s land — its mainland.
+  // Walks on abuf, which enclosedPocketsOf's own loop (nbuf) is not using.
+  largestLandPiece(playerId) {
+    const tiles = this.players[playerId].tiles;
+    const seen = new Set(), nb = this.abuf;
+    let best = 0;
+    for (const start of tiles) {
+      if (seen.has(start)) continue;
+      seen.add(start);
+      const stack = [start];
+      let size = 0;
+      while (stack.length) {
+        const t = stack.pop();
+        size++;
+        const n = GameMap.neighbors(t, nb);
+        for (let k = 0; k < n; k++) {
+          const j = nb[k];
+          if (GameMap.owner[j] === playerId && !seen.has(j)) { seen.add(j); stack.push(j); }
+        }
+      }
+      if (size > best) best = size;
+    }
+    return best;
   },
 
   // Hands every one of those pockets over at once. All of them are found
