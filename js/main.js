@@ -45,10 +45,18 @@
   const sizeSelect = document.getElementById('mapSize');
   const botInput = document.getElementById('botCount');
   const tribeInput = document.getElementById('tribeCount');
-  sizeSelect.addEventListener('change', () => {
-    botInput.value = BOTS_FOR_SIZE[sizeSelect.value] || 9;
-    tribeInput.value = TRIBES_FOR_SIZE[sizeSelect.value] || 16;
-  });
+
+  // Singleplayer and the host lobby panel share the same size -> defaults
+  // behavior, so both map selects are wired through here.
+  function bindSizeDefaults(select, bots, tribes) {
+    select.addEventListener('change', () => {
+      bots.value = BOTS_FOR_SIZE[select.value] || 9;
+      tribes.value = TRIBES_FOR_SIZE[select.value] || 16;
+    });
+  }
+  bindSizeDefaults(sizeSelect, botInput, tribeInput);
+  bindSizeDefaults(document.getElementById('hostMapSize'),
+    document.getElementById('hostBotCount'), document.getElementById('hostTribeCount'));
 
   // --- Multiplayer lobby (MP-2.3) --------------------------------------------
   //
