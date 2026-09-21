@@ -245,10 +245,29 @@ html, body {
 
 /* --- Debug panel: dev-only gold cheats, top-right ------------------------- */
 
-#debugPanel {
+#debugToggle {
   position: fixed;
   /* Sits below #pauseBtn, which owns the top-right corner. */
   top: calc(env(safe-area-inset-top) + 42px);
+  right: 8px;
+  z-index: 8;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 120, 120, 0.35);
+  background: rgba(120, 30, 30, 0.55);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#debugToggle:active { filter: brightness(0.85); }
+
+#debugPanel {
+  position: fixed;
+  /* Sits below #debugToggle. */
+  top: calc(env(safe-area-inset-top) + 74px);
   right: 8px;
   /* Without a width cap, this row of six buttons is wider than most phones
      and a narrow desktop window — it used to just run off the left edge of

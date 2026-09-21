@@ -15,6 +15,10 @@
   <div id="leaderboard"></div>
 </div>
 
+<!-- Dev-only, like the panel it opens: UI.update shows both only on a local
+     transport, and the panel additionally stays closed until this is clicked. -->
+<button id="debugToggle" class="hidden" type="button" title="Toggle debug panel">Debug ▸</button>
+
 <div id="debugPanel" class="hidden">
   <div id="debugLabel">Debug</div>
   <button data-gold="50000">+50k gold</button>

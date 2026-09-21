@@ -19,6 +19,8 @@ const UI = {
   // Game.debugNuke.
   debugNukeType: null,
   debugNukeSrc: -1,
+  // Whether the debug panel is expanded; closed by default, toggled by #debugToggle.
+  debugOpen: false,
 
   // The player's own warships currently selected via Input's shift-drag box
   // (or a shift-click on a single one) — see selectWarshipsInBox/
@@ -105,6 +107,10 @@ const UI = {
     });
 
     document.getElementById('pauseBtn').addEventListener('click', () => this.togglePause());
+
+    document.getElementById('debugToggle').addEventListener('click', () => {
+      this.debugOpen = !this.debugOpen;
+    });
 
     document.getElementById('debugNukeAtom').addEventListener('click', () => this.armDebugNuke('atombomb'));
     document.getElementById('debugNukeHydrogen').addEventListener('click', () => this.armDebugNuke('hydrogenbomb'));
@@ -696,7 +702,11 @@ const UI = {
     // once the transport is not local, because two of the three controls on
     // the panel reach past the intent pipeline into the sim (see the DEBUG
     // BYPASS notes in setup()) and would desync a networked match.
-    document.getElementById('debugPanel').classList.toggle('hidden', !Transport.isLocal);
+    // The panel itself additionally stays closed until the toggle opens it.
+    const debugToggle = document.getElementById('debugToggle');
+    debugToggle.classList.toggle('hidden', !Transport.isLocal);
+    debugToggle.textContent = this.debugOpen ? 'Debug ▾' : 'Debug ▸';
+    document.getElementById('debugPanel').classList.toggle('hidden', !Transport.isLocal || !this.debugOpen);
 
     const pauseBtn = document.getElementById('pauseBtn');
     pauseBtn.classList.toggle('hidden', !Transport.isLocal || Game.winnerId !== null);

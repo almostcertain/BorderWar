@@ -324,6 +324,7 @@
     // The finished match's player still exists until Game.init() runs again,
     // which would otherwise leave the debug panel floating over this menu.
     document.getElementById('debugPanel').classList.add('hidden');
+    document.getElementById('debugToggle').classList.add('hidden');
   });
 
   requestAnimationFrame(loop);
