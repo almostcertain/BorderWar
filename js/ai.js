@@ -9,6 +9,23 @@ const AI = {
   DISTRUSTFUL: 0,
   FRIENDLY: 50,
 
+  // Kickoff observation (2026-09-10): a fresh, un-atWar nation bordering a
+  // Tribe was committing the full 55% ratio below to its very first strike,
+  // stacked on top of tribePriorityMult()'s up-to-3x score bonus and
+  // tileCost's 30% defender discount for a Tribe target (see
+  // BOT_DEFENDER_LOSS_MULT). That one opening attack was routinely enough to
+  // overrun a meaningful chunk of a Tribe's whole border in a single tick —
+  // long before the Tribe's own slow 5%-troop nibble (TribeAI.think, every
+  // 3-7s) could produce any visible growth of its own. From the player's
+  // seat this reads as "tribes don't expand," because the bordering ones
+  // never get the chance to: they're gone before their own AI cycle would
+  // have shown anything. TRIBE_ATTACK_RATIO gives a fresh strike on a Tribe
+  // the same restrained commit as a neutral-land grab instead of a full
+  // nation-vs-nation opener — enough to keep pressuring it, not enough to
+  // erase its border in one hit — mirroring TRIBE_SKIRMISH_RATIO's existing
+  // reasoning for the already-atWar case just below.
+  TRIBE_ATTACK_RATIO: 0.35,   // vs. the normal 0.55 for a fresh nation-vs-nation attack
+
   // Real OpenFront's own AI gives Tribes no special targeting priority (its
   // only Tribe-specific rule is the neutral-tile toll discount and the
   // human-only 20% defense discount ported into Game.tileCost) — this is a
@@ -49,6 +66,7 @@ const AI = {
         p.nextThink = 2 + Game.rng() * 3;
         this.diplomacy(p);
         this.economy(p);
+        this.reviewAttacks(p);
         this.think(p);
       }
 
@@ -688,6 +706,62 @@ const AI = {
   // the p.tiles.size check.
   TRIBE_SKIRMISH_RATIO: 0.2,   // vs. the normal 0.55 for a fresh nation attack
 
+  // --- Cutting losses ------------------------------------------------------
+  // A human watching a push bleed out can hit retreat and get 75% of the
+  // committed troops home (Game.ATTACK_RETREAT_MALUS); a bot used to ride every
+  // failing front down to zero. reviewAttacks gives it the same out.
+  //
+  // "Failing" is deliberately two conditions, not one: the front is down to
+  // RETREAT_REMAINING of the most troops it has ever held, AND the defender's
+  // pool still exceeds what is left of it by RETREAT_DEFENDER_EDGE. Losing most
+  // of a stack is normal in a push that is winning ground, so the loss alone
+  // proves nothing — it is the defender still standing well above the remainder
+  // that says the rest would be thrown away. Cost per tile also climbs as an
+  // attack shrinks (tileCost's strength/attackTroops ratio), so waiting only
+  // makes the same retreat more expensive. Tribes are skipped — their defence
+  // is engineered weak (BOT_DEFENDER_LOSS_MULT) — as is a defender close to
+  // handleDeadDefender's collapse threshold, where staying in is the win.
+  RETREAT_REMAINING: 0.35,
+  RETREAT_DEFENDER_EDGE: 1.5,
+  // After retreating from someone, think()/navalScore treat them as a much
+  // poorer target for a while. Without this the bot's troops get back in two
+  // seconds and the very next think() relaunches at the same border at 55%,
+  // paying the 25% malus over and over for the same lost fight.
+  RETREAT_COOLDOWN: 60,
+  RETREAT_PENALTY: 0.15,
+
+  reviewAttacks(p) {
+    const watch = p.attackWatch || (p.attackWatch = new Map());
+    const live = new Set();
+    for (const a of Game.attacks) {
+      if (a.attacker !== p.id) continue;
+      live.add(a.id);
+      // Peak, not launch size: a consolidated top-up raises the bar the
+      // remainder is measured against instead of tripping the threshold.
+      const peak = Math.max(watch.get(a.id) || 0, a.troops);
+      watch.set(a.id, peak);
+
+      if (a.retreating || a.target < 0) continue;
+      const t = Game.players[a.target];
+      if (!t || !t.alive || t.isTribe) continue;
+      if (t.tiles.size <= Game.DEAD_DEFENDER_TILES * 3) continue;
+      if (a.troops > peak * this.RETREAT_REMAINING) continue;
+      if (t.troops <= a.troops * this.RETREAT_DEFENDER_EDGE) continue;
+
+      if (Game.retreatAttack(a)) {
+        (p.retreatedFrom || (p.retreatedFrom = new Map())).set(a.target, Game.elapsed);
+      }
+    }
+    for (const id of watch.keys()) if (!live.has(id)) watch.delete(id);
+  },
+
+  // 1 normally; RETREAT_PENALTY inside RETREAT_COOLDOWN of a retreat from
+  // targetId. Shared by think()'s land scoring and navalScore().
+  retreatPenalty(p, targetId) {
+    const at = p.retreatedFrom && p.retreatedFrom.get(targetId);
+    return at !== undefined && Game.elapsed - at < this.RETREAT_COOLDOWN ? this.RETREAT_PENALTY : 1;
+  },
+
   think(p) {
     if (p.tiles.size === 0) return;
     if (p.troops < Game.maxTroops(p) * 0.35) return;
@@ -724,13 +798,15 @@ const AI = {
         // neighbour of yours, becomes the obvious next target.
         if (Game.relation(p, targetId) < 0) score *= 1.5;
         if (t.isTribe) score *= this.tribePriorityMult();
+        score *= this.retreatPenalty(p, targetId);
       }
       if (score > bestScore) { bestScore = score; best = targetId; }
     }
 
     if (best === null) return;
     if (this.annexIfEnclosed(p, best)) return;
-    const ratio = atWar ? this.TRIBE_SKIRMISH_RATIO : (best === NEUTRAL ? 0.35 : 0.55);
+    const ratio = atWar ? this.TRIBE_SKIRMISH_RATIO
+      : (best === NEUTRAL ? 0.35 : (Game.players[best].isTribe ? this.TRIBE_ATTACK_RATIO : 0.55));
     Game.launchAttack(p.id, best, Math.floor(p.troops * ratio));
   },
 
@@ -826,7 +902,7 @@ const AI = {
     if (Game.isTraitor(t)) score *= 2;
     if (Game.relation(p, targetId) < 0) score *= 1.5;
     if (t.isTribe) score *= this.tribePriorityMult();
-    return score * distFactor;
+    return score * distFactor * this.retreatPenalty(p, targetId);
   },
 
   // 1 at dist=0, fading to 0.5 at "comfortable raiding range" (scaled off the

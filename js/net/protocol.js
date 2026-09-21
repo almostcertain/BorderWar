@@ -227,9 +227,14 @@ const Protocol = {
     attack: {
       // targetID may be NEUTRAL_TARGET for unclaimed land, matching
       // Game.launchAttack's own contract ("targetId may be NEUTRAL").
-      fields: { targetID: 'targetId', troops: 'troops' },
+      // `tile` is a deliberate deviation from OpenFront's own AttackIntentSchema
+      // (which carries no tile): it is the tapped tile, there so the sim can
+      // scope the attack to the landmass actually touched rather than every
+      // border the attacker shares with targetID across the whole map — see
+      // Game.launchAttack's landmassId comment for why.
+      fields: { targetID: 'targetId', troops: 'troops', tile: 'tile' },
       from: 'ui.js:530 Game.launchAttack',
-      openfront: 'AttackIntentSchema (targetID nullable there; -1 here)'
+      openfront: 'AttackIntentSchema (targetID nullable there; -1 here; no tile field there)'
     },
     cancel_attack: {
       fields: { attackID: 'entityId' },
@@ -427,7 +432,7 @@ const Protocol = {
   // validates as "unknown field".
   intent: {
     spawn(tile) { return { type: 'spawn', tile: tile }; },
-    attack(targetID, troops) { return { type: 'attack', targetID: targetID, troops: troops }; },
+    attack(targetID, troops, tile) { return { type: 'attack', targetID: targetID, troops: troops, tile: tile }; },
     cancelAttack(attackID) { return { type: 'cancel_attack', attackID: attackID }; },
     boat(dst, troops) { return { type: 'boat', dst: dst, troops: troops }; },
     cancelBoat(boatID) { return { type: 'cancel_boat', boatID: boatID }; },

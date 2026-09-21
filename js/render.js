@@ -122,7 +122,15 @@ const Render = {
     // nuke that lights up the whole scatter of survivors at once. The full
     // sweep only runs once the cheap single walk has confirmed the cursor is
     // actually on a pocket, so ordinary hovering never pays for it.
-    const region = id !== Game.me ? Game.enclosedRegion(UI.hoverTile, Game.me) : null;
+    // enclosedRegion no longer takes a single "wall owner" — a pocket's wall
+    // can now be a mix of players (see game.js's 2026-09-09 fix) — so this
+    // single-shot check supplies its own scratch seen/run and additionally
+    // confirms Game.me is actually one of the pocket's wall contributors
+    // (wallCounts.has), matching what a tap here would actually be able to
+    // take (enclosedPocketsOf/UI.onTap accept any touching wall, not just a
+    // dominant one).
+    const found = id !== Game.me ? Game.enclosedRegion(UI.hoverTile, new Map(), 1) : null;
+    const region = found && found.wallCounts.has(Game.me) ? found : null;
     if (region) {
       const c = this.packed(255, 215, 60, 130);
       for (const r of Game.enclosedPocketsOf(id, Game.me)) for (const t of r) px[t] = c;

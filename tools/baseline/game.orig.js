@@ -57,14 +57,16 @@ function formatCount(n) {
   return Math.round(n / 1e6) + 'M';
 }
 
-// Same bucket scheme as formatCount, but capped one digit tighter — a front
-// marker sits right on the battle line, where a wide number crowds the
-// terrain around it, so 3 digits is the ceiling here instead of 4.
+// Population readout for front pushes and the label floating over each
+// player: below 1k it's an exact count ("455"); from 1k up to 100k it
+// keeps one decimal so movement is still visible tick to tick ("55.6K");
+// past 100k the digit-to-digit jitter isn't worth reading, so it rounds.
 function formatCountTight(n) {
-  n = Math.max(0, Math.floor(n));
-  if (n < 1000) return String(n);
-  if (n < 1e6) return Math.min(999, Math.round(n / 1000)) + 'k';
-  if (n < 1e7) return (n / 1e6).toFixed(1) + 'M';
+  n = Math.max(0, n);
+  if (n < 1000) return String(Math.round(n));
+  if (n < 1e5) return (n / 1000).toFixed(1) + 'K';
+  const k = Math.round(n / 1000);
+  if (k < 1000) return k + 'K';
   return Math.round(n / 1e6) + 'M';
 }
 
@@ -140,10 +142,8 @@ const Game = {
   // far more precise than any balance number in this file needs.
   //
   // There is deliberately no det.sqrt: Math.sqrt is already exact everywhere,
-  // so wrapping it would throw away precision and time for nothing. Math.LN2
-  // (LARGE_DEFENDER_DECAY) is likewise left alone — a compile-time constant,
-  // not a computed function. Integer-exponent Math.pow(2, n) is exempt too;
-  // see unitCost.
+  // so wrapping it would throw away precision and time for nothing.
+  // Integer-exponent Math.pow(2, n) is exempt too; see unitCost.
   //
   // The one remaining hole — two engines landing either side of a quantization
   // boundary — is astronomically unlikely and is what the state hash (MP-0.5)
@@ -159,7 +159,12 @@ const Game = {
     // behaving the same way. Where a call site is hot enough that the round-trip
     // shows up (map.js's spawn-separation loop), inline the sqrt form directly
     // instead — it is exact on its own.
-    hypot(dx, dy) { return detQuantize(Math.sqrt(dx * dx + dy * dy)); }
+    hypot(dx, dy) { return detQuantize(Math.sqrt(dx * dx + dy * dy)); },
+    // Only consumer is largeTerritoryBonus's log-scaled sigmoid (attack
+    // pacing) — same quantize-after-native approach as pow/exp above, for
+    // the same reason: a custom deterministic Taylor series isn't needed
+    // when rounding off the last few contested digits already agrees.
+    log(x) { return detQuantize(Math.log(x)); }
   },
 
   players: [],
@@ -673,6 +678,9 @@ const Game = {
   // as the spawn phase ran. This is exactly the bug MP-3.2 exists to fix.
   tickSpawnPhase() {
     for (let p = this.humanCount; p < this.players.length; p++) {
+      // Tribes hold a fixed spot — only Nations (bots) wobble their
+      // provisional disc during the countdown.
+      if (this.players[p].isTribe) continue;
       this.nextSpawnJumpAt[p] -= this.TICK_DT;
       if (this.nextSpawnJumpAt[p] <= 0) {
         this.jumpSpawnPreview(p);
@@ -1688,7 +1696,20 @@ const Game = {
 
   // Launches an attack from `attacker` against every tile of `targetId` that
   // touches their border. targetId may be NEUTRAL for unclaimed land.
-  launchAttack(attackerId, targetId, troops) {
+  //
+  // `landmassId`, when given, scopes the whole thing to one landmass —
+  // GameMap.landmassId's connected-component id, so two separate islands
+  // always carry different values. A click on one island must not also push
+  // on a front against the same enemy held on another island entirely, so
+  // consolidation below only folds together attacks sharing the same
+  // landmassId, and refreshFrontier only scans that landmass's border. This
+  // is a deliberate deviation from OpenFront's own AttackExecution, which
+  // consolidates across the attacker's whole border regardless of landmass.
+  // `null` (the AI's own calls, which have no clicked tile to scope by, and
+  // any legacy caller) keeps that original unscoped behaviour — it only ever
+  // consolidates with, and scans borders alongside, other landmassId:null
+  // attacks, never with a real landmass id.
+  launchAttack(attackerId, targetId, troops, landmassId = null) {
     const attacker = this.players[attackerId];
     if (troops < 20 || attacker.troops < troops) return false;
     if (targetId === attackerId) return false;
@@ -1699,15 +1720,12 @@ const Game = {
     // AttackExecution.rejectIncomingAllianceRequests does.
     if (targetId >= 0) this.dropRequestsBetween(attackerId, targetId);
 
-    // Every existing attack against this target — including a boat-landed
-    // beachhead on another landmass entirely — consolidates into one shared
-    // siege pool, exactly like OpenFront's AttackExecution: all of them fold
-    // their troops into a single survivor, which then re-scans the
-    // attacker's CURRENT full border (refreshFrontier already looks across
-    // every tile the attacker owns, not just one landmass) so the combined
-    // pool pushes on every front it touches. Without that rescan a mainland
-    // click just topped up the island beachhead's existing queue and the
-    // mainland front never actually started — refreshing here is the fix.
+    // Every existing attack against this target *on the same landmass*
+    // consolidates into one shared siege pool: all of them fold their troops
+    // into a single survivor, which then re-scans that landmass's current
+    // border (refreshFrontier) so the combined pool pushes on every front it
+    // touches there. A beachhead on another landmass entirely is left alone —
+    // that is the fix for the island-bleed this used to have.
     // A retreating front is on its way out — folding a fresh push into it
     // would just re-arm troops already committed to leaving, so it's skipped
     // here and a brand new attack is opened alongside it instead.
@@ -1715,6 +1733,7 @@ const Game = {
     for (let i = this.attacks.length - 1; i >= 0; i--) {
       const at = this.attacks[i];
       if (at.attacker !== attackerId || at.target !== targetId || at.retreating) continue;
+      if (at.landmassId !== landmassId) continue;
       if (survivor === null) survivor = at;
       else { survivor.troops += at.troops; this.attacks.splice(i, 1); }
     }
@@ -1735,8 +1754,8 @@ const Game = {
     // push on burns an id. Harmless: every client runs this same code path
     // with the same state and burns the same id on the same turn, and ids are
     // deliberately never reused (see nextAttackId).
-    const a = { id: this.nextAttackId++, attacker: attackerId, target: targetId, troops, progress: 0,
-                heapTile: [], heapPrio: [], border: new Set(),
+    const a = { id: this.nextAttackId++, attacker: attackerId, target: targetId, troops,
+                heapTile: [], heapPrio: [], border: new Set(), landmassId,
                 frontSeed: ((this.rng() * 0x7fffffff) | 0) || 1 };
     if (!this.refreshFrontier(a)) return false;
 
@@ -2288,8 +2307,12 @@ const Game = {
     // A beachhead is a real attack and gets a real attack id — the boat's own
     // id dies with the landing, and the front it opens is separately
     // cancellable from that moment on.
-    const a = { id: this.nextAttackId++, attacker: boat.attacker, target: boat.target, troops: boat.troops, progress: 0,
-                heapTile: [], heapPrio: [], border: new Set(),
+    // landmassId is stamped from the landing tile itself, not left null, so a
+    // later click on this same island folds into the beachhead (same
+    // consolidation rule as launchAttack) instead of always opening a
+    // parallel front beside it.
+    const a = { id: this.nextAttackId++, attacker: boat.attacker, target: boat.target, troops: boat.troops,
+                heapTile: [], heapPrio: [], border: new Set(), landmassId: GameMap.landmassId[tile],
                 frontSeed: ((this.rng() * 0x7fffffff) | 0) || 1 };
     const nb = this.nbuf;
     const n = GameMap.neighbors(tile, nb);
@@ -2348,6 +2371,8 @@ const Game = {
     for (let a = this.attacks.length - 1; a >= 0; a--) {
       if (!this.stepAttack(this.attacks[a])) this.attacks.splice(a, 1);
     }
+
+    if (this.ticks % this.ANNEX_SWEEP_TICKS === 0) this.checkAnnexations();
 
     this.stepBoats();
     this.updateFactoryStations();
@@ -2485,148 +2510,151 @@ const Game = {
   // from the population curve refilling large empires more slowly.
 
   // --- How fast a front advances -------------------------------------------
-  // OpenFront meters advance in two independent layers, confirmed against
-  // their live source (attackTilesPerTick + attackLogic's tilesPerTickUsed):
+  // Re-ported 2026-09-10 against OpenFront's LIVE attackLogic/AttackExecution
+  // (github.com/openfrontio/OpenFrontIO, fetched fresh rather than trusting
+  // the version this file was originally ported against) after a user report
+  // — backed by a side-by-side recording of real openfront.io — that pushes
+  // here read "too fast and chunky" next to theirs. TERRAIN_MAG/TERRAIN_SPEED
+  // below already matched; everything downstream of them had drifted: their
+  // budget/cost shape has been rewritten since the original port and no
+  // longer resembles what the old comments here described (an independent
+  // border-scaled budget alongside a separately-clamped per-tile ratio, plus
+  // two ATTACK_RATE_SCALE/NEUTRAL_RATE_SCALE fudge factors invented
+  // specifically because those stale constants, taken literally, resolved a
+  // push in under a second).
   //
-  //   budget (per tick)   : within((5*attack/defence)*2, 0.01, 0.5) * border * 3
-  //   per-tile cost        : within(defence/(5*attack), 0.2, 1.5) * terrain
+  // Real AttackExecution.tick() gives every attack a flat budget of exactly
+  // ATTACK_TICK_BUDGET (1) per tick — NOT proportional to border width, no
+  // fudge factor — and spends it tile by tile against attackTickFraction
+  // (their attackLogic's `tickFraction`), which folds terrain, the troop-
+  // ratio speed ramp, AND border width into one number. Border width only
+  // ever appears once, as that function's own divisor — a wide front and a
+  // narrow one obey the same rule instead of two independently-tuned ones
+  // that can drift apart, which is what let a big overmatched push here dump
+  // dozens of tiles in a single 100ms tick (one generous budget, then a
+  // second generous per-tile discount, compounding) instead of the steadier
+  // per-tick trickle real OpenFront shows even at full commitment.
   //
-  // The budget sets how much advance a front can spend this tick, proportional
-  // to the WIDTH OF THE FRONT — a broad border pours through, a narrow one
-  // trickles, however large the army behind it. It saturates at its 0.5
-  // ceiling once the attack is merely 5% of the defender's strength, so past
-  // that point it stops rewarding further overmatch (OpenFront's own intent:
-  // it exists to stall hopeless attacks, not to reward blowouts).
-  //
-  // What actually produces a curbstomp sweep is the SECOND, independent ratio
-  // on the per-tile cost — the same comparison inverted, with its own floor.
-  // Near parity it's already at its 0.2 floor, so an attack that has clearly
-  // outnumbered its defender spends the SAME budget on many more tiles in one
-  // tick, rather than one. This was missing entirely until an audit against
-  // the real source turned it up — see tileSpeedRatio.
-  //
-  // ATTACK_RATE_SCALE is a calibration factor with no counterpart in their
-  // code. Their constants composed literally finish a push in well under a
-  // second here, which cannot be what their game does, so some piece of how
-  // they meter troops per tick is missing from what their published config
-  // shows. The shape below is theirs; this scalar sets the clock.
-  ATTACK_RATE_SCALE: 0.2,
+  // Any budget left over after the last affordable tile is simply discarded,
+  // exactly as their `tickBudget` is a fresh local reset to 1 every tick
+  // rather than a persisted field — see stepAttack, which no longer carries
+  // `a.progress` across ticks for this reason.
+  ATTACK_TICK_BUDGET: 1,
 
-  // Unclaimed land needs the same calibration ATTACK_RATE_SCALE applies, for
-  // the same reason: composed literally, borderTiles * 2 per tick swallowed a
-  // 700-tile expansion in under a second, which is nothing like the deliberate
-  // creep OpenFront shows. Running it unscaled was the overcorrection to an
-  // earlier state where it was far too slow.
-  //
-  // Originally pinned to what was then believed to be the PVP ceiling
-  // (0.5*border*3*ATTACK_RATE_SCALE = 0.30*border, i.e. NEUTRAL_RATE_SCALE =
-  // 1.5*ATTACK_RATE_SCALE), so empty ground could never outpace an
-  // overwhelming attack. tileSpeedRatio raises that true ceiling roughly 5x
-  // (the 0.2 floor dividing rather than a flat 1.0), so the pin is no longer
-  // load-bearing — neutral sits comfortably under it either way — but the
-  // value itself is unchanged; only the reasoning that once justified it is.
-  // Rate stays proportional to the width of the front, so a push still
-  // accelerates as the blob broadens — it just starts from a watchable speed.
-  // Measured: a half-commit opening grab takes ~5.6s and a full commit ~8s,
-  // against 0.9s and 1.3s before. Match length is untouched (629s -> 645s mean
-  // over six seeds, all resolving), because how fast the bots fill the map is
-  // gated by troop accumulation and their think cadence, not by advance speed.
-  NEUTRAL_RATE_SCALE: 0.15,
+  // Terra nullius' own cost/speed constants (Config.ts's TERRA_NULLIUS_*):
+  // attackTickFraction's unclaimed-land branch is `within(COST_SCALE*tileCost
+  // /attackTroops, MIN, MAX) / (borderSize*2)` — inversely proportional to
+  // the committed force, so a big grab swallows open ground fast while a
+  // token nibble stays slow. This game's troop-cost side for the same branch
+  // (tileCost()'s `if (!defender) return ...`) was already correct; only the
+  // speed side was missing a real formula, previously papered over by the
+  // flat NEUTRAL_RATE_SCALE knob this replaces.
+  TERRA_NULLIUS_COST_SCALE: 2000,
+  TERRA_NULLIUS_MIN_COST: 5,
+  TERRA_NULLIUS_MAX_COST: 100,
+
+  // Config.ts's SPEED_COST_DIVISOR and ATTACKER_LOSS_BASE/PER_DENSITY: the
+  // troop-ratio speed ramp (attackTickFraction) and the troop-loss formula
+  // (tileCost) below.
+  SPEED_COST_DIVISOR: 7.77,
+  ATTACKER_LOSS_BASE: 0.463,
+  ATTACKER_LOSS_PER_DENSITY: 0.0039,
+
+  // Config.ts's BOT_DEFENDER_LOSS_MULT: replaces this file's old, narrower
+  // "attacker.isHuman && defender.isTribe -> mag *= 0.8" in tileCost. The
+  // real discount is 0.7x (not 0.8x) and fires for ANY attacker fighting a
+  // Bot-type defender, human or Nation alike. Every attacker in this game is
+  // Human or Nation (Tribes never attack), so in practice this now just
+  // means: any attack on a Tribe gets the discount, full stop.
+  BOT_DEFENDER_LOSS_MULT: 0.7,
 
   // --- Large-player rebalancing ---------------------------------------------
-  // Straight from OpenFront's attackLogic, verified against their live source
-  // and explained in their own history: issue "Fix attack meta for large
-  // players" ("Large players have too much of an advantage causing
-  // snowballing in the mid-late game"), closed by PR "Update attack meta" —
-  // "In earlier versions the game slowed to a crawl toward the end game
-  // because attacks between large players were incredibly slow. As a kind of
-  // hack, I increased the attack strength & speed of larger players... but
-  // large players could completely crush smaller players. This PR completely
-  // flips the meta: instead of giving large players an attack bonus, they are
-  // given a defense debuff."
-  //
-  // A DEFENDER past ~150k tiles gets weaker on both fronts — cheaper to chip
-  // away at (tileCost) and faster to lose ground to (tileSpeedRatio) — a
-  // sigmoid ramp, not a cliff, bottoming out at a 0.7x floor. An ATTACKER past
-  // 100k tiles keeps a separate, smaller efficiency edge (different exponents:
-  // 0.7 on its own troop cost, 0.6 on speed) — the "more elegant formula"
-  // their own PR description said was still to come.
-  //
-  // This was treated as a no-op here previously — our old maps never got
-  // remotely close to either threshold, so the terms were dropped rather than
-  // ported. Now that xlarge is genuinely OpenFront's own World-map scale
-  // (~650k land tiles, ported directly from their manifest), a dominant
-  // nation can cross both thresholds for real, and a defender who's grown
-  // that large keeps their FULL defensive strength under the old code with no
-  // corresponding debuff — which reads exactly like a small attacker's front
-  // going near-stall against them, because until now it genuinely was: the
-  // half of this mechanic that weakens the defender simply didn't exist.
-  LARGE_DEFENDER_MIDPOINT: 150000,
-  LARGE_DEFENDER_DECAY: Math.LN2 / 50000,
-  LARGE_ATTACKER_THRESHOLD: 100000,
+  // Re-ported alongside the above: real OpenFront collapsed the old separate
+  // largeDefenderMultiplier (sigmoid on raw tile count, applied to both
+  // tileCost and speed) and largeAttackerLossMult/largeAttackerSpeedMult (two
+  // different pow() exponents, 0.7 troop cost / 0.6 speed, only past a flat
+  // 100k-tile cliff) into ONE function, largeTerritoryBonus: a logistic in
+  // log(tiles) — smooth from the smallest nation instead of flat-then-cliff —
+  // shared verbatim by both the troop-cost and speed formulas, for both
+  // attacker and defender, differing only in `depth` (how far it can pull the
+  // multiplier down: 0.7 for an attacker's edge, 0.3 for a defender's
+  // debuff). Same real-world motivation as before (their "Update attack meta"
+  // PR: large defenders get weaker, not large attackers stronger, so the late
+  // game doesn't crawl) — just a cleaner shared curve, and one no longer
+  // gated behind a 100k/150k-tile threshold that our old small/medium maps
+  // could never reach.
+  LARGE_TERRITORY_MIDPOINT: 300000,
+  LARGE_TERRITORY_STEEPNESS: 2.5,
+  LARGE_ATTACKER_DEPTH: 0.7,
+  LARGE_DEFENDER_DEPTH: 0.3,
 
   sigmoid(value, decayRate, midpoint) {
     return 1 / (1 + this.det.exp(-decayRate * (value - midpoint)));
   },
 
-  // 0.7-1.0. 1.0 (no effect) for any defender well under the threshold — true
-  // of every nation on small/medium maps and most on large/xlarge too, so this
-  // stays a rare, late-game-only effect rather than a constant tax. Shared by
-  // both tileCost and tileSpeedRatio, exactly as OpenFront's
-  // largeDefenderAttackDebuff and largeDefenderSpeedDebuff are the same
-  // formula applied in two places.
-  largeDefenderMultiplier(defenderTiles) {
-    const sig = 1 - this.sigmoid(defenderTiles, this.LARGE_DEFENDER_DECAY, this.LARGE_DEFENDER_MIDPOINT);
-    return 0.7 + 0.3 * sig;
+  // 1.0 for a nation well under LARGE_TERRITORY_MIDPOINT tiles, easing down
+  // to `1 - depth` for a huge one, halfway there at the midpoint — log-scaled,
+  // so the curve cares about tile-count RATIOS (doubling from 1k to 2k tiles
+  // moves it as much as doubling from 300k to 600k) rather than an absolute
+  // tile gap dominating everywhere. Guards `numTiles` at 1 rather than 0 only
+  // for det.log's sake (log(0) is -Infinity) — every live attacker or
+  // defender this is called on already owns at least one tile.
+  largeTerritoryBonus(numTiles, depth) {
+    return 1 - depth * this.sigmoid(this.det.log(Math.max(1, numTiles)),
+      this.LARGE_TERRITORY_STEEPNESS, this.det.log(this.LARGE_TERRITORY_MIDPOINT));
   },
 
-  // Separate attacker-side edge, only past 100k tiles — two different
-  // exponents on the same ratio, matching largeAttackBonus (0.7, troop cost)
-  // and largeAttackerSpeedBonus (0.6, speed) exactly.
-  largeAttackerLossMult(attackerTiles) {
-    return attackerTiles > this.LARGE_ATTACKER_THRESHOLD
-      ? this.det.pow(this.LARGE_ATTACKER_THRESHOLD / attackerTiles, 0.7) : 1;
-  },
-  largeAttackerSpeedMult(attackerTiles) {
-    return attackerTiles > this.LARGE_ATTACKER_THRESHOLD
-      ? this.det.pow(this.LARGE_ATTACKER_THRESHOLD / attackerTiles, 0.6) : 1;
-  },
+  // Per-tile speed cost as a fraction of ATTACK_TICK_BUDGET — OpenFront's own
+  // attackLogic `tickFraction`. `attackTroops`/`defender` are read live by
+  // the caller (stepAttack), exactly as OpenFront recomputes troopCount and
+  // defender.troops() fresh every iteration rather than once per tick.
+  // `tile` is optional; pass it from stepAttack to enable the fort/fallout
+  // bonuses (same contract tileCost's own `tile` argument has).
+  attackTickFraction(attacker, defender, attackTroops, terrain, tile, borderSize) {
+    let tileSpeed = this.TERRAIN_SPEED[terrain || 0];
+    // Fallout: falloutSpeedMult, not the flat falloutDefenseModifier tileCost's
+    // troop-cost side still uses — see that function's own comment. Applies to
+    // both branches below, matching how this was already called before this
+    // re-port.
+    if (tile !== undefined && this.fallout.has(tile)) tileSpeed *= this.falloutSpeedMult(attackTroops);
 
-  // Pure per-tick budget — how much advance a front can spend this tick. The
-  // traitor speedup does NOT live here: OpenFront's traitorSpeedDebuff
-  // multiplies tilesPerTickUsed, the per-tile COST charged against this
-  // budget, not the budget itself. That distinction matters once the per-tile
-  // cost also carries its own troop-ratio term (tileSpeedRatio, below) — the
-  // two would otherwise double up. See tileSpeedRatio for where it's applied.
-  attackTilesPerTick(attackTroops, defenceTroops, borderTiles, isNeutral) {
-    if (isNeutral) return borderTiles * 2 * this.NEUTRAL_RATE_SCALE;
-    const r = (5 * attackTroops / Math.max(1, defenceTroops)) * 2;
-    const clamped = Math.min(0.5, Math.max(0.01, r));
-    return clamped * borderTiles * 3 * this.ATTACK_RATE_SCALE;
-  },
+    if (!defender) {
+      // TERRA_NULLIUS_COST_SCALE (2000) is one of OpenFront's own absolute
+      // constants, calibrated against THEIR raw troop counts — but
+      // `attackTroops` here is already POP_SCALE-shrunk (this game stores
+      // troops at 1/10th OpenFront's internal scale so the HUD reads the same
+      // numbers their UI does; see POP_SCALE's own comment). Dividing an
+      // unscaled 2000 by a 10x-too-small attackTroops silently inflated `raw`
+      // ~10x, pinning most early pushes near TERRA_NULLIUS_MAX_COST (the
+      // SLOWEST tier) instead of scaling down as troops committed grew — the
+      // actual cause of "initial pushes after spawn" reading way too slow
+      // once this branch was re-ported. Un-shrinking attackTroops back to
+      // OpenFront's own scale before the division is the fix; nothing else
+      // in this function reads an absolute troop count (troopRatio below is
+      // a ratio of two already-shrunk numbers, so POP_SCALE cancels there —
+      // this branch was the only one actually affected).
+      const raw = Math.min(this.TERRA_NULLIUS_MAX_COST, Math.max(this.TERRA_NULLIUS_MIN_COST,
+        this.TERRA_NULLIUS_COST_SCALE * tileSpeed / Math.max(1, attackTroops / this.POP_SCALE)));
+      return raw / (borderSize * 2);
+    }
 
-  // The budget above saturates at its 0.5 ceiling once the attack is merely
-  // 5% of the defender's strength — past that point it stops rewarding
-  // further overmatch, by design (OpenFront's own comment: it exists to stall
-  // hopeless attacks, not to reward blowouts). What actually makes a curbstomp
-  // sweep fast is a SECOND, independent ratio on the other side of the ledger:
-  // OpenFront's tilesPerTickUsed scales the per-tile COST by
-  // within(defenderTroops / (5*attackTroops), 0.2, 1.5) — the same comparison
-  // inverted, with its own floor and ceiling. Near parity this is already at
-  // its 0.2 floor (tiles cost a fifth as much as normal), so a front that has
-  // truly outnumbered its defender processes many tiles from the same budget
-  // in a single tick instead of one. Without this, ours had no mechanism to
-  // accelerate beyond the budget's own ceiling at all — a real gap, not a
-  // calibration one, and the direct cause of pushes never visibly snowballing
-  // the way OpenFront's do against an overwhelmed defender.
-  //
-  // Read live inside the tile loop (both troops arguments deplete tile by
-  // tile), exactly as OpenFront recomputes defender.troops() and troopCount
-  // fresh on every iteration rather than once per tick.
-  tileSpeedRatio(liveResist, attackTroops, defenderIsTraitor, defenderTiles, attackerTiles) {
-    const ratio = Math.min(1.5, Math.max(0.2, liveResist / (5 * Math.max(1, attackTroops))));
-    const large = this.largeDefenderMultiplier(defenderTiles) * this.largeAttackerSpeedMult(attackerTiles);
-    return defenderIsTraitor ? ratio * large * this.TRAITOR_SPEED_DEBUFF : ratio * large;
+    // Defense fort: movement cost into protected tiles is 3x, matching
+    // Config.defensePostSpeedBonus in OpenFront's attackLogic.
+    if (tile !== undefined && this.fortInRange(tile, defender.id)) tileSpeed *= this.FORT_SPEED_MULT;
+
+    const troopRatio = this.defenceStrength(defender, attacker.id) / Math.max(1, attackTroops);
+    // Flat at its floor (1/SPEED_COST_DIVISOR) for any attack that has NOT
+    // been outnumbered — real OpenFront's own intent: it exists to stall
+    // hopeless attacks, not to reward blowouts. Only ramps up once the
+    // defender is stronger: linearly to 7.5x by troopRatio=7.5, then a second
+    // multiplier ramps a further 50x on top for a truly hopeless push
+    // (troopRatio past 150).
+    const speedCost = (Math.min(7.5, Math.max(1, troopRatio)) * Math.min(50, Math.max(1, troopRatio / 20)))
+      / this.SPEED_COST_DIVISOR;
+    const largeAtk = this.largeTerritoryBonus(attacker.tiles.size, this.LARGE_ATTACKER_DEPTH);
+    const largeDef = this.largeTerritoryBonus(defender.tiles.size, this.LARGE_DEFENDER_DEPTH);
+    const traitorMod = this.isTraitor(defender) ? this.TRAITOR_SPEED_DEBUFF : 1;
+    return (speedCost * tileSpeed * largeAtk * largeDef * traitorMod) / borderSize;
   },
 
   // What a defender is worth against a particular attacker: the home reserve
@@ -2734,17 +2762,12 @@ const Game = {
   },
 
   // Terrain magnitude and speed, straight from OpenFront's attackLogic switch.
-  // Indexed by PLAINS / HIGHLAND / MOUNTAIN.
+  // Indexed by PLAINS / HIGHLAND / MOUNTAIN. TERRAIN_SPEED feeds
+  // attackTickFraction directly now (no separate plains-relative
+  // terrainMoveCost helper — that abstraction belonged to the old
+  // border-scaled budget this file no longer runs).
   TERRAIN_MAG: [80, 100, 120],
   TERRAIN_SPEED: [16.5, 20, 25],
-
-  // Movement cost of a tile relative to plains, from the paired speed values:
-  // 1.00 plains, 1.21 highland, 1.52 mountain. Charged against the advance
-  // budget per tile, so a front genuinely bogs down crossing high ground
-  // instead of sweeping at one uniform rate.
-  terrainMoveCost(tile) {
-    return this.TERRAIN_SPEED[GameMap.terrain[tile]] / this.TERRAIN_SPEED[0];
-  },
 
   // Shape of the advancing edge, ported from OpenFront's actual
   // AttackExecution.addNeighbors rather than invented here:
@@ -2778,7 +2801,7 @@ const Game = {
   //    the whole roll by 1.5x and keeps its full relative weight no matter how
   //    large the jitter is, so the edge can be genuinely ragged and still bend
   //    around high ground. Terrain's effect on *speed* is unchanged either
-  //    way — that lives in stepAttack's budget via terrainMoveCost.
+  //    way — that lives in attackTickFraction's own TERRAIN_SPEED lookup.
   //
   // Rolled per tile visit from the attack's own stream (frontRand), not
   // sampled from a smooth field: coherent noise moves whole stretches of line
@@ -2808,22 +2831,30 @@ const Game = {
     return (this.frontRand(a, 7) + 10) * (1 - owned * 0.5 + mag / 2) + this.ticks;
   },
 
-  // Troops spent to take one tile, following OpenFront's attackLogic:
+  // Troops spent to take one tile, re-ported 2026-09-10 against OpenFront's
+  // CURRENT attackLogic (see the "How fast a front advances" section above
+  // for why this whole area was re-fetched from live source rather than
+  // trusted as-is): a single multiplicative formula, not the 0.6/0.4 blend
+  // of two independent ratios this replaces —
   //
-  //   currentLoss = within(defence / attack, 0.6, 2) * mag * 0.8
-  //   altLoss     = 1.3 * defenderTroopLoss * (mag / 100)
-  //   total       = 0.6 * currentLoss + 0.4 * altLoss
+  //   attackerTroopLoss = mag * traitorMod * within(defence/attack, 0.6, 2)
+  //     * (ATTACKER_LOSS_BASE * largeAtk * largeDef
+  //        + ATTACKER_LOSS_PER_DENSITY * defenderTroopLoss)
   //
-  // The clamp at 2 is what we were missing most. Our old cost rose without
-  // limit as the defender outweighed the attack, so pushing into anyone
-  // stronger burned troops for almost no ground. OpenFront caps that penalty,
-  // and blends in a term keyed to the defender's troops-per-tile density
-  // rather than the ratio, so a big thinly-garrisoned nation is cheap to carve
-  // into however large its total army.
+  // largeAtk/largeDef are largeTerritoryBonus (see above), not the old
+  // largeAttackerLossMult/largeDefenderMultiplier pair. The clamp at 2 is
+  // unchanged from before and still the load-bearing piece: without it, cost
+  // rose without limit as the defender outweighed the attack, so pushing into
+  // anyone stronger burned troops for almost no ground.
   //
-  // Strength counted is defenceStrength(): home reserve plus whatever is
-  // committed against this same attacker. The mag term is in OpenFront's troop
-  // units so it converts through POP_SCALE; the density term is already ours.
+  // Strength counted for the ratio is defenceStrength(): home reserve plus
+  // whatever is committed against this same attacker — a deliberate widening
+  // of OpenFront's own `defender.troops`, not a fidelity gap (see that
+  // function's own comment). The density term (defenderTroopLoss) is
+  // defenderLossPerTile — OpenFront's literal `defender.troops/numTilesOwned`,
+  // deliberately the raw figure here rather than defenceStrength's widened
+  // one, matching their own source exactly. The mag term is in OpenFront's
+  // troop units so it converts through POP_SCALE.
   // Unclaimed land, OpenFront's TerraNullius branch: the attacker simply pays
   // mag/5 per tile (mag/10 for their simple Bot type, which our rival nations
   // are not). No ratio, no defender strength — empty ground just costs a flat
@@ -2878,13 +2909,10 @@ const Game = {
     // that a human or Nation pays (mag/5) — Tribes are that simple Bot type.
     if (!defender) return (mag / (attacker.isTribe ? 10 : 5)) * this.POP_SCALE;
 
-    // openfront.wiki/Bots: "if (attacker.type() == Human && defender.type()
-    // == Bot) mag *= 0.8" — a 20% troop-loss discount for the human attacking
-    // a Tribe specifically. Nations get no such discount fighting a Tribe.
-    // Keyed off the attacker's *type*, not off Game.me: under lockstep every
-    // client runs this same tileCost, so a per-viewer branch here would make
-    // the very first human-vs-Tribe attack diverge between clients.
-    if (defender.isTribe && attacker.isHuman) mag *= 0.8;
+    // Config.ts's BOT_DEFENDER_LOSS_MULT (see its own comment above): any
+    // attacker fighting a Tribe pays 0.7x mag, full stop — not gated on the
+    // attacker's own type the way the 0.8x this replaces was.
+    if (defender.isTribe) mag *= this.BOT_DEFENDER_LOSS_MULT;
 
     // Defense fort: troop cost to take a tile inside the fort's range is 5x,
     // matching Config.defensePostDefenseBonus in OpenFront's attackLogic.
@@ -2892,18 +2920,19 @@ const Game = {
 
     const strength = this.defenceStrength(defender, attacker.id);
     const ratio = Math.min(2, Math.max(0.6, strength / Math.max(1, attackTroops)));
-    // Large-player terms apply only to currentLoss, not altLoss — matching
-    // OpenFront exactly, where largeDefenderAttackDebuff and largeAttackBonus
-    // multiply into currentAttackerLoss alone.
-    const largeDef = this.largeDefenderMultiplier(defender.tiles.size);
-    const largeAtk = this.largeAttackerLossMult(attacker.tiles.size);
-    const currentLoss = ratio * mag * 0.8 * largeDef * largeAtk * this.POP_SCALE;
-    const density = strength / Math.max(1, defender.tiles.size);
-    const altLoss = 1.3 * density * (mag / 100);
-    // OpenFront applies traitorMod to both loss terms before blending them, so
-    // scaling the blend is the same arithmetic in one place.
+    const largeAtk = this.largeTerritoryBonus(attacker.tiles.size, this.LARGE_ATTACKER_DEPTH);
+    const largeDef = this.largeTerritoryBonus(defender.tiles.size, this.LARGE_DEFENDER_DEPTH);
     const traitorMod = this.isTraitor(defender) ? this.TRAITOR_DEFENSE_DEBUFF : 1;
-    return (0.6 * currentLoss + 0.4 * altLoss) * traitorMod;
+    // Same POP_SCALE un-shrink as attackTickFraction's terra-nullius branch
+    // (see its comment): ATTACKER_LOSS_PER_DENSITY is calibrated against
+    // OpenFront's raw troops-per-tile, and defenderLossPerTile returns ours
+    // already shrunk 10x. Smaller a miss than the terra-nullius one — this
+    // term is only ADDED to ATTACKER_LOSS_BASE, not the whole formula's
+    // divisor — but the same real bug, so fixed alongside it.
+    const density = this.defenderLossPerTile(defender) / this.POP_SCALE;
+    return mag * traitorMod * ratio
+      * (this.ATTACKER_LOSS_BASE * largeAtk * largeDef + this.ATTACKER_LOSS_PER_DENSITY * density)
+      * this.POP_SCALE;
   },
 
   // Two nations pushing into each other are one battle, not two independent
@@ -2987,7 +3016,13 @@ const Game = {
     const attacker = this.players[a.attacker];
     const border = new Set(), nb = this.nbuf;
     a.heapTile = []; a.heapPrio = []; a.border = border;
+    // a.landmassId null (the AI's unscoped attacks) scans every border tile
+    // the attacker owns, same as before landmass scoping existed. A real
+    // landmassId — a click on a specific island — restricts the scan to
+    // border tiles on that landmass only, which is what keeps a push on one
+    // island from also advancing a front on another.
     for (const i of attacker.borderTiles) {
+      if (a.landmassId !== null && GameMap.landmassId[i] !== a.landmassId) continue;
       const n = GameMap.neighbors(i, nb);
       for (let k = 0; k < n; k++) {
         const j = nb[k];
@@ -3076,20 +3111,34 @@ const Game = {
   },
 
   // Flood-fills the connected component of same-owner tiles containing
-  // `startTile` and tests whether it is fully enclosed by `byPlayerId`'s
+  // `startTile` and tests whether it is fully enclosed by OTHER players'
   // territory: walking outward from it can only ever land on more of the
-  // same owner (interior) or on byPlayerId (a wall) — reaching open water,
-  // unclaimed land, a third player, or the map edge means there's a gap and
-  // it's not enclosed. Ported against OpenFront's actual
+  // same owner (interior) or on any other live player's land (a wall) —
+  // reaching open water, unclaimed land, or the map edge means there's a gap
+  // and it's not enclosed. Ported against OpenFront's actual
   // PlayerExecution.isSurrounded/isEnclosed source (github.com/openfrontio/
   // OpenFrontIO), collapsed from their two-stage cheap-filter-then-confirm
   // design into one walk since this runs on demand (a click, a bot's
-  // decision) rather than continuously across every player every tick.
-  // Unclaimed land disqualifies too, not just water — that looks stricter
-  // than OpenFront's isEnclosed alone, but matches what actually happens in
-  // real matches: their cheap prefilter already rejects any unowned
-  // neighbour before the lenient flood-fill ever gets a chance to run.
-  // Returns the region's tiles (annexable) or null (not enclosed).
+  // decision, the periodic sweep below) rather than continuously across
+  // every player every tick. Unclaimed land disqualifies too, not just
+  // water — that looks stricter than OpenFront's isEnclosed alone, but
+  // matches what actually happens in real matches: their cheap prefilter
+  // already rejects any unowned neighbour before the lenient flood-fill ever
+  // gets a chance to run. Returns {tiles, wallCounts} (annexable) or null
+  // (not enclosed).
+  //
+  // The wall no longer has to be a single owner (2026-09-09 fix, see
+  // dominantWaller below) — the original version took a `byPlayerId` and
+  // rejected the whole walk the instant it touched any OTHER real player,
+  // which matched real OpenFront for a besieger who walls a pocket alone but
+  // silently refused every pocket ringed by a MIX of nations (a tribe or a
+  // second bot contributing even one tile of the wall was enough to block
+  // it forever, not just for the periodic sweep but for a human's own tap
+  // too) — an easy thing to hit on a map seeded with dozens of tribes. Real
+  // OpenFront hands a mixed-wall pocket to whichever bordering nation
+  // "attacks it hardest" (owns the most of its border) instead of refusing
+  // it, so this now tallies contact tiles per bordering owner in
+  // `wallCounts` and leaves picking a winner to the caller.
   //
   // `seen`/`run` are how enclosedPocketsOf below walks many pockets in one
   // sweep without paying for the same ground twice: `seen` maps a tile to the
@@ -3098,18 +3147,14 @@ const Game = {
   // this pocket has already been walked from another contact point and
   // rejected there — an accepted pocket is a whole connected component, so it
   // can never be touching this one — and this walk fails with it.
-  enclosedRegion(startTile, byPlayerId, seen, run) {
+  enclosedRegion(startTile, seen, run) {
     const target = GameMap.owner[startTile];
-    if (target < 0 || target === byPlayerId) return null;
+    if (target < 0) return null;
 
-    if (!seen) {
-      seen = this._annexSeen || (this._annexSeen = new Map());
-      seen.clear();
-      run = 0;
-    }
     seen.set(startTile, run);
     const region = [startTile];
     const stack = [startTile];
+    const wallCounts = new Map();
     const nb = this.abuf;
 
     while (stack.length) {
@@ -3128,19 +3173,42 @@ const Game = {
           stack.push(j);
           continue;
         }
-        if (o === byPlayerId) continue; // part of the wall
-        return null; // water, unclaimed land, or a third player: a gap
+        if (o < 0) return null; // water or unclaimed land: a gap
+        wallCounts.set(o, (wallCounts.get(o) || 0) + 1);
       }
     }
-    return region;
+    return { tiles: region, wallCounts };
   },
 
-  // Every pocket of `targetId` that `byPlayerId`'s land walls in, not just the
-  // one under a cursor. A nuke leaves its blast as a scatter of survivors
-  // among unclaimed irradiated ground, so resettling that ground turns what is
-  // left of the defender there into dozens of one- and two-tile pockets —
-  // annexing them one tap at a time was miserable, and this is what lets a
-  // single tap take the lot.
+  // Whichever bordering owner contributes the most wall-tile contact to an
+  // enclosed pocket, tie-broken by lowest player id so every client agrees
+  // regardless of Map insertion order. This is real OpenFront's own
+  // resolution for a pocket ringed by a mix of more than one nation ("owns
+  // the most of its border"); see enclosedRegion above for why a mixed wall
+  // is now tallied instead of rejected outright.
+  dominantWaller(wallCounts) {
+    let best = -1, bestCount = -1;
+    for (const [owner, count] of wallCounts) {
+      if (count > bestCount || (count === bestCount && owner < best)) { best = owner; bestCount = count; }
+    }
+    return best;
+  },
+
+  // Every pocket of `targetId` that `byPlayerId`'s land touches the wall of,
+  // not just the one under a cursor. A nuke leaves its blast as a scatter of
+  // survivors among unclaimed irradiated ground, so resettling that ground
+  // turns what is left of the defender there into dozens of one- and
+  // two-tile pockets — annexing them one tap at a time was miserable, and
+  // this is what lets a single tap take the lot.
+  //
+  // `requireDominant` (default false — an explicit tap or a bot's own
+  // opportunistic annex, ai.js's annexIfEnclosed, always succeeds against
+  // any pocket byPlayerId touches at all, mixed wall or not) switches to
+  // real OpenFront's "attacks it hardest" resolution instead: only pockets
+  // where byPlayerId is the single dominant wall contributor pass, which is
+  // what the automatic sweep below needs so a pocket touched by several
+  // different players resolves to exactly one winner rather than whoever's
+  // scan happens to run first.
   //
   // Contact points are collected off our own border (borderTiles, kept live
   // by setOwner) rather than off the defender's tile set or our own full
@@ -3153,7 +3221,7 @@ const Game = {
   // tiles instead of just its border was a per-frame hitch of its own for a
   // large empire. Uses nbuf so the abuf enclosedRegion walks on can't
   // clobber it mid-scan.
-  enclosedPocketsOf(targetId, byPlayerId) {
+  enclosedPocketsOf(targetId, byPlayerId, requireDominant) {
     const me = this.players[byPlayerId];
     if (targetId < 0 || targetId === byPlayerId || !me) return [];
     const seen = new Map(), nb = this.nbuf, regions = [];
@@ -3163,8 +3231,10 @@ const Game = {
       for (let k = 0; k < n; k++) {
         const j = nb[k];
         if (GameMap.owner[j] !== targetId || seen.has(j)) continue;
-        const region = this.enclosedRegion(j, byPlayerId, seen, ++run);
-        if (region) regions.push(region);
+        const found = this.enclosedRegion(j, seen, ++run);
+        if (!found) continue;
+        if (requireDominant && this.dominantWaller(found.wallCounts) !== byPlayerId) continue;
+        regions.push(found.tiles);
       }
     }
     return regions;
@@ -3173,11 +3243,53 @@ const Game = {
   // Hands every one of those pockets over at once. All of them are found
   // before any of them changes hands, since annexRegion/setOwner rewrite the
   // very tile sets enclosedPocketsOf scans. Returns the tiles taken.
-  annexEnclosedPockets(targetId, byPlayerId) {
-    const regions = this.enclosedPocketsOf(targetId, byPlayerId);
+  annexEnclosedPockets(targetId, byPlayerId, requireDominant) {
+    const regions = this.enclosedPocketsOf(targetId, byPlayerId, requireDominant);
     let taken = 0;
     for (const r of regions) { taken += r.length; this.annexRegion(r, byPlayerId); }
     return taken;
+  },
+
+  // Every ~20 ticks (real OpenFront's own PlayerExecution cadence at its 10
+  // ticks/sec, see feedback-openfront-source-porting memory), sweep every
+  // live player's border for enclosed enemy ground and take it automatically
+  // — no tap required. The original port (2026-08-18) deliberately made this
+  // click-only, reasoning the user had framed the feature as "click on them
+  // once"; a later report made clear that read was wrong on two points: a
+  // surrounded tribe/pocket should fall the instant the ring closes exactly
+  // like real OpenFront, and the same is true of a chunk of a bigger nation
+  // that an ongoing attack has just cut off from its own mainland — neither
+  // should sit there waiting on a click. UI.onTap's own annexRegion intent is
+  // left in place alongside this (an already-annexed pocket just finds
+  // nothing left to take, harmlessly), since a tap still resolves faster than
+  // waiting for the next sweep tick.
+  //
+  // Passes requireDominant=true to annexEnclosedPockets (see its own comment)
+  // so a pocket ringed by a mix of players resolves to exactly one of them —
+  // whoever owns the most of its wall — instead of every bordering player's
+  // turn in this same loop independently trying (and, before that flag
+  // existed, every one of them failing, since the old single-owner-wall test
+  // rejected a mixed ring outright regardless of who was asking).
+  //
+  // Contacts are read the same way AI.borderTargets does (a single walk of
+  // borderTiles, not the full tile set), just inlined here rather than
+  // shared with ai.js, which this file must not depend on.
+  ANNEX_SWEEP_TICKS: 20,
+  checkAnnexations() {
+    const nb = this.nbuf;
+    for (const p of this.players) {
+      if (!p.alive || p.tiles.size === 0) continue;
+      const targets = new Set();
+      for (const i of p.borderTiles) {
+        const n = GameMap.neighbors(i, nb);
+        for (let k = 0; k < n; k++) {
+          const o = GameMap.owner[nb[k]];
+          if (o < 0 || o === p.id || p.allies.has(o)) continue;
+          targets.add(o);
+        }
+      }
+      for (const targetId of targets) this.annexEnclosedPockets(targetId, p.id, true);
+    }
   },
 
   // Instantly hands every tile of an enclosed region to byPlayerId — no
@@ -3229,22 +3341,30 @@ const Game = {
     const defender = a.target >= 0 ? this.players[a.target] : null;
     const nb = this.nbuf;
 
-    // Tiles earned this tick, carried as a fraction so slow fronts still creep
-    // forward rather than stalling on a rounded-down zero. The live queue is
-    // this front's width, which is what OpenFront's rate is proportional to.
+    // A flat ATTACK_TICK_BUDGET this tick, spent tile by tile against
+    // attackTickFraction until it runs out. `progress` is a plain local, not
+    // a field on `a`: real AttackExecution.tick() resets its own `tickBudget`
+    // fresh every tick too, so anything left over when the loop stops below
+    // is simply dropped rather than carried into the next tick.
+    //
     // OpenFront's own `attack.borderSize() + random.nextInt(0, 5)`: the width
     // a front is credited with wobbles a few tiles a tick, so two pushes of
     // identical size don't advance in lockstep with each other.
     const borderTiles = a.border.size + this.frontRand(a, 5);
-    const resist = defender ? this.defenceStrength(defender, a.attacker) : 0;
-    const rate = this.attackTilesPerTick(a.troops, resist, borderTiles, !defender);
-    // `progress` is measured in plains-equivalent tiles; rough ground simply
-    // costs more of it, so the same budget carries a front further across open
-    // country than up a ridge.
-    a.progress += rate * this.TICK_DT * this.TICKS_PER_SEC;
+    let progress = this.ATTACK_TICK_BUDGET;
 
     let guard = 20000;
     while (guard-- > 0) {
+      // Real `while (tickBudget > 0)`: checked at the TOP of the loop, before
+      // a tile is even looked at — NOT as a "can I afford this one" gate
+      // before conquering it (that check used to sit right before the
+      // conquest below; see the 2026-09-10 fix note there for why moving it
+      // here is load-bearing, not cosmetic). One full tick's budget is spent
+      // unconditionally on the very first tile every tick, however much that
+      // tile costs, and only a SECOND tile this same tick is gated on budget
+      // actually remaining.
+      if (progress <= 0) break;
+
       // OpenFront's own top-of-loop test (`if (troopCount < 1) { attack.delete() }`).
       // A front runs out of troops here and nowhere else — see the tile-cost
       // charge below for why that distinction matters.
@@ -3267,24 +3387,28 @@ const Game = {
       // refreshFrontier picks it up wholesale if the queue ever runs dry.
       if (!this.touchesPlayer(tile, a.attacker)) { a.border.delete(tile); this.heapPop(a); continue; }
 
-      // Skipped tiles above cost no movement; only ground actually taken does.
-      // Terrain sets the baseline; tileSpeedRatio is what lets an overwhelming
-      // push blow through several tiles' worth of budget in one go instead of
-      // creeping at the terrain rate regardless of how lopsided the fight is.
-      const liveResist = defender ? this.defenceStrength(defender, a.attacker) : 0;
-      const speedRatio = defender
-        ? this.tileSpeedRatio(liveResist, a.troops, this.isTraitor(defender), defender.tiles.size, attacker.tiles.size)
-        : 1;
-      // Defense fort: movement cost into protected tiles is 3x, matching
-      // Config.defensePostSpeedBonus in OpenFront's attackLogic.
-      const fortMult = (defender && this.fortInRange(tile, defender.id)) ? this.FORT_SPEED_MULT : 1;
-      // Fallout: falloutSpeedMult (see its own comment) instead of the flat
-      // falloutDefenseModifier tileCost's troop-cost side still uses below —
-      // this side scales down as the attacking force grows, so a strong push
-      // clears irradiated ground quickly instead of crawling forever.
-      const falloutMult = this.fallout.has(tile) ? this.falloutSpeedMult(a.troops) : 1;
-      const move = this.terrainMoveCost(tile) * speedRatio * fortMult * falloutMult;
-      if (a.progress < move) break;
+      // Skipped tiles above cost no budget; only ground actually taken does.
+      // attackTickFraction folds in terrain, the troop-ratio speed ramp, the
+      // fort/fallout bonuses and border width all at once — see its own
+      // comment for why that single division replaced this file's old
+      // separate speed-ratio/fort/fallout multipliers.
+      //
+      // NOT gated on `progress >= move` here (2026-09-10 fix, after a user
+      // report of pushes freezing solid with thousands of troops still
+      // committed): a narrow front, tough terrain or a middling troop
+      // disadvantage can easily cost MORE than one whole tick's flat budget
+      // for even the single cheapest tile in queue, and since `progress`
+      // resets to a flat 1 every tick with no carry-over (see above), a
+      // check-before-spend gate here meant that tile — and every tile behind
+      // it, since it's always back at the top of the heap — could never be
+      // afforded, ever: not slow, just permanently stuck. Real
+      // AttackExecution.tick() has no such gate either: it always conquers
+      // whatever `toConquer.dequeue()` returns and only checks budget before
+      // trying a FURTHER tile the same tick (the `progress <= 0` check at the
+      // top of this loop) — guaranteeing at least one tile of progress every
+      // tick a front has troops and contact, however expensive, and letting
+      // `progress` go negative exactly the way `a.troops` already does below.
+      const move = this.attackTickFraction(attacker, defender, a.troops, GameMap.terrain[tile], tile, borderTiles);
 
       // Charged unconditionally, even when it overdraws the stack. The old
       // guard here bailed with `if (a.troops < cost) { a.troops = 0; break; }`,
@@ -3300,7 +3424,7 @@ const Game = {
 
       this.heapPop(a);
       a.border.delete(tile);
-      a.progress -= move;
+      progress -= move;
       a.troops -= cost;
       if (defender) {
         defender.troops = Math.max(0, defender.troops - this.defenderLossPerTile(defender));
@@ -4647,8 +4771,11 @@ const Game = {
   // has since been added — see the "SAM Launcher & Interceptors" section
   // below, right after stepNukes. MIRV (the multi-warhead mega-nuke) is
   // still deliberately left for a later pass. Alliance-breaking
-  // (NukeExecution.maybeBreakAlliances' weighted-tile-count threshold) is
-  // also not ported; a nuke strike has no diplomatic side effect here.
+  // (NukeExecution.maybeBreakAlliances' weighted-tile-count threshold) WAS
+  // deliberately left unported at first, then added after a user report
+  // that nuking an ally earned no betrayal debuff — see
+  // maybeBreakNukeAlliances below, hung off launchNuke/debugNuke rather
+  // than detonateNuke (see that function's own comment for why).
   //
   // Purchase/targeting follows the same "click anywhere, launch from the
   // nearest ready structure" UX Warship's resolveWarshipLaunch already
@@ -4675,6 +4802,10 @@ const Game = {
     atombomb: { inner: 12, outer: 30 },
     hydrogenbomb: { inner: 80, outer: 100 }
   },
+  // Config.ts's nukeAllianceBreakThreshold(): a flat 100 for every nuke
+  // type, no rescaling needed for the same tile-for-tile reason
+  // NUKE_MAGNITUDES' own comment gives. See maybeBreakNukeAlliances below.
+  NUKE_ALLIANCE_BREAK_THRESHOLD: 100,
   // Config.ts's nukeSpeed(): both bomb types return 10 in their own per-tick
   // scale, which converts to 100 tiles/sec via TICKS_PER_SEC exactly like
   // BOAT_SPEED's own "1 tile/tick" comment. Slowed well below that ported
@@ -4735,6 +4866,73 @@ const Game = {
 
   canLaunchNuke(playerId, nukeType, clickTile) { return !this.nukeBlockReason(playerId, nukeType, clickTile); },
 
+  // Ported against NukeExecution.maybeBreakAlliances/Util.ts's
+  // listNukeBreakAlliance. Real OpenFront runs this the INSTANT a nuke is
+  // launched — NukeExecution.tick's nuke===null branch calls it right after
+  // building the missile unit, not on impact — so the diplomatic fallout is
+  // committed by the trajectory alone, even for a nuke a SAM shoots down
+  // seconds later. Ported at the same point here: launchNuke/debugNuke
+  // below, not detonateNuke. MIRV warheads are excluded in the real source;
+  // this game has no MIRV yet (see project memory), so every nuke type
+  // qualifies.
+  //
+  // Two ways a target gets angered, matching the real source exactly:
+  // 1. A weighted tile count (their owned tiles within the outer blast
+  //    radius, 1 per inner-radius tile / 0.5 per outer-ring tile) exceeding
+  //    NUKE_ALLIANCE_BREAK_THRESHOLD. Deliberately a flat geometric circle
+  //    scan, NOT nukeBlastTiles' random-BFS crater shape below — the real
+  //    source keeps this pure distance so it doesn't depend on the coin
+  //    flip that decides which tiles actually burn.
+  // 2. ANY structure of theirs at all inside the outer radius, no
+  //    threshold — verbatim listNukeBreakAlliance's unconditional
+  //    nearbyUnits(...Structures.types...) sweep.
+  // An angered ally has the alliance broken via breakAlliance (which is
+  // what actually applies the traitor mark/betrayal debuff to the nuke's
+  // owner); an angered non-ally just takes the flat -100 relation hit real
+  // OpenFront gives every angered player regardless of alliance status.
+  maybeBreakNukeAlliances(ownerId, nukeType, dst) {
+    const magnitude = this.NUKE_MAGNITUDES[nukeType];
+    const inner2 = magnitude.inner * magnitude.inner;
+    const outer2 = magnitude.outer * magnitude.outer;
+    const w = GameMap.width, h = GameMap.height;
+    const dstX = dst % w, dstY = (dst / w) | 0;
+    const x0 = Math.max(0, dstX - magnitude.outer), x1 = Math.min(w - 1, dstX + magnitude.outer);
+    const y0 = Math.max(0, dstY - magnitude.outer), y1 = Math.min(h - 1, dstY + magnitude.outer);
+
+    const weights = new Map();
+    const angered = new Set();
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const dx = x - dstX, dy = y - dstY;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > outer2) continue;
+        const owner = GameMap.owner[y * w + x];
+        if (owner < 0) continue;
+        const weight = (weights.get(owner) || 0) + (d2 <= inner2 ? 1 : 0.5);
+        weights.set(owner, weight);
+        if (weight > this.NUKE_ALLIANCE_BREAK_THRESHOLD) angered.add(owner);
+      }
+    }
+
+    for (const b of this.buildings.values()) {
+      if (this.tileDistSq(dst, b.tile) < outer2) {
+        const owner = GameMap.owner[b.tile];
+        if (owner >= 0) angered.add(owner);
+      }
+    }
+
+    for (const id of angered) {
+      if (id === ownerId) continue;
+      const target = this.players[id];
+      if (!target || !target.alive) continue;
+      if (this.areAllied(ownerId, id)) {
+        this.breakAlliance(ownerId, id);
+      } else {
+        this.adjustRelation(target, ownerId, -100);
+      }
+    }
+  },
+
   // Spawns instantly (matching SpawnExecution, same as buildWarship) at the
   // resolved Silo's tile, flying a straight line to the clicked destination.
   // Puts the launching Silo on cooldown immediately, exactly like
@@ -4761,6 +4959,7 @@ const Game = {
       // charge to this nuke, so a second SAM never also claims it.
       targetedBySAM: false
     });
+    this.maybeBreakNukeAlliances(playerId, nukeType, clickTile);
     return true;
   },
 
@@ -4799,6 +4998,7 @@ const Game = {
       duration: Math.max(0.3, dist / this.NUKE_SPEED[nukeType]),
       targetedBySAM: false
     });
+    this.maybeBreakNukeAlliances(ownerId, nukeType, dstTile);
     return true;
   },
 

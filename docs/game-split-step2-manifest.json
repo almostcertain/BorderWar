@@ -1,0 +1,35 @@
+{
+  "algorithm": "SHA-256",
+  "recorded": {
+    "js/noise.js": "771b4972b3eb3e4bb421b32b524f2d0e38c57e85c859bf15d0eb565c468bd25e",
+    "js/map.js": "8b40bfcb47c2cc8038f3bec1c188ba213688d90389ad7131285847ff3c96973d",
+    "js/fx.js": "d3502cb3ec14127531bba8234c28a2874f58bf1aaf73d35349d44dcd6c9d28c5",
+    "js/game/shared.js": "8735ad40029c02040e8c69380540fba2534ffa80848fc4bcd1aef5db234e7e92",
+    "js/game/core.js": "f001fa0aa018e06115ca595bb4330a5ebcd8890b6ad9192b1822bff40517c52b",
+    "js/net/protocol.js": "52ea3fc2e1bb101c1ac9c3523869481c5bc5e33cc49f05a52c9438474cbff10c",
+    "js/net/executor.js": "6e9ae3ee5dfeaa0154bd231447ad15e3bec9ad2dfcb61e05e16e472f843818a9",
+    "js/net/hash.js": "1b5e81fc440bb437e4e0ee76005e5532393942668d0f0d0cd158d669724a0d90",
+    "js/net/runner.js": "2a6e4f6edf6ac090a1b5ac3c8366b020b8162146b0a911bb5925d793208a7e08",
+    "js/net/localserver.js": "2dd0a63137143bde0a350b8c3e6d68d3181e99d980704fff74c13fa5426b1cca",
+    "js/net/transport.js": "6658b7997bfd5140811d8cc49e9f435edd87d46caa56f9086bdf4f4017003fb5",
+    "js/ai.js": "dd771356df7bbca8896ded8a6fcdf7616c2bbfa3ac7cee9f14aa151f5cd9ba1e"
+  },
+  "current": {
+    "js/noise.js": "771b4972b3eb3e4bb421b32b524f2d0e38c57e85c859bf15d0eb565c468bd25e",
+    "js/map.js": "8b40bfcb47c2cc8038f3bec1c188ba213688d90389ad7131285847ff3c96973d",
+    "js/fx.js": "d3502cb3ec14127531bba8234c28a2874f58bf1aaf73d35349d44dcd6c9d28c5",
+    "js/game/shared.js": "8735ad40029c02040e8c69380540fba2534ffa80848fc4bcd1aef5db234e7e92",
+    "js/game/core.js": "81d69e19e80e9b2d95dc82d74045679234d4a2c5a910d54ff583b1d92d78d394",
+    "js/game/trade.js": "e6ced7357cc896b630aedac24c8c37f4df7659cc3143023caa5f1b57bd262994",
+    "js/game/warships.js": "103601237c947358bf7898ad18e31f09f664a43643e0007b0579bde3362c60c8",
+    "js/game/nukes.js": "d32e02c7ffdf8605c701ea37bac90f168a5446b102ef5bdff8b9cd2a3ccc6b83",
+    "js/game/sam.js": "2c3d56767ecd4f15581e9b59a7b03d69522ae403a8b0ec2e0a3ceae2f2adf565",
+    "js/net/protocol.js": "52ea3fc2e1bb101c1ac9c3523869481c5bc5e33cc49f05a52c9438474cbff10c",
+    "js/net/executor.js": "6e9ae3ee5dfeaa0154bd231447ad15e3bec9ad2dfcb61e05e16e472f843818a9",
+    "js/net/hash.js": "1b5e81fc440bb437e4e0ee76005e5532393942668d0f0d0cd158d669724a0d90",
+    "js/net/runner.js": "2a6e4f6edf6ac090a1b5ac3c8366b020b8162146b0a911bb5925d793208a7e08",
+    "js/net/localserver.js": "2dd0a63137143bde0a350b8c3e6d68d3181e99d980704fff74c13fa5426b1cca",
+    "js/net/transport.js": "6658b7997bfd5140811d8cc49e9f435edd87d46caa56f9086bdf4f4017003fb5",
+    "js/ai.js": "dd771356df7bbca8896ded8a6fcdf7616c2bbfa3ac7cee9f14aa151f5cd9ba1e"
+  }
+}

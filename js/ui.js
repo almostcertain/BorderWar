@@ -83,8 +83,9 @@ const UI = {
       });
     }
 
-    // Mean match length is ~630s over six seeds (see game.js's NEUTRAL_RATE_SCALE
-    // comment) — 300s of simulated time lands roughly at the midpoint, with
+    // Mean match length is ~630s over six seeds (see game.js's "How fast a
+    // front advances" comment) — 300s of simulated time lands roughly at the
+    // midpoint, with
     // nations built up, bots fighting, and territory well past the opening land
     // grab. 300s is 3000 turns at Game.TICK_DT.
     //
@@ -654,11 +655,15 @@ const UI = {
     // disagree with the first.
     if (target >= 0) Transport.sendIntent(Protocol.intent.annexRegion(tile));
 
-    // Land only, exactly as OpenFront's own plain-click behaviour: it expands
-    // the whole contiguous border wherever we actually touch that nation or
-    // neutral land, regardless of precisely which tile got tapped, and simply
-    // does nothing if we don't touch it anywhere. A boat is a deliberate
-    // action from here — right-click or hold the tile for the radial menu.
+    // Land only: it expands the whole border we share with that nation or
+    // neutral land on the tapped tile's own landmass, regardless of precisely
+    // which tile on that landmass got tapped, and simply does nothing if we
+    // don't touch them there. This deviates from OpenFront's plain-click
+    // (which expands every border touching that nation, on any landmass) so
+    // that fighting the same enemy across two separate islands stays two
+    // separate fronts — see Game.launchAttack's landmassId comment. A boat is
+    // a deliberate action from here — right-click or hold the tile for the
+    // radial menu.
     //
     // Both intents go out on the same tap and in this order, which is the
     // order they will be applied in: a turn's intents are an ordered list and
@@ -669,7 +674,7 @@ const UI = {
     // The troop count is absolute, not the ratio: the slider is client-local
     // view state and its value travels inside the intent (§4).
     const me = Game.players[Game.me];
-    Transport.sendIntent(Protocol.intent.attack(target, Math.floor(me.troops * this.ratio)));
+    Transport.sendIntent(Protocol.intent.attack(target, Math.floor(me.troops * this.ratio), tile));
   },
 
   update() {

@@ -189,14 +189,16 @@
   const V = Date.now();
   document.getElementById('mainStyle').href = 'css/style.css?v=' + V;
   // Nested paths work as-is: the entry is just spliced into 'js/<name>.js'.
-  // 'net/hash' loads after 'game' because it reads Game/GameMap at call time
+  // 'game/shared' defines the shared globals before 'game/core' defines Game.
+  // Game domain scripts extend the singleton after core and before net/ai.
+  // 'net/hash' loads after 'game/core' because it reads Game/GameMap at call time
   // and Game.COSMETIC_STATE when it is defined.
   // 'net/protocol' has no dependencies at all — it is pure data and pure
   // functions, deliberately, so the Node server can require the same file
   // (see its header). Its position here is therefore free; it sits with the
   // other net/ modules.
   // 'net/executor' must come after 'net/protocol' (it validates through it)
-  // and after 'game' (it dispatches into it) — both are read at call time, so
+  // and after 'game/core' (it dispatches into it) — both are read at call time, so
   // this is really only a readability ordering, but it is the one that matches
   // the dependency.
   // 'net/runner' comes after 'net/executor' and 'net/hash' because it drives
@@ -207,7 +209,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'ai', 'render', 'input', 'ui', 'radial', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/nukes', 'game/sam', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'ai', 'render', 'input', 'ui', 'radial', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

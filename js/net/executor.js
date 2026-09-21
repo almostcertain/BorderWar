@@ -190,8 +190,16 @@ const Executor = {
     // launchAttack and returns false there. The troop count is absolute and
     // arrives on the wire: the ratio slider that produced it is client-local
     // view state (§4) and is not consulted here.
+    //
+    // `it.tile` is resolved to a landmassId here rather than shipping the id
+    // itself: landmassId is derived, deterministic map data every client
+    // already has, so sending the raw tile and re-deriving it is one fewer
+    // thing that could disagree between clients. An off-map tile just means
+    // no scoping (matches the AI's own unscoped calls) rather than a reject —
+    // the tile is UI-derived and cannot itself make the attack illegal.
     attack(playerId, it) {
-      return Game.launchAttack(playerId, it.targetID, it.troops);
+      const landmassId = Executor._tileOnMap(it.tile) ? GameMap.landmassId[it.tile] : null;
+      return Game.launchAttack(playerId, it.targetID, it.troops, landmassId);
     },
 
     // ui.js:791 Game.retreatAttack. A cancel naming an id that has ended is the

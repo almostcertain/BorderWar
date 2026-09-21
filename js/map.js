@@ -373,8 +373,8 @@ const GameMap = {
 
   // Picks spawn points on land, spread apart, avoiding tiny islands.
   findSpawns(count, rng) {
-    // Spread spawns as evenly as the landmass allows, relaxing the spacing
-    // requirement until every player fits.
+    // Spread spawns as the landmass allows, relaxing the spacing requirement
+    // until every player fits.
     let minDist = Math.sqrt(this.landTiles / count) * 1.1;
 
     for (let attempt = 0; attempt < 12; attempt++) {
@@ -386,6 +386,15 @@ const GameMap = {
         if (!this.isLand(i)) continue;
         if (this.landAround(x, y, 5) < 90) continue;
 
+        // Each candidate draws its own required spacing rather than all
+        // sharing minDist verbatim, so the accepted spawns end up unevenly
+        // distanced — some clustered closer together, others further apart —
+        // instead of the rigid, roughly-Poisson-disc grid a single fixed
+        // threshold produces. 0.5x floor still blocks unfair on-top-of-each-
+        // other placements; 1.5x cap keeps this attempt's average spacing
+        // near minDist so the relaxation loop below still converges.
+        const required = minDist * (0.5 + rng());
+
         let ok = true;
         for (const s of spawns) {
           const sx = s % this.width, sy = (s / this.width) | 0;
@@ -394,7 +403,7 @@ const GameMap = {
           // here is an instant, total desync of everything downstream — and
           // Math.hypot is one of the calls ECMA-262 leaves
           // implementation-approximated, so V8/SpiderMonkey/JavaScriptCore can
-          // differ in the last ulp and straddle the `< minDist` comparison.
+          // differ in the last ulp and straddle the `< required` comparison.
           // The multiplies, the add and the sqrt are all IEEE-754 operations
           // that every engine must round identically, so this form is exact
           // rather than merely quantized — which is why it is preferred to
@@ -402,7 +411,7 @@ const GameMap = {
           // touches a hazardous call (up to 8000 candidate tiles x every
           // spawn already placed, x 12 relaxation attempts).
           const dx = sx - x, dy = sy - y;
-          if (Math.sqrt(dx * dx + dy * dy) < minDist) { ok = false; break; }
+          if (Math.sqrt(dx * dx + dy * dy) < required) { ok = false; break; }
         }
         if (ok) spawns.push(i);
       }
