@@ -150,6 +150,13 @@ const LocalServer = {
   speed: 1,
   _burstRemaining: 0,
 
+  // Pause. The sim advances only when a turn arrives (§5), so holding the pump
+  // is the whole implementation: no turns out means no Game.tick, with no
+  // client-side flag for the sim to consult. Intents sent while paused stay
+  // buffered in `intents` and land in the first turn after resuming. Singleplayer
+  // only in effect — a real server owns its own clock and ignores nothing here.
+  paused: false,
+
   // --- Lifecycle -------------------------------------------------------------
 
   // Begin a match. `opts` carries what the real server would have decided in
@@ -233,6 +240,15 @@ const LocalServer = {
     this.winner = null;
     this.speed = 1;
     this._burstRemaining = 0;
+    this.paused = false;
+  },
+
+  // Hold or release the pump. Resuming restarts the turn clock so the first
+  // turn after a long pause is one interval away rather than due immediately.
+  setPaused(paused) {
+    paused = !!paused;
+    if (this.paused && !paused) this.turnStartTime = Date.now();
+    this.paused = paused;
   },
 
   // --- Client -> server ------------------------------------------------------
@@ -331,7 +347,7 @@ const LocalServer = {
   // run as fast as the CPU allows, dropping the backpressure gate makes it run
   // away from the client.
   _pump() {
-    if (!this.running) return;
+    if (!this.running || this.paused) return;
 
     if (this._burstRemaining > 0) {
       // Burst: emit as many turns as the backlog allows this tick. Bounded on

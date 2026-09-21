@@ -294,6 +294,35 @@ html, body {
   color: #2a1200;
 }
 
+/* --- Pause button (singleplayer) ------------------------------------------ */
+
+#pauseBtn {
+  position: fixed;
+  /* Left edge, mid-height: the top is taken by the leaderboard, spawn banner
+     and debug panel, and the bottom by the HUD, whose height varies. */
+  top: 50%;
+  left: 8px;
+  z-index: 8;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px;
+  border: 0;
+  background: rgba(11, 18, 32, 0.75);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#pauseBtn:active { filter: brightness(0.85); }
+
+#pauseBtn.paused {
+  background: rgba(255, 190, 70, 0.95);
+  color: #2a1a00;
+}
+
+#pauseBtn.hidden { display: none; }
+
 /* --- Diplomacy banner ----------------------------------------------------- */
 
 #diploBanner {

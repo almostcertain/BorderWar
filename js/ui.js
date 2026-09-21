@@ -104,6 +104,8 @@ const UI = {
       LocalServer.burst(Math.round(300 / Game.TICK_DT));
     });
 
+    document.getElementById('pauseBtn').addEventListener('click', () => this.togglePause());
+
     document.getElementById('debugNukeAtom').addEventListener('click', () => this.armDebugNuke('atombomb'));
     document.getElementById('debugNukeHydrogen').addEventListener('click', () => this.armDebugNuke('hydrogenbomb'));
 
@@ -120,9 +122,17 @@ const UI = {
         this.selectedWarships.clear();
         return;
       }
+      if (e.key === 'p' || e.key === 'P') { this.togglePause(); return; }
       const u = Game.UNITS.find(x => x.hotkey === e.key);
       if (u) this.togglePlacing(u.type);
     });
+  },
+
+  // Singleplayer only, and only while a match is live: LocalServer stops its
+  // pump when paused, which freezes the sim since it advances on turn arrival.
+  togglePause() {
+    if (!Transport.isLocal || !Game.players[Game.me] || Game.winnerId !== null) return;
+    LocalServer.setPaused(!LocalServer.paused);
   },
 
   // Built once from Game.UNITS rather than written into the HTML, so adding a
@@ -687,6 +697,11 @@ const UI = {
     // the panel reach past the intent pipeline into the sim (see the DEBUG
     // BYPASS notes in setup()) and would desync a networked match.
     document.getElementById('debugPanel').classList.toggle('hidden', !Transport.isLocal);
+
+    const pauseBtn = document.getElementById('pauseBtn');
+    pauseBtn.classList.toggle('hidden', !Transport.isLocal || Game.winnerId !== null);
+    pauseBtn.classList.toggle('paused', LocalServer.paused);
+    pauseBtn.textContent = LocalServer.paused ? '▶ Resume' : '❚❚ Pause';
 
     // The HUD stays hidden until the human has claimed a capital — only the
     // banner (and the leaderboard, already outside #hud) is live.
