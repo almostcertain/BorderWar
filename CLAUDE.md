@@ -2,11 +2,12 @@
 
 ## Committing
 
-When a task is finished, always end your final message by asking whether to commit it (e.g. "Want me to commit this?"). Do this every time, for every completed task, including small ones.
+When a task is finished, always end your final message by asking whether to commit and push it (e.g. "Want me to commit and push this?"). Do this every time, for every completed task, including small ones.
 
-- Ask; don't commit until the user says yes.
+- Ask; don't commit or push until the user says yes. A yes to "commit and push" covers both steps.
 - When committing, stage only the files touched for that task (`git add <path>`, never `git add -A`) — parallel sessions can leave unrelated edits in the tree.
-- Never push, tag, or run destructive git commands unless explicitly asked.
+- Push with a plain `git push` of the current branch. If it's rejected, stop and tell the user; never force-push to get past it.
+- Never tag, force-push, or run other destructive git commands unless explicitly asked.
 
 ## Determinism (multiplayer is lockstep)
 
