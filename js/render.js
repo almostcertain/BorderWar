@@ -384,7 +384,7 @@ const Render = {
     this.drawStructures();
     this.drawPlacement();
     this.drawLabels();
-    this.drawAllianceOffers();
+    this.drawDiploBadges();
     this.drawFronts();
     this.drawBoats();
     this.drawTrains();
@@ -1903,7 +1903,7 @@ const Render = {
 
     for (const L of this.labels) {
       const p = Game.players[L.id];
-      L.font = 0;                        // 0 = no name drawn; drawAllianceOffers reads it
+      L.font = 0;                        // 0 = no name drawn; drawDiploBadges reads it
       if (!p || p.tiles.size === 0) continue;
 
       const px = (L.x + 0.5 - this.cam.x) * s + cw / 2;
@@ -1948,21 +1948,41 @@ const Render = {
     }
   },
 
-  // A pulsing badge above any nation currently offering YOU peace, so the offer
-  // can be spotted on the map and not just in the banner. The ring drains as the
-  // offer's 20s runs out. Screen-space sized, so it stays readable when zoomed
-  // out; it sits above the nation's name when one is drawn.
-  drawAllianceOffers() {
+  // Seconds before an alliance ends at which its badge appears. Earlier than
+  // this the renewal banner (Game.ALLIANCE_EXTEND_WINDOW) is the only prompt.
+  ALLIANCE_EXPIRY_BADGE: 15,
+
+  // Pulsing badges above the nations you have a diplomatic decision pending
+  // with, so they can be spotted on the map and not just in the banner:
+  //   gold 🤝    a nation is offering YOU peace; the ring drains over the offer's 20s
+  //   orange ⏳  an alliance of yours ends within ALLIANCE_EXPIRY_BADGE seconds and
+  //              you have not yet agreed to renew it; the ring drains over that span
+  // Screen-space sized, so they stay readable zoomed out; each sits above the
+  // nation's name when one is drawn.
+  drawDiploBadges() {
     if (Game.me < 0) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr, dpr = this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height;
 
+    const badges = [];
     for (const req of Game.requests) {
       if (req.to !== Game.me) continue;
-      const b = {
+      badges.push({
         id: req.from, glyph: '🤝', color: '#ffd65a', halo: '255,214,90',
         left: (Game.ALLIANCE_REQUEST_DURATION - (Game.elapsed - req.createdAt)) / Game.ALLIANCE_REQUEST_DURATION
-      };
+      });
+    }
+    for (const al of Game.alliances) {
+      if (al.a !== Game.me && al.b !== Game.me) continue;
+      const remaining = al.expiresAt - Game.elapsed;
+      if (remaining > this.ALLIANCE_EXPIRY_BADGE || Game.agreedToExtend(al, Game.me)) continue;
+      badges.push({
+        id: al.a === Game.me ? al.b : al.a, glyph: '⏳', color: '#ff8a4c', halo: '255,138,76',
+        left: remaining / this.ALLIANCE_EXPIRY_BADGE
+      });
+    }
+
+    for (const b of badges) {
       const L = this.labels.find(l => l.id === b.id);
       if (!L) continue;
 
