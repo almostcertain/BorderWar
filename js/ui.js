@@ -1,3 +1,9 @@
+// Player names are user-typed (and, in multiplayer, come from other clients),
+// so anything that puts one into innerHTML must go through this.
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 const UI = {
   ratio: 0.2, // kept equal to DEFAULT_RATIO
   lastLeaderboard: 0,
@@ -874,7 +880,7 @@ const UI = {
                    (p.isDisconnected ? '🔌' : '');
       return `<div class="lbRow${p.id === Game.me ? ' me' : ''}">
         <div class="lbSwatch" style="background:${c}"></div>
-        <div class="lbName">${p.name}</div>
+        <div class="lbName">${escapeHtml(p.name)}</div>
         <div class="lbMark">${mark}</div>
         <div class="lbGold">${formatGold(p.gold)}</div>
         <div class="lbPct">${pct}%</div>
@@ -1031,7 +1037,7 @@ const UI = {
         chip.innerHTML =
           `<span class="frontIcon">${it.icon}</span>` +
           `<span class="frontTroops"></span>` +
-          `<span class="frontName">${it.name}</span>`;
+          `<span class="frontName">${escapeHtml(it.name)}</span>`;
         chip._troopsEl = chip.querySelector('.frontTroops');
       }
       chip.className = 'frontChip ' + (it.mine ? 'mine' : 'theirs') + (it.retreating ? ' retreating' : '');
@@ -1216,14 +1222,20 @@ const UI = {
 
     document.getElementById('lobbyCode').addEventListener('click', () => this.copyLobbyCode());
 
-    // Nicety only (task spec: "not a requirement") — prefill whichever
-    // username field exists from the last time this browser hosted/joined.
-    let savedUsername = '';
-    try { savedUsername = localStorage.getItem('borderwar_username') || ''; } catch (e) { /* ignore */ }
-    if (savedUsername) {
-      document.getElementById('hostUsername').value = savedUsername;
-      document.getElementById('joinUsername').value = savedUsername;
-    }
+    // Prefill the shared name field from the last time this browser played.
+    let savedName = '';
+    try { savedName = localStorage.getItem('borderwar_username') || ''; } catch (e) { /* ignore */ }
+    if (savedName) document.getElementById('playerName').value = savedName;
+  },
+
+  // The one name field on the main menu, shared by singleplayer, host and
+  // join. Read (and remembered) at the moment a game or lobby is started, so
+  // it is written once per use rather than on every keystroke. Empty means the
+  // caller falls back to its own default.
+  getPlayerName() {
+    const name = (document.getElementById('playerName').value || '').trim();
+    if (name) { try { localStorage.setItem('borderwar_username', name); } catch (e) { /* ignore */ } }
+    return name;
   },
 
   // Read the host panel's map/bot/tribe controls into the shape `start_game`
@@ -1237,20 +1249,9 @@ const UI = {
     return { mapSize: mapSize, bots: bots, tribes: tribes };
   },
 
-  // Username persistence is a nicety (see setupLobby) so it is written from
-  // both read points rather than once — whichever panel the player actually
-  // used is the one worth remembering.
-  getHostUsername() {
-    const username = (document.getElementById('hostUsername').value || '').trim();
-    if (username) { try { localStorage.setItem('borderwar_username', username); } catch (e) { /* ignore */ } }
-    return username;
-  },
-
   getJoinInputs() {
     const code = (document.getElementById('joinCode').value || '').trim().toUpperCase();
-    const username = (document.getElementById('joinUsername').value || '').trim();
-    if (username) { try { localStorage.setItem('borderwar_username', username); } catch (e) { /* ignore */ } }
-    return { code: code, username: username };
+    return { code: code, username: this.getPlayerName() };
   },
 
   // Called by main.js's hostLobby() the moment Transport.connect is issued —
