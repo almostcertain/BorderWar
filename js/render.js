@@ -384,6 +384,7 @@ const Render = {
     this.drawStructures();
     this.drawPlacement();
     this.drawLabels();
+    this.drawAllianceOffers();
     this.drawFronts();
     this.drawBoats();
     this.drawTrains();
@@ -1902,6 +1903,7 @@ const Render = {
 
     for (const L of this.labels) {
       const p = Game.players[L.id];
+      L.font = 0;                        // 0 = no name drawn; drawAllianceOffers reads it
       if (!p || p.tiles.size === 0) continue;
 
       const px = (L.x + 0.5 - this.cam.x) * s + cw / 2;
@@ -1942,6 +1944,65 @@ const Render = {
       ctx.font = font.toFixed(1) + 'px system-ui, sans-serif';
       ctx.strokeText(troops, px, py + font * 0.6);
       ctx.fillText(troops, px, py + font * 0.6);
+      L.font = font;
+    }
+  },
+
+  // A pulsing badge above any nation currently offering YOU peace, so the offer
+  // can be spotted on the map and not just in the banner. The ring drains as the
+  // offer's 20s runs out. Screen-space sized, so it stays readable when zoomed
+  // out; it sits above the nation's name when one is drawn.
+  drawAllianceOffers() {
+    if (Game.me < 0) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr, dpr = this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height;
+
+    for (const req of Game.requests) {
+      if (req.to !== Game.me) continue;
+      const b = {
+        id: req.from, glyph: '🤝', color: '#ffd65a', halo: '255,214,90',
+        left: (Game.ALLIANCE_REQUEST_DURATION - (Game.elapsed - req.createdAt)) / Game.ALLIANCE_REQUEST_DURATION
+      };
+      const L = this.labels.find(l => l.id === b.id);
+      if (!L) continue;
+
+      const px = (L.x + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (L.y + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -60 || py < -60 || px > cw + 60 || py > ch + 60) continue;
+
+      const r = 18 * dpr;
+      const cy = py - (L.font ? L.font * 1.25 : 0) - r - 4 * dpr;
+      const left = Math.max(0, Math.min(1, b.left));
+      const pulse = 0.5 + 0.5 * Math.sin(Game.renderElapsed * 6);
+
+      ctx.save();
+      // Soft halo that breathes, then the badge itself.
+      ctx.beginPath();
+      ctx.arc(px, cy, r + (3 + 4 * pulse) * dpr, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(' + b.halo + ',' + (0.18 + 0.22 * pulse).toFixed(3) + ')';
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(px, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(20,24,36,0.9)';
+      ctx.fill();
+      ctx.lineWidth = 2 * dpr;
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.stroke();
+
+      // Time-remaining arc, clockwise from 12 o'clock.
+      ctx.beginPath();
+      ctx.arc(px, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left);
+      ctx.strokeStyle = b.color;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+
+      ctx.font = (r * 1.1).toFixed(1) + 'px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(b.glyph, px, cy + dpr);
+      ctx.restore();
     }
   }
 };
