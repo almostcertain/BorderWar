@@ -551,8 +551,10 @@ class GameServer {
       players.push({
         clientID: client.clientID,
         username: client.username,
-        // See the constructor's note on nextClientId doubling as playerId.
-        playerId: Number(client.clientID)
+        // Roster position, not the clientID counter: Game.init places humans
+        // in slots 0..H-1, and clientIDs stop being contiguous the moment
+        // anyone leaves and re-joins the lobby.
+        playerId: players.length
       });
     }
 
