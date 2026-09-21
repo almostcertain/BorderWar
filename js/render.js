@@ -779,7 +779,7 @@ const Render = {
   // Where the armed structure would land. Mouse only — touch has no hover, so
   // there the hint line under the build bar is the whole of the feedback.
   drawPlacement() {
-    if (!UI.placing || UI.placeHover < 0) return;
+    if (!UI.placing || UI.placing === 'debugpeace' || UI.placeHover < 0) return;   // debugpeace has no ghost
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
     const tile = UI.placeHover;

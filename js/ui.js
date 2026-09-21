@@ -128,6 +128,7 @@ const UI = {
 
     document.getElementById('debugNukeAtom').addEventListener('click', () => this.armDebugNuke('atombomb'));
     document.getElementById('debugNukeHydrogen').addEventListener('click', () => this.armDebugNuke('hydrogenbomb'));
+    document.getElementById('debugPeace').addEventListener('click', () => this.armDebugPeace());
 
     // Hotkeys, one digit per structure in bar order, and Escape to disarm.
     // Guarded on the focused element so typing a bot count in the start menu
@@ -251,6 +252,20 @@ const UI = {
     this.placing = 'debugnuke';
     this.debugNukeType = type;
     this.debugNukeSrc = -1;
+    this.placeHover = -1;
+    this.selectedWarships.clear();
+    Radial.hide();
+    this.hideHoverPanel();
+  },
+
+  // Arms the debug "peace offer" tool: the next tap on a nation makes that
+  // nation send you an alliance request. See onTap's 'debugpeace' branch.
+  armDebugPeace() {
+    if (!Game.running) return;
+    // DEBUG BYPASS #3 — singleplayer only, same reasoning as armDebugNuke.
+    if (!Transport.isLocal) return;
+    if (this.placing === 'debugpeace') { this.placing = null; return; }
+    this.placing = 'debugpeace';
     this.placeHover = -1;
     this.selectedWarships.clear();
     Radial.hide();
@@ -513,6 +528,28 @@ const UI = {
       this.debugNukeType = null;
       this.debugNukeSrc = -1;
       this.placeHover = -1;
+      return;
+    }
+
+    // Debug panel's peace-offer tool: tap a nation and it sends you a request.
+    // DEBUG BYPASS #3 — writes Game.requests directly, since an alliance intent
+    // always names the sender as the acting player and so can only ever be sent
+    // as you. Singleplayer only (armDebugPeace refuses otherwise). Stays armed so
+    // several nations can be tapped in a row; Esc or the button disarms it.
+    if (this.placing === 'debugpeace') {
+      if (!Transport.isLocal) return;
+      const tile = Render.screenToTile(sx, sy);
+      const owner = tile < 0 ? -1 : GameMap.owner[tile];
+      if (owner < 0 || owner === Game.me) { this.flash('Tap another nation'); return; }
+      const from = Game.players[owner];
+      // The offer timer and cooldown are not what is being tested, so a stale
+      // cooldown must not block it — but a tribe or an existing pact still does.
+      Game.lastRequestAt.delete(owner + ':' + Game.me);
+      if (!Game.requestAlliance(owner, Game.me)) {
+        this.flash(from.isTribe ? 'Tribes do not ally'
+          : Game.areAllied(owner, Game.me) ? 'Already allied'
+          : 'Offer already pending');
+      }
       return;
     }
 
@@ -868,6 +905,7 @@ const UI = {
       this.placing === 'debugnuke' && this.debugNukeType === 'atombomb');
     document.getElementById('debugNukeHydrogen').classList.toggle('armed',
       this.placing === 'debugnuke' && this.debugNukeType === 'hydrogenbomb');
+    document.getElementById('debugPeace').classList.toggle('armed', this.placing === 'debugpeace');
 
     const hintEl = document.getElementById('hint');
     if (performance.now() < this.flashUntil) {
@@ -888,6 +926,8 @@ const UI = {
         ? 'Build a Missile Silo first to unlock the ' + def.name + ' · Esc to cancel'
         : 'Tap anywhere to strike with ' + article + ' ' + def.name + ' from your nearest ready Silo · ' +
           formatGold(Game.unitCost(me, this.placing)) + ' gold · Esc to cancel';
+    } else if (this.placing === 'debugpeace') {
+      hintEl.textContent = '[DEBUG] Tap a nation to make it offer you peace · Esc to cancel';
     } else if (this.placing === 'debugnuke') {
       const def = Game.unitDef(this.debugNukeType);
       hintEl.textContent = this.debugNukeSrc < 0
