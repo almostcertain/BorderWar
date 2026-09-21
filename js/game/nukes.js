@@ -123,7 +123,7 @@ Object.assign(Game, {
   // 1. A weighted tile count (their owned tiles within the outer blast
   //    radius, 1 per inner-radius tile / 0.5 per outer-ring tile) exceeding
   //    NUKE_ALLIANCE_BREAK_THRESHOLD. Deliberately a flat geometric circle
-  //    scan, NOT nukeBlastTiles' random-BFS crater shape below — the real
+  //    scan, NOT nukeBlastTiles' irregular crater shape below — the real
   //    source keeps this pure distance so it doesn't depend on the coin
   //    flip that decides which tiles actually burn.
   // 2. ANY structure of theirs at all inside the outer radius, no
@@ -245,35 +245,34 @@ Object.assign(Game, {
     return true;
   },
 
-  // The "radiating" blast footprint: a flood fill out from the impact tile,
-  // solid within the inner radius and a 50/50 coin flip per tile in the band
-  // between inner and outer — Config.ts's real rand.chance(2) — so the
-  // crater's edge burns outward unevenly instead of stopping in a hard-edged
-  // circle. Verbatim NukeExecution.tilesToDestroy's non-waterNukes branch
-  // (this game has no waterNukes toggle, so the smooth-irregular-boundary
-  // water-nuke branch isn't ported). A tile only joins the set by being
-  // reached as a passing neighbour of one already in it, exactly like the
-  // real mg.bfs call — the coin flip can sever connectivity and leave an
-  // isolated pocket beyond it untouched, which is a faithful reproduction of
-  // the real shape, not a bug.
+  // The "radiating" blast footprint: a solid disc out to the inner radius,
+  // then an edge that wanders between inner and outer by bearing — three
+  // low-frequency harmonics with random phases — so the crater is irregular
+  // but always one solid blob. OpenFront's per-tile coin flip in that band
+  // (rand.chance(2)) was ported here first, and it peppered the rim with
+  // survivors and one-tile fallout holes: cleaning up after a hit meant
+  // tapping them one at a time. The band still averages half its width, so
+  // the total area lands where the coin flip's did. Draws a fixed three
+  // rng() values per blast, so lockstep clients stay in step.
   nukeBlastTiles(dst, magnitude) {
     const inner2 = magnitude.inner * magnitude.inner;
-    const outer2 = magnitude.outer * magnitude.outer;
-    const result = new Set([dst]);
-    const queue = [dst];
-    const nb = new Int32Array(4);
-    let head = 0;
-    while (head < queue.length) {
-      const i = queue[head++];
-      const n = GameMap.neighbors(i, nb);
-      for (let k = 0; k < n; k++) {
-        const j = nb[k];
-        if (result.has(j)) continue;
-        const d2 = this.tileDistSq(dst, j);
-        if (d2 > outer2) continue;
-        if (d2 > inner2 && this.rng() >= 0.5) continue;
-        result.add(j);
-        queue.push(j);
+    const w = GameMap.width, h = GameMap.height;
+    const cx = dst % w, cy = (dst / w) | 0;
+    const band = magnitude.outer - magnitude.inner;
+    const phase = [this.rng() * 2 * Math.PI, this.rng() * 2 * Math.PI, this.rng() * 2 * Math.PI];
+    const reach = Math.ceil(magnitude.outer);
+    const result = new Set();
+    for (let y = Math.max(0, cy - reach); y <= Math.min(h - 1, cy + reach); y++) {
+      for (let x = Math.max(0, cx - reach); x <= Math.min(w - 1, cx + reach); x++) {
+        const dx = x - cx, dy = y - cy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > inner2) {
+          const a = Math.atan2(dy, dx);
+          const s = 0.5 + 0.5 * (Math.sin(2 * a + phase[0]) * 0.5 + Math.sin(3 * a + phase[1]) * 0.3 + Math.sin(5 * a + phase[2]) * 0.2);
+          const r = magnitude.inner + band * s;
+          if (d2 > r * r) continue;
+        }
+        result.add(y * w + x);
       }
     }
     return result;
