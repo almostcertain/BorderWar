@@ -482,53 +482,9 @@ html, body {
 #hpGoldValue { color: #f0c869; }
 #hpGoldRate { opacity: 0.55; }
 
-/* Relationship with a bot: stance chip, optional note (time left / offer), and
-   the bot's attitude toward you as a bar centred on neutral — red to the left
-   for hostile, green to the right for friendly. */
-#hpRelRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 22px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.14);
-}
-#hpRelRow.hidden { display: none; }
-
-#hpRelStance {
-  flex: 0 0 auto;
-  padding: 2px 12px;
-  border-radius: 999px;
-  font-weight: 600;
-  font-size: 20px;
-  background: rgba(255, 255, 255, 0.14);
-}
-#hpRelStance.allied { background: rgba(109, 180, 255, 0.28); color: #9fcbff; }
-#hpRelStance.war { background: rgba(255, 90, 90, 0.28); color: #ff9b9b; }
-
-#hpRelNote { flex: 0 0 auto; opacity: 0.65; font-size: 20px; font-variant-numeric: tabular-nums; }
-#hpRelNote:empty { display: none; }
-
-#hpRelBar {
-  position: relative;
-  flex: 1 1 auto;
-  height: 12px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.12);
-  overflow: hidden;
-}
-#hpRelBar::after {   /* neutral tick */
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: rgba(255, 255, 255, 0.4);
-}
-#hpRelFill { position: absolute; top: 0; bottom: 0; }
-
-#hpRelMood { flex: 0 0 auto; opacity: 0.85; font-size: 20px; }
+/* Bot's opinion of the player, as a face (UI.updateBotFace). */
+#hpFace { flex: 0 0 auto; font-size: 32px; line-height: 1; }
+#hpFace:empty { display: none; }
 
 /* Spawn selection: shown between Start and the human's first tap, prompting
    where to place their capital while every Nation and Tribe's own starting

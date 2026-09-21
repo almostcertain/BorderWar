@@ -417,13 +417,11 @@ const UI = {
     document.getElementById('hpSwatch').style.background =
       `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
     document.getElementById('hpName').textContent = p.name;
-    // Bots get the dedicated relationship row instead of the bare "Allied" tag.
-    const showRel = p.isBot && Game.me >= 0 && p.id !== Game.me;
     document.getElementById('hpSub').textContent =
       (p.isTribe ? 'Tribe' : '') +
-      (!showRel && Game.areAllied(Game.me, p.id) ? ' Allied' : '') +
+      (Game.areAllied(Game.me, p.id) ? ' Allied' : '') +
       (Game.isTraitor(p) ? ' 🗡 Traitor' : '');
-    this.updateRelationRow(p, showRel);
+    this.updateBotFace(p);
     document.getElementById('hpTiles').textContent =
       p.tiles.size.toLocaleString() + ' (' + (p.tiles.size / GameMap.landTiles * 100).toFixed(1) + '%)';
 
@@ -449,45 +447,13 @@ const UI = {
       '+' + formatGold(Game.goldPerSecond(p)) + '/s';
   },
 
-  // How a hovered bot stands with the player: stance (allied / at war /
-  // neutral), a note (alliance time left or a pending offer), and the bot's own
-  // opinion of the player — its relations entry, the same number its AI reads
-  // (ai.js FRIENDLY / DISTRUSTFUL) — as a bar centred on neutral.
-  updateRelationRow(p, show) {
-    const row = document.getElementById('hpRelRow');
-    row.classList.toggle('hidden', !show);
-    if (!show) return;
-    const me = Game.me;
-    const stanceEl = document.getElementById('hpRelStance');
-    const noteEl = document.getElementById('hpRelNote');
-
-    let stance = 'Neutral', cls = '', note = '';
-    const al = Game.allianceBetween(me, p.id);
-    if (al) {
-      stance = 'Allied'; cls = 'allied';
-      const left = Math.max(0, Math.ceil(al.expiresAt - Game.elapsed));
-      note = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' left';
-    } else {
-      const theyAttack = Game.attacks.some(a => a.attacker === p.id && a.target === me);
-      const weAttack = Game.attacks.some(a => a.attacker === me && a.target === p.id);
-      if (theyAttack || weAttack) {
-        stance = 'At war'; cls = 'war';
-        note = theyAttack && weAttack ? 'both attacking' : theyAttack ? 'attacking you' : 'you attack';
-      } else if (Game.pendingRequest(p.id, me)) note = 'offers alliance';
-      else if (Game.pendingRequest(me, p.id)) note = 'offer sent';
-    }
-    stanceEl.textContent = stance;
-    stanceEl.className = cls;
-    noteEl.textContent = note;
-
-    const rel = Game.relation(p, me);
-    const fill = document.getElementById('hpRelFill');
-    const w = Math.abs(rel) / 2;   // -100..100 -> 0..50% of the bar either side
-    fill.style.left = (rel >= 0 ? 50 : 50 - w) + '%';
-    fill.style.width = w + '%';
-    fill.style.background = rel >= 0 ? '#5fd38a' : '#ff6b6b';
-    document.getElementById('hpRelMood').textContent =
-      rel >= AI.FRIENDLY ? 'Friendly' : rel >= AI.DISTRUSTFUL ? 'Neutral' : rel < -50 ? 'Hostile' : 'Distrustful';
+  // A bot's opinion of the player as a face: its relations entry, banded the
+  // same way its AI reads it (ai.js FRIENDLY / DISTRUSTFUL). Bots only.
+  updateBotFace(p) {
+    const el = document.getElementById('hpFace');
+    if (!p.isBot || Game.me < 0 || p.id === Game.me) { el.textContent = ''; return; }
+    const rel = Game.relation(p, Game.me);
+    el.textContent = rel >= AI.FRIENDLY ? '🙂' : rel >= AI.DISTRUSTFUL ? '😐' : '🙁';
   },
 
   hideHoverPanel() {
