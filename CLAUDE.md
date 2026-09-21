@@ -9,6 +9,14 @@ When a task is finished, always end your final message by asking whether to comm
 - Push with a plain `git push` of the current branch. If it's rejected, stop and tell the user; never force-push to get past it.
 - Never tag, force-push, or run other destructive git commands unless explicitly asked.
 
+## Tickets and the board
+
+Work comes from the GitHub project board (the BorderWar project, owner `almostcertain`). A human verifies every ticket, so nothing of mine goes to Done.
+
+- Pick the top card in **Ready**. When starting it, move it to **In progress**; when the work is pushed, move it to **In review**. The user moves it out of In review themselves.
+- Never move a card to Done and never close an issue.
+- Don't put closing keywords (`Closes`, `Fixes`, `Resolves`) in commit messages or PR descriptions. GitHub would close the issue and the board would move the card to Done. Reference it as `Refs #N` instead.
+
 ## Determinism (multiplayer is lockstep)
 
 Every client runs the same simulation from the same seed and inputs, so the sim must produce identical results everywhere. The sim is `js/game/*.js`, `js/ai.js`, `js/map.js` and `js/noise.js`.
