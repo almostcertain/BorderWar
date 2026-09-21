@@ -610,7 +610,7 @@ const AI = {
 
   // How many completed structures of `type` p currently owns — distinct from
   // Game.unitsOwned, which sums LEVELS rather than counting placements (see
-  // the UNITS comment in game.js on why). Needed wherever a per-STRUCTURE
+  // the UNITS comment in game/structures.js on why). Needed wherever a per-STRUCTURE
   // effect (SAM's charge slots) has to be told apart from a per-LEVEL sum
   // that prices identically either way.
   countBuilt(p, type) {

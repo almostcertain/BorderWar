@@ -4,7 +4,7 @@
 //
 // §1's central rule, restated because it is the one thing every method below
 // must keep being true: THE SERVER NEVER SIMULATES. This file never requires
-// js/game.js, js/ai.js, js/map.js or any Runner/Executor — it only buckets
+// js/game/*.js, js/ai.js, js/map.js or any Runner/Executor — it only buckets
 // intents into turns and relays them. Every client runs the identical sim
 // over the identical turn stream and reaches the identical state on its own.
 'use strict';
@@ -314,7 +314,7 @@ class GameServer {
 
   // --- Winner vote (MP-3.5) -------------------------------------------------
   //
-  // Every client computes Game.winnerId itself (sim-side, js/game.js) and
+  // Every client computes Game.winnerId itself (sim-side, js/game/*.js) and
   // casts it here as a vote (§4 `winner`) — the server never simulates and
   // has no way to know who won on its own, per §1. This is a straightforward
   // strict-majority-of-active-clients tally, deliberately not full OpenFront

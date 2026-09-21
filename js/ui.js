@@ -83,7 +83,7 @@ const UI = {
       });
     }
 
-    // Mean match length is ~630s over six seeds (see game.js's "How fast a
+    // Mean match length is ~630s over six seeds (see game/combat.js's "How fast a
     // front advances" comment) — 300s of simulated time lands roughly at the
     // midpoint, with
     // nations built up, bots fighting, and territory well past the opening land

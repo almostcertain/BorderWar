@@ -11,8 +11,8 @@
 // Game.attacks/boats/warships are stepped by Game.tick — so an intent here maps
 // to one call of the existing Game.* method and returns. There is no Execution
 // object to build and nothing for this file to schedule. If a future mechanic
-// genuinely needs per-tick behaviour of its own, it belongs in game.js beside
-// stepAttack/stepBoats, not here.
+// genuinely needs per-tick behaviour of its own, it belongs in js/game/ beside
+// stepAttack/stepBoats (attacks.js, naval.js), not here.
 //
 // WHY THIS FILE EXISTS AT ALL, since a click could obviously just call
 // Game.launchAttack directly (and until MP-1.5 still does): under deterministic
@@ -30,7 +30,7 @@
 //    Reading Game.me here would reintroduce exactly the desync class MP-0.2
 //    spent a phase eliminating, and it would do it silently: the game would
 //    look perfect on the client that issued the click and be wrong everywhere
-//    else. (game.js's chooseSpawn/moveWarships still default to Game.me for
+//    else. (game/core.js's chooseSpawn and game/warships.js's moveWarships still default to Game.me for
 //    their pre-lockstep ui.js callers; this file always passes the actor
 //    explicitly so that default is never taken.)
 //
@@ -48,7 +48,7 @@
 //    always safe because every client drops the same intent for the same reason
 //    on the same turn.
 //
-// LEGALITY IS NOT REIMPLEMENTED HERE. game.js already owns the rules, in the
+// LEGALITY IS NOT REIMPLEMENTED HERE. js/game/ already owns the rules, in the
 // *BlockReason validators (spawnBlockReason, buildBlockReason,
 // upgradeBlockReason, navalInvasionBlockReason, allianceBlockReason,
 // warshipBlockReason, nukeBlockReason) and in the mutators that call them and
@@ -56,7 +56,7 @@
 // you afford a city" here would drift from the first, and the copy that
 // disagreed with the sim would be the one refusing a legitimate click. What
 // this file *does* own is AUTHORSHIP — that the actor cancelling an attack is
-// the one who launched it — because nothing in game.js has ever needed to ask
+// the one who launched it — because nothing in js/game/ has ever needed to ask
 // that question before now.
 //
 // Nothing calls this yet. MP-1.3 (Runner) drives it from the turn queue and
@@ -124,7 +124,7 @@ const Executor = {
   //
   // This is a bounds check on a wire value, not a game rule: the rules about
   // *which* real tile you may build on stay in buildBlockReason. Without it a
-  // tile index one past the end reaches game.js as `GameMap.owner[t] ===
+  // tile index one past the end reaches js/game/ as `GameMap.owner[t] ===
   // undefined`, which most validators handle by accident but launchNuke does
   // not — it would happily fly a missile at coordinates off the map.
   _tileOnMap(tile) {
@@ -365,7 +365,7 @@ const Executor = {
   //
   // Order matters: grammar first (cheapest, and a malformed intent has no
   // meaningful actor), then the actor, then the handler. The handler is where
-  // legality is decided, by game.js, not here.
+  // legality is decided, by js/game/, not here.
   apply(stampedIntent) {
     // Grammar. Protocol owns shape and range; a failure here means the message
     // was malformed or hostile and it is dropped at the boundary (MP-4.3).

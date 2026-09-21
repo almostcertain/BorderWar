@@ -188,7 +188,7 @@ const LocalServer = {
       players: [{
         clientID: this.clientID,
         username: typeof opts.username === 'string' ? opts.username : 'You',
-        // The human is player 0 in this codebase's id space (game.js's init:
+        // The human is player 0 in this codebase's id space (game/core.js's init:
         // 0 is human, 1..bots are Nations, the rest Tribes). MP-3.1 is where
         // this stops being a constant.
         playerId: 0

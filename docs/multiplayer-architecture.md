@@ -108,7 +108,30 @@ js/
     runner.js        GameRunner: turn queue, executes turns into the sim, emits hashes
     executor.js      applyIntent(intent) -> mutates Game; the ONLY sim mutation entry
     hash.js          Deterministic state digest
-  ...existing files
+  game/              The simulation, split out of the former js/game.js (see
+                     docs/game-split-plan.md). One `Game` singleton, extended per domain
+                     with Object.assign; loaded in this order:
+    shared.js        Top-level globals (PLAYER_COLORS, formatCount, mulberry32, detQuantize, ...)
+    core.js          `const Game = {...}`: all mutable state, init, spawn phase, setOwner, tick order
+    structures.js    UNITS table, build/upgrade/construction
+    economy.js       Population model, gold
+    diplomacy.js     Alliances, traitors, relations
+    attacks.js       Attack lifecycle and the conquest frontier
+    combat.js        Attack math, forts, terrain, fallout
+    annex.js         Region annexation
+    seapath.js       A* water pathing
+    naval.js         Boats, coast lookup, invasions
+    rail.js          Rail network and trains
+    trade.js         Trade ships
+    warships.js      Warships and shells
+    nukes.js         Nukes and detonation
+    sam.js           SAM launchers and interceptors
+  ...existing files (ai.js, map.js, render.js, ui.js, ...)
+tools/
+  sim-harness.js     Headless golden-trace determinism suite (node tools/sim-harness.js compare)
+  verify-split.js    One-off parity check for the js/game/ split; it needs the frozen pre-split
+                     js/game.js at tools/baseline/game.orig.js, which was deleted after Step 6
+  golden/            Recorded goldens for the harness
 server/
   index.js           HTTP static + WS upgrade, single process
   gamemanager.js     gameID -> GameServer

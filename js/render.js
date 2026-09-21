@@ -123,7 +123,7 @@ const Render = {
     // sweep only runs once the cheap single walk has confirmed the cursor is
     // actually on a pocket, so ordinary hovering never pays for it.
     // enclosedRegion no longer takes a single "wall owner" — a pocket's wall
-    // can now be a mix of players (see game.js's 2026-09-09 fix) — so this
+    // can now be a mix of players (see game/annex.js's 2026-09-09 fix) — so this
     // single-shot check supplies its own scratch seen/run and additionally
     // confirms Game.me is actually one of the pocket's wall contributors
     // (wallCounts.has), matching what a tap here would actually be able to

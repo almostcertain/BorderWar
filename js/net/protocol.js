@@ -69,7 +69,7 @@ const Protocol = {
   MAX_STRING: 256,              // usernames, ids, error text
 
   // Structure types Game.build/buildWarship/launchNuke accept, in the order
-  // they appear in game.js's build menu. `build_unit` is one intent covering
+  // they appear in game/structures.js's build menu. `build_unit` is one intent covering
   // all three call sites (§4 lists ui.js:403/426/492 against it) because on
   // the wire they are the same act: "spend gold to put <unit> at <tile>".
   // Which Game.* method that becomes is the Executor's business (MP-1.2).
@@ -530,7 +530,7 @@ const Protocol = {
   //   1. Legality checks need Game, and this file must stay pure so the server
   //      can load it (see the header). One `Game.` reference here and the
   //      server crashes on require.
-  //   2. Those rules already exist, once, in game.js. A second copy here would
+  //   2. Those rules already exist, once, in js/game/. A second copy here would
   //      drift from the first, and the version that disagreed with the sim
   //      would be the one rejecting the player's legitimate click.
   //
