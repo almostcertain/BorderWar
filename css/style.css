@@ -796,6 +796,11 @@ html, body {
   z-index: 10;
 }
 
+#overlay {
+  background: #39FF14;
+  color: #FF13F0;
+}
+
 .hidden { display: none !important; }
 
 .panel {
