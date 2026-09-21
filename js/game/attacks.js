@@ -406,7 +406,11 @@ Object.assign(Game, {
 
       this.setOwner(tile, a.attacker);
 
-      if (defender && defender.tiles.size > 0 && defender.tiles.size <= this.DEAD_DEFENDER_TILES) {
+      // No lower bound on purpose: the tile just taken was the defender's, so
+      // a size of 0 means it was their last. Skipping that case stranded the
+      // treasury of any nation that had regrown a lone tile after an earlier
+      // kill (boats or attacks still in flight), and the spoils vanished.
+      if (defender && defender.tiles.size <= this.DEAD_DEFENDER_TILES) {
         this.handleDeadDefender(a.target, a.attacker);
         break;
       }
