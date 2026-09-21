@@ -1246,7 +1246,8 @@ const UI = {
     const mapSize = document.getElementById('hostMapSize').value;
     const bots = Math.max(0, Math.min(31, parseInt(document.getElementById('hostBotCount').value, 10) || 0));
     const tribes = Math.max(0, Math.min(80, parseInt(document.getElementById('hostTribeCount').value, 10) || 0));
-    return { mapSize: mapSize, bots: bots, tribes: tribes };
+    const difficulty = document.getElementById('hostDifficulty').value;
+    return { mapSize: mapSize, bots: bots, tribes: tribes, difficulty: difficulty };
   },
 
   getJoinInputs() {

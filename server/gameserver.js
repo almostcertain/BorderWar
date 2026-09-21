@@ -583,7 +583,10 @@ class GameServer {
       config: {
         mapSize: config.mapSize || 'medium',
         bots: Number.isInteger(config.bots) ? config.bots : 0,
-        tribes: Number.isInteger(config.tribes) ? config.tribes : 0
+        tribes: Number.isInteger(config.tribes) ? config.tribes : 0,
+        // Unknown values fall back to Medium in Game.init as well; whitelisted
+        // here so the broadcast gameStartInfo only ever carries a real tier.
+        difficulty: ['easy', 'medium', 'hard'].includes(config.difficulty) ? config.difficulty : 'medium'
       },
       players: players
     };
