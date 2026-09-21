@@ -6,7 +6,7 @@ html, body {
   overflow: hidden;
   background: #0b1220;
   color: #e6edf7;
-  font-family: "Comic Sans MS", "Comic Sans", cursive;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-user-select: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -794,11 +794,6 @@ html, body {
   justify-content: center;
   padding: 24px;
   z-index: 10;
-}
-
-#overlay {
-  background: #39FF14;
-  color: #FF13F0;
 }
 
 .hidden { display: none !important; }
