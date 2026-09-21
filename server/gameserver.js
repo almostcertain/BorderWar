@@ -83,6 +83,10 @@ class GameServer {
     // the turn interval in start()/end() — see _sweepLiveness.
     this._livenessIntervalID = null;
 
+    // When an ACTIVE match last had no connected player, or null while anyone
+    // is connected. Drives the abandoned-match cleanup in _sweepLiveness.
+    this._emptySince = null;
+
     // MP-3.5: clientID -> winnerId, one vote per client. See recordWinnerVote.
     this.winnerVotes = new Map();
 
@@ -273,11 +277,26 @@ class GameServer {
   // iteration without touching shipped source — see that property's comment).
   _sweepLiveness() {
     const now = Date.now();
+    let anyActive = false;
     for (const client of this.clients.values()) {
       if (!client.active) continue;
       if (now - client.lastPing > GameServer.disconnectedTimeout) {
         this._disconnectClient(client);
+      } else {
+        anyActive = true;
       }
+    }
+
+    // A match nobody is connected to would otherwise tick empty turns and sit
+    // in memory until the server restarts. Give people a window to reconnect
+    // (a refresh or a network blip), then end it; GameManager.reap() removes
+    // FINISHED games.
+    if (anyActive) {
+      this._emptySince = null;
+    } else if (this._emptySince === null) {
+      this._emptySince = now;
+    } else if (now - this._emptySince > GameServer.abandonedTimeout) {
+      this.end();
     }
   }
 
@@ -651,5 +670,10 @@ class GameServer {
 // live off the class at sweep time rather than capturing a value at
 // construction.
 GameServer.disconnectedTimeout = 30000;
+
+// How long an ACTIVE match may have no connected players before the server
+// ends it and lets it be reaped. Static, like disconnectedTimeout, so a test
+// can shorten it.
+GameServer.abandonedTimeout = 2 * 60 * 1000;
 
 module.exports = GameServer;

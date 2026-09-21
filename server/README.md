@@ -264,6 +264,11 @@ to disk, is out of scope here; see §6.1 and Phase 5 of the architecture doc).
 **This is acceptable for playtesting.** If you're hosting a real session,
 disable the machine's sleep timer for the duration.
 
+Abandoned games are cleaned up: an empty lobby is removed at once, and a
+running match with no connected players for 2 minutes
+(`GameServer.abandonedTimeout`) is ended and reaped. A player who reconnects
+inside that window keeps the match alive.
+
 Verified command (checked against this machine's actual `powercfg /change`
 help text, not guessed):
 
