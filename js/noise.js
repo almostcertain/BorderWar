@@ -65,32 +65,70 @@ const Noise = (() => {
     return sum / norm;
   }
 
-  // Ridged multifractal (Musgrave's terrain trick, standard for mountain-
-  // range texture). Plain fbm — what `fractal` above computes — is still a
-  // sum of smooth bumps at every octave, so any percentile slice through it
-  // reads as a handful of round blobs, just smaller ones the more octaves
-  // you add; that's what happened tuning the mountain/highland tiers off
-  // `fractal` directly. Folding each octave via `1 - abs(2v-1)` turns its
-  // smooth bumps into creases (zero at each ridge, not at each valley), and
-  // weighting every octave's amplitude by the previous octave's ridge value
-  // makes fine ridges cluster along coarse ones instead of scattering
-  // independently — the cascading, vein-like structure real mountain ranges
-  // (and OpenFront's own hand-authored highland texture) show, in contrast
-  // to fbm's isolated rounded lumps.
-  function ridged(x, y, seed, octaves = 6) {
-    let sum = 0, amp = 0.5, freq = 1, prev = 1, norm = 0;
+  // Same gradient noise as `value`, but also returns its analytic slope, in
+  // -1..1 (not remapped to 0..1). Written into a shared scratch array rather
+  // than allocated: this runs several times per tile across millions of tiles.
+  // Slope is what lets `eroded` below tell steep ground from gentle ground
+  // without sampling neighbours.
+  const nd = [0, 0, 0];
+  function valueWithSlope(x, y, seed) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const u = fade(xf), v = fade(yf);
+    // d/dt of the quintic fade: 30 t^2 (t-1)^2
+    const du = 30 * xf * xf * (xf - 1) * (xf - 1);
+    const dv = 30 * yf * yf * (yf - 1) * (yf - 1);
+
+    const ga = GRADIENTS[(hash2(xi, yi, seed) * 8) | 0];
+    const gb = GRADIENTS[(hash2(xi + 1, yi, seed) * 8) | 0];
+    const gc = GRADIENTS[(hash2(xi, yi + 1, seed) * 8) | 0];
+    const gd = GRADIENTS[(hash2(xi + 1, yi + 1, seed) * 8) | 0];
+    const a = ga[0] * xf + ga[1] * yf;
+    const b = gb[0] * (xf - 1) + gb[1] * yf;
+    const c = gc[0] * xf + gc[1] * (yf - 1);
+    const d = gd[0] * (xf - 1) + gd[1] * (yf - 1);
+
+    const top = a + (b - a) * u;
+    const bottom = c + (d - c) * u;
+    nd[0] = (top + (bottom - top) * v) * 1.4;
+    nd[1] = ((ga[0] * (1 - u) + gb[0] * u) * (1 - v) + (gc[0] * (1 - u) + gd[0] * u) * v
+      + du * ((b - a) * (1 - v) + (d - c) * v)) * 1.4;
+    nd[2] = ((ga[1] * (1 - u) + gb[1] * u) * (1 - v) + (gc[1] * (1 - u) + gd[1] * u) * v
+      + dv * (bottom - top)) * 1.4;
+    return nd;
+  }
+
+  // Each octave gets its own fixed rotation so no octave lines up with the
+  // lattice (8-direction gradients otherwise leave faint axis-aligned creases).
+  // Unit vectors, hand-picked, all exact in + - * / so results are identical
+  // on every client.
+  const OCTAVE_ROT = [[1, 0], [0.8, 0.6], [0.28, 0.96], [-0.6, 0.8], [0.96, 0.28], [0.6, -0.8], [-0.8, 0.6], [0.36, 0.93]];
+
+  // Height field with the character of real terrain (what a topographic map
+  // draws), for slicing into mountain/highland/plains tiers. Plain fbm sums
+  // every octave at full strength, so steep flanks get the same fine wrinkles
+  // as flat ground and the result reads as lumpy noise. Here each octave is
+  // divided by 1 + damp * |slope so far|: steep ground stays smooth, and fine
+  // detail only builds up where the ground is already gentle. That is the
+  // erosion look — smooth-sided ridges and hills with gullies cut into the
+  // gentler ground between them — and it falls out of the noise alone, with
+  // no erosion simulation. Contours of it are smooth, never cross, and hills
+  // come out as elongated concentric ovals, as on a real map.
+  function eroded(x, y, seed, octaves = 5, damp = 0.5, gain = 0.45) {
+    let sum = 0, amp = 1, norm = 0, freq = 1, sx = 0, sy = 0;
     for (let i = 0; i < octaves; i++) {
-      let n = (value(x * freq, y * freq, seed + i * 17) - 0.5) * 2; // -1..1
-      n = 1 - Math.abs(n);
-      n *= n;
-      sum += n * amp * prev;
+      const r = OCTAVE_ROT[i % OCTAVE_ROT.length];
+      const n = valueWithSlope((x * r[0] - y * r[1]) * freq, (x * r[1] + y * r[0]) * freq, seed + i * 17);
+      // Slope back into the un-rotated frame, per unit of the caller's coordinates.
+      sx += (n[1] * r[0] + n[2] * r[1]) * freq * amp;
+      sy += (-n[1] * r[1] + n[2] * r[0]) * freq * amp;
+      sum += amp * n[0] / (1 + damp * (sx * sx + sy * sy));
       norm += amp;
-      prev = n;
+      amp *= gain;
       freq *= 2;
-      amp *= 0.5;
     }
     return sum / norm;
   }
 
-  return { fractal, ridged };
+  return { fractal, eroded };
 })();
