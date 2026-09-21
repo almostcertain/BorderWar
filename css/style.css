@@ -247,7 +247,8 @@ html, body {
 
 #debugPanel {
   position: fixed;
-  top: calc(env(safe-area-inset-top) + 6px);
+  /* Sits below #pauseBtn, which owns the top-right corner. */
+  top: calc(env(safe-area-inset-top) + 42px);
   right: 8px;
   /* Without a width cap, this row of six buttons is wider than most phones
      and a narrow desktop window — it used to just run off the left edge of
@@ -298,10 +299,8 @@ html, body {
 
 #pauseBtn {
   position: fixed;
-  /* Left edge, mid-height: the top is taken by the leaderboard, spawn banner
-     and debug panel, and the bottom by the HUD, whose height varies. */
-  top: 50%;
-  left: 8px;
+  top: calc(env(safe-area-inset-top) + 6px);
+  right: 8px;
   z-index: 8;
   padding: 6px 12px;
   font-size: 12px;
