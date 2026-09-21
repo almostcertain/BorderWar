@@ -1,9 +1,58 @@
 // Bot behaviour: expansion, and — since alliances exist — diplomacy.
 //
 // OpenFront branches almost every diplomatic decision on a difficulty setting.
-// This game has none yet, so every threshold below is their MEDIUM column,
-// noted at each site so the rest can be filled in when difficulty arrives.
+// The thresholds below are their MEDIUM column; PROFILES carries the few that
+// the Easy and Hard tiers move, and profile() picks the row for the match.
 const AI = {
+  // What a difficulty changes about how a Nation *plays*. The other half — how
+  // many troops it starts with, how high its cap and growth run — is
+  // Game.NATION_DIFFICULTY in game/economy.js. Tribes ignore both.
+  //
+  // MEDIUM MUST STAY THE BASELINE: every value in that row is the constant it
+  // replaced, so a Medium match plays exactly as it did before difficulty
+  // existed (the sim goldens pin this). Tune Easy and Hard around it.
+  //
+  //   thinkMult / navalMult  scale the gap between land / naval decisions —
+  //                          Easy reacts slowly, Hard reacts quickly.
+  //   attackRatio            share of troops a fresh nation-vs-nation strike
+  //                          commits; neutralRatio is the same for free land.
+  //   confusion              1-in-n chance an alliance answer is a coin flip
+  //                          instead of a decision; 0 = never confused.
+  //   betrayHelpless         betray an ally whose army is under 1/n of ours.
+  //   betrayOpportunist      also betray a traitor who can't punish it, or the
+  //                          last neighbour on the map.
+  //   nukes                  whether it builds Silos and fires warheads at all.
+  //   nukeChance / hydrogenChance  1-in-n roll per economy cycle to fire, and
+  //                          to make that warhead a Hydrogen Bomb.
+  PROFILES: {
+    easy: {
+      thinkMult: 1.6, navalMult: 1.6,
+      attackRatio: 0.4, neutralRatio: 0.3,
+      confusion: 10,
+      betrayHelpless: 20, betrayOpportunist: false,
+      nukes: false, nukeChance: 0, hydrogenChance: 4
+    },
+    medium: {
+      thinkMult: 1, navalMult: 1,
+      attackRatio: 0.55, neutralRatio: 0.35,
+      confusion: 20,
+      betrayHelpless: 10, betrayOpportunist: true,
+      nukes: true, nukeChance: 8, hydrogenChance: 4
+    },
+    hard: {
+      thinkMult: 0.7, navalMult: 0.7,
+      attackRatio: 0.65, neutralRatio: 0.45,
+      confusion: 0,
+      betrayHelpless: 5, betrayOpportunist: true,
+      nukes: true, nukeChance: 5, hydrogenChance: 3
+    }
+  },
+
+  profile() {
+    return this.PROFILES[Game.difficulty] || this.PROFILES[Game.DEFAULT_DIFFICULTY];
+  },
+
+
   // OpenFront's Relation enum is a banding of the raw [-100, 100] value:
   // < -50 Hostile, < 0 Distrustful, < 50 Neutral, >= 50 Friendly.
   DISTRUSTFUL: 0,
@@ -58,12 +107,13 @@ const AI = {
   TRIBE_PRIORITY_WINDOW: 240,     // linearly fades from kickoff bonus to the floor over 4 minutes
 
   update() {
+    const prof = this.profile();
     for (const p of Game.players) {
       if (!p.isBot || !p.alive) continue;
 
       p.nextThink -= Game.TICK_DT;
       if (p.nextThink <= 0) {
-        p.nextThink = 2 + Game.rng() * 3;
+        p.nextThink = (2 + Game.rng() * 3) * prof.thinkMult;
         this.diplomacy(p);
         this.economy(p);
         this.reviewAttacks(p);
@@ -74,7 +124,7 @@ const AI = {
       // a cheap map scan, so it doesn't get to think on land's cadence.
       p.nextNavalThink -= Game.TICK_DT;
       if (p.nextNavalThink <= 0) {
-        p.nextNavalThink = 15 + Game.rng() * 10;
+        p.nextNavalThink = (15 + Game.rng() * 10) * prof.navalMult;
         this.navalThink(p);
       }
     }
@@ -125,13 +175,16 @@ const AI = {
     }
   },
 
-  // OpenFront's getAllianceDecision, Medium column throughout. `isResponse` is
-  // true when answering someone else's offer rather than opening one.
+  // OpenFront's getAllianceDecision, Medium column throughout bar the
+  // confusion rate. `isResponse` is true when answering someone else's offer
+  // rather than opening one.
   allianceDecision(p, other, isResponse) {
     if (!other || !other.alive) return false;
 
     // Medium nations are confused 5% of the time, and then simply flip a coin.
-    if (this.chance(20)) return this.chance(2);
+    // Easy ones twice as often; Hard ones never are.
+    const confusion = this.profile().confusion;
+    if (confusion && this.chance(confusion)) return this.chance(2);
 
     // Nearly always refuse a traitor. This is the sharpest edge of the betrayal
     // penalty: for half a minute nobody will deal with you.
@@ -165,9 +218,11 @@ const AI = {
 
   // OpenFront's maybeBetray, Medium column: stab the helpless, stab a traitor
   // who cannot punish you for it, and stab your last neighbour when the map is
-  // otherwise yours.
+  // otherwise yours. Easy keeps only a much blunter form of the first; Hard
+  // stabs the merely weak.
   maybeBetray(p) {
     if (p.allies.size === 0) return;
+    const prof = this.profile();
     const borderCount = [...this.borderTargets(p, true).keys()].filter(id => id >= 0).length;
 
     for (const allyId of [...p.allies]) {
@@ -178,9 +233,9 @@ const AI = {
       // sharper maxTroops-aware version is Hard and Impossible only, and
       // triggers far more often, so using it here would make bots backstab at
       // roughly the rate their hardest difficulty does.
-      const helpless = p.troops >= other.troops * 10;
-      const stabbable = Game.isTraitor(other) && other.troops < p.troops * 1.2;
-      const alone = borderCount === 1 && other.troops * 3 < p.troops;
+      const helpless = p.troops >= other.troops * prof.betrayHelpless;
+      const stabbable = prof.betrayOpportunist && Game.isTraitor(other) && other.troops < p.troops * 1.2;
+      const alone = prof.betrayOpportunist && borderCount === 1 && other.troops * 3 < p.troops;
 
       if (helpless || stabbable || alone) {
         Game.breakAlliance(p.id, allyId);
@@ -294,9 +349,12 @@ const AI = {
       }
     }
 
-    if (ownSilos < 1) return 'silo';
+    // A tier that never fires has no use for a Silo or a warhead's reserve, but
+    // still wants cover against someone else's.
+    const nukes = this.profile().nukes;
+    if (nukes && ownSilos < 1) return 'silo';
     if (rivalSilos > 0 && ownSams < this.SAM_COVERAGE_TARGET) return 'sam';
-    return 'atombomb';
+    return nukes ? 'atombomb' : null;
   },
 
   savingsReserve(p, goal) {
@@ -340,6 +398,9 @@ const AI = {
       // maxed-out City), and a SAM Launcher's own 1.5M starting price is
       // higher still, neither worth a fresh nation's very first gold.
       if ((type === 'fort' || type === 'silo' || type === 'sam') && Game.unitsOwned(p, 'city') < 1) continue;
+
+      // A Silo is only ever worth its 1M to a nation that will fire from it.
+      if (type === 'silo' && !this.profile().nukes) continue;
 
       // Fort's own cap — see FORT_CAP_BASE. Checked before the price test so
       // a built-out nation's Fort gold is left in the treasury for the
@@ -430,9 +491,10 @@ const AI = {
   // outweighing the bot itself; this chance then further rations it so a
   // flush bot doesn't reach for the biggest bomb every single time the
   // worthy-target condition holds.
-  HYDROGEN_NUKE_CHANCE: 4,
-
+  // (1-in-n; the per-difficulty value lives in PROFILES.hydrogenChance.)
   maybeNuke(p) {
+    const prof = this.profile();
+    if (!prof.nukeChance) return;
     if (p.gold < Game.unitCost(p, 'atombomb')) return;
     // hasReadySilo() rather than the cheaper unitsOwned(p, 'silo') check this
     // replaced, for two reasons. It tests SILO_COOLDOWN as well as ownership,
@@ -445,7 +507,7 @@ const AI = {
     // silently disarm a bot's Silo for the rest of the match if this gate
     // depended on that counter.
     if (!this.hasReadySilo(p)) return;
-    if (!this.chance(8)) return;
+    if (!this.chance(prof.nukeChance)) return;
 
     let best = -1, bestContact = 0;
     for (const [targetId, contact] of this.borderTargets(p)) {
@@ -461,7 +523,7 @@ const AI = {
     if (targetTile < 0) return;
 
     const hydrogenWorthy = target.tiles.size > p.tiles.size || target.troops > p.troops;
-    const type = hydrogenWorthy && p.gold >= Game.unitCost(p, 'hydrogenbomb') && this.chance(this.HYDROGEN_NUKE_CHANCE)
+    const type = hydrogenWorthy && p.gold >= Game.unitCost(p, 'hydrogenbomb') && this.chance(prof.hydrogenChance)
       ? 'hydrogenbomb' : 'atombomb';
     Game.launchNuke(p.id, type, targetTile);
   },
@@ -885,8 +947,9 @@ const AI = {
 
     if (best === null) return;
     if (this.annexIfEnclosed(p, best)) return;
+    const prof = this.profile();
     const ratio = atWar ? this.TRIBE_SKIRMISH_RATIO
-      : (best === NEUTRAL ? 0.35 : (Game.players[best].isTribe ? this.TRIBE_ATTACK_RATIO : 0.55));
+      : (best === NEUTRAL ? prof.neutralRatio : (Game.players[best].isTribe ? this.TRIBE_ATTACK_RATIO : prof.attackRatio));
     Game.launchAttack(p.id, best, Math.floor(p.troops * ratio));
   },
 

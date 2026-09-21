@@ -10,6 +10,12 @@ const entities = ['tradeShips', 'samMissiles', 'shells', 'trains'];
 const scenarios = ['small', 'medium', 'large'].flatMap(size => [12345, 67890].map(seed => ({ name: `${size}-${seed}`, size, seed, bots: 8, tribes: 12, ticks: 6000 })));
 scenarios.push({ name: 'xlarge-12345', size: 'xlarge', seed: 12345, bots: 8, tribes: 12, ticks: 2000 });
 scenarios.push({ name: 'late-medium-24680', size: 'medium', seed: 24680, bots: 8, tribes: 12, ticks: 6000, gold: 100000000 });
+// Nation difficulty tiers (Medium is every scenario above). The late-game pair
+// carries the same bot treasury as late-medium so nuke behaviour shows up.
+scenarios.push({ name: 'medium-easy-67890', size: 'medium', seed: 67890, bots: 8, tribes: 12, ticks: 6000, difficulty: 'easy' });
+scenarios.push({ name: 'medium-hard-12345', size: 'medium', seed: 12345, bots: 8, tribes: 12, ticks: 6000, difficulty: 'hard' });
+scenarios.push({ name: 'late-medium-easy-24680', size: 'medium', seed: 24680, bots: 8, tribes: 12, ticks: 6000, gold: 100000000, difficulty: 'easy' });
+scenarios.push({ name: 'late-medium-hard-24680', size: 'medium', seed: 24680, bots: 8, tribes: 12, ticks: 6000, gold: 100000000, difficulty: 'hard' });
 function digest(Game, GameMap) {
   let fnv = 2166136261;
   for (const owner of GameMap.owner) {

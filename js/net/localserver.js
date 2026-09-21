@@ -162,7 +162,7 @@ const LocalServer = {
   // Begin a match. `opts` carries what the real server would have decided in
   // the lobby and put in gameStartInfo (§4):
   //
-  //   { gameID, seed, mapSize, bots, tribes, username }
+  //   { gameID, seed, mapSize, bots, tribes, difficulty, username }
   //
   // Emits `start` immediately, then a `turn` every TURN_INTERVAL_MS.
   //
@@ -190,7 +190,10 @@ const LocalServer = {
       config: {
         mapSize: opts.mapSize || 'medium',
         bots: opts.bots | 0,
-        tribes: opts.tribes | 0
+        tribes: opts.tribes | 0,
+        // Singleplayer only for now: the host lobby sends none, and Game.init
+        // reads a missing one as Medium.
+        difficulty: opts.difficulty
       },
       players: [{
         clientID: this.clientID,

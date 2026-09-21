@@ -36,26 +36,32 @@ Object.assign(Game, {
   // upgraded to level 3 is worth exactly what three level-1 cities would be.
   CITY_POP_INCREASE: 250000,
 
-  // OpenFront's startManpower(): 25,000 for a human, 10,000 for a Bot, and
-  // 12,500 / 18,750 / 25,000 / 31,250 for a Nation by difficulty. The rival
-  // nations here play like Nations rather than the simple bots, so they take
-  // the Medium figure. Both convert through POP_SCALE, which leaves the opening
-  // fill ratio identical to OpenFront's — a human still starts at 19.6% of cap.
+  // Nation difficulty. OpenFront scales a Nation's opening troops, cap and
+  // growth by the match's difficulty (startManpower / maxTroops /
+  // troopIncreaseRate in Config.ts): 12,500 / 18,750 / 25,000 troops, 0.5 /
+  // 0.75 / 1.0x cap and 0.9 / 0.95 / 1.0x growth for Easy / Medium / Hard.
+  // Hard is a Nation on a human's footing. Only the three tiers the menu
+  // offers are ported; their fourth (Impossible) isn't.
+  //
+  // Medium is the balance this game shipped with, so it is also the fallback
+  // for a missing or unrecognised setting (a multiplayer lobby has no picker
+  // yet). All three convert through POP_SCALE, which leaves the opening fill
+  // ratio identical to OpenFront's — a human still starts at 19.6% of cap.
+  // A human (isBot false) gets none of it, exactly as their Human branch
+  // applies no multiplier at all. The behavioural half of each tier is
+  // AI.PROFILES.
+  DIFFICULTIES: ['easy', 'medium', 'hard'],
+  DEFAULT_DIFFICULTY: 'medium',
+  NATION_DIFFICULTY: {
+    easy:   { startTroops: 12500, capMult: 0.5,  growthMult: 0.9 },
+    medium: { startTroops: 18750, capMult: 0.75, growthMult: 0.95 },
+    hard:   { startTroops: 25000, capMult: 1,    growthMult: 1 }
+  },
   START_TROOPS_HUMAN: 25000,
-  START_TROOPS_BOT: 18750,
   // OpenFront's real Bot startManpower — this is what Tribes take, not the
-  // Nation-Medium figure above (openfront.wiki/Bots, "Bots start with
-  // 10,000 troops" vs. 25,000 for a human).
+  // Nation figure above (openfront.wiki/Bots, "Bots start with
+  // 10,000 troops" vs. 25,000 for a human). Tribes ignore difficulty.
   START_TROOPS_TRIBE: 10000,
-
-  // OpenFront's maxTroops()/troopIncreaseRate() scale a Nation's cap and
-  // growth by its difficulty, on top of the raw tile/city formula — Medium is
-  // 0.75x cap and 0.95x growth, verified against their config source. Applied
-  // wherever the rival nations here are trading as Nation-Medium, matching
-  // START_TROOPS_BOT above. Human (isBot false) gets neither, exactly as their
-  // Human branch applies no multiplier at all.
-  NATION_TROOP_CAP_MULT: 0.75,
-  NATION_GROWTH_MULT: 0.95,
 
   // OpenFront's Bot-specific caps, from Config.ts (the wiki's "half the
   // population, 30% slower growth" is out of date): maxTroops / 3 and
@@ -73,9 +79,16 @@ Object.assign(Game, {
       + (cityLevels || 0) * this.CITY_POP_INCREASE;
   },
 
+  // The active match's Nation tier (see NATION_DIFFICULTY). init() sets
+  // `difficulty` from the match config; the fallback covers a Game that has not
+  // been initialised yet.
+  nationDifficulty() {
+    return this.NATION_DIFFICULTY[this.difficulty] || this.NATION_DIFFICULTY[this.DEFAULT_DIFFICULTY];
+  },
+
   maxTroops(p) {
     const raw = this.maxTroopsRaw(p.tiles.size, this.unitsOwned(p, 'city'));
-    const mult = p.isTribe ? this.TRIBE_TROOP_CAP_MULT : (p.isBot ? this.NATION_TROOP_CAP_MULT : 1);
+    const mult = p.isTribe ? this.TRIBE_TROOP_CAP_MULT : (p.isBot ? this.nationDifficulty().capMult : 1);
     return raw * mult * this.POP_SCALE;
   },
 
@@ -107,7 +120,7 @@ Object.assign(Game, {
     // id -1 owns no attacks, so the probe's growth reads off its troops alone
     // rather than picking up this player's marching forces. isBot has to carry
     // over too — maxTroops(probe) recomputes the cap from scratch, and if the
-    // Nation-Medium multiplier below dropped out here the probe would scan a
+    // Nation difficulty multiplier dropped out here the probe would scan a
     // different (larger) cap than the player it's standing in for.
     const probe = { tiles: p.tiles, troops: 0, id: -1, units: p.units, isBot: p.isBot, isTribe: p.isTribe };
     let bestR = 0.42, best = -1;
@@ -133,12 +146,12 @@ Object.assign(Game, {
     if (pop >= max) return 0;
     const rawPop = pop / this.POP_SCALE;
     let perTick = (10 + this.det.pow(rawPop, 0.73) / 4) * (1 - pop / max);
-    // OpenFront's troopIncreaseRate applies the same Medium-difficulty scalar
-    // to growth that maxTroops applies to the cap — a second, independent cut
+    // OpenFront's troopIncreaseRate applies the same difficulty scalar to
+    // growth that maxTroops applies to the cap — a second, independent cut
     // on top of the smaller max, not implied by it. Tribes get their own
     // (larger) cut instead — see TRIBE_GROWTH_MULT.
     if (p.isTribe) perTick *= this.TRIBE_GROWTH_MULT;
-    else if (p.isBot) perTick *= this.NATION_GROWTH_MULT;
+    else if (p.isBot) perTick *= this.nationDifficulty().growthMult;
     return perTick * this.POP_SCALE * this.TICKS_PER_SEC * this.GROWTH_TIME_SCALE;
   },
 

@@ -4,9 +4,9 @@
     "js/map.js": "4f856309068a2abcc7356374ae3f2784354f19d91fca86c11bae33e36a69313a",
     "js/fx.js": "3deb08ca132e6773feb5be6d20089f236352130f08ed2ac75b038232dc99935b",
     "js/game/shared.js": "8735ad40029c02040e8c69380540fba2534ffa80848fc4bcd1aef5db234e7e92",
-    "js/game/core.js": "f50080b1145238da0618b1fd578a0af570331985c2207baea36d8b3e39976e6f",
+    "js/game/core.js": "94ef1b888e6afab5af9868f4207c5e7f8a0192ce51b371f96b82363efd7aab12",
     "js/game/structures.js": "88bc366ad360a83a8efd91fcc62eca1574949c8caea8819662f1d1213d97c588",
-    "js/game/economy.js": "80382cfb6105cc8fde30282ea8721e3f71c7c41f39a381500240c501c6f2bba9",
+    "js/game/economy.js": "58814fc41c32a268c7bb049ba41f569310b20091f8a0bfe952833f683d818c60",
     "js/game/diplomacy.js": "357fa693674ed94c73998f455f73e3afca0d610f82a5037df768150580fc814d",
     "js/game/attacks.js": "8ebd5a1c021ced626b9d53a0b800fe4a1edf404d78d25dc860e58751c487e16b",
     "js/game/combat.js": "641cc7e8108f2c93d609b59179a71b85aec7123228e461369470f69e6c0fef9e",
@@ -20,11 +20,11 @@
     "js/game/sam.js": "2c3d56767ecd4f15581e9b59a7b03d69522ae403a8b0ec2e0a3ceae2f2adf565",
     "js/net/protocol.js": "f8cbdf7c180d1f7916764272267c4e7e73e8fc240dba413fbd2ac3adb01b497b",
     "js/net/executor.js": "af36c6c393cc277c209633ba5002880493e5793e3aaa782bcd5434f7ecf64bd9",
-    "js/net/hash.js": "1b5e81fc440bb437e4e0ee76005e5532393942668d0f0d0cd158d669724a0d90",
+    "js/net/hash.js": "4c765f63355a3b48a6a77277164529ec5f0e56aa910a8fe45ddb901c736971c8",
     "js/net/runner.js": "2a6e4f6edf6ac090a1b5ac3c8366b020b8162146b0a911bb5925d793208a7e08",
-    "js/net/localserver.js": "d8b76ad6952e7b49b3ef202d7473be08ecd6c850738698ca1b439e8d3e6e0f07",
-    "js/net/transport.js": "79b60591f9c05e42642f028db03382be5d8c951c55e8f5a7bf4626a483095d94",
-    "js/ai.js": "758409905179167fa369d1e6c2346a8ad58d40e5049ade9e4c134634d9117719"
+    "js/net/localserver.js": "3bd312f14f200fd4171e30780f5333753e53c5f48264a6df6d427f8cf7866d23",
+    "js/net/transport.js": "03ebfb08414242255f26bd567a2f690fc3cd9fed78d5198a323981d7c594d43a",
+    "js/ai.js": "a6eac8f7dea4a93a52ea0fe6b31d2ee0b9736f06a08289b2906b65cf7d233e80"
   },
   "scenario": {
     "name": "xlarge-12345",
@@ -198,7 +198,7 @@
   ],
   "digest": {
     "ownerFNV": 2092050478,
-    "stateSHA256": "7bd4681e5ee1fa5b3fbd753cd9a8f09c4e7fb66a43c1b2718ab1e0709cb952be"
+    "stateSHA256": "6c1a0b49280e95c70c816795bd5e5b75890b90338ebff402bf173b99cd58d961"
   },
   "simulationTicks": 1900,
   "coverage": {
