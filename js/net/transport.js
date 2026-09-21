@@ -143,6 +143,19 @@ const Transport = {
   // that has not fired yet (the player bails out to the menu mid-backoff).
   _reconnectTimerID: null,
 
+  // Optional listener for link state, so the lobby screen can say "connecting"
+  // or "couldn't reach the server" instead of sitting silently empty. Called
+  // with 'open' when a socket opens and 'lost' when one dies without a clean
+  // close (which includes a server that was never reachable). A deliberate
+  // disconnect() emits nothing. Purely informational — main.js decides what
+  // to do about it.
+  onStatus: null,
+
+  _emitStatus(status) {
+    if (typeof this.onStatus !== 'function') return;
+    try { this.onStatus(status); } catch (e) { console.error('Transport.onStatus threw', e); }
+  },
+
   // --- Connecting ------------------------------------------------------------
 
   // Attach to a server and start a match.
@@ -471,9 +484,11 @@ const Transport = {
       }, 5000);
 
       if (typeof config.onOpenOnce === 'function') config.onOpenOnce();
+      this._emitStatus('open');
     };
 
     ws.onmessage = (event) => {
+      if (this.ws !== ws) return; // a discarded socket's late message
       let msg;
       try {
         msg = JSON.parse(event.data);
@@ -499,6 +514,10 @@ const Transport = {
     };
 
     ws.onclose = (event) => {
+      // disconnect() nulls this.ws before its socket's close event fires. Without
+      // this guard that late event would flip `connected` off (and stop the ping)
+      // on whatever connection replaced it — e.g. leaving a lobby and hosting again.
+      if (this.ws !== ws) return;
       this.connected = false;
       if (this._pingIntervalID !== null) {
         clearInterval(this._pingIntervalID);
@@ -515,6 +534,7 @@ const Transport = {
       // _scheduleReconnect exists to recover from.
       if (event && event.code === 1000) return;
 
+      this._emitStatus('lost');
       this._scheduleReconnect();
     };
 

@@ -929,6 +929,51 @@ html, body {
   opacity: 0.6;
 }
 
+#lobbyCode { cursor: pointer; }
+
+.lobbyStatus {
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  text-align: left;
+}
+
+.lobbyStatus.ok::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #4cd07d;
+}
+
+.lobbyRoster li.isYou::after {
+  content: " (you)";
+  opacity: 0.5;
+  font-size: 12px;
+}
+
+.lobbyRoster li.isHost.isYou::after {
+  content: " (host, you)";
+}
+
+.lobbyRoster li.justJoined {
+  animation: lobbyJoinFlash 1.6s ease-out;
+}
+
+@keyframes lobbyJoinFlash {
+  from { background: rgba(76, 208, 125, 0.55); }
+  to { background: rgba(255, 255, 255, 0.05); }
+}
+
+.panel button.lobbyLeave {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  opacity: 0.75;
+}
+
 #lobbyError {
   color: #ff6b6b;
   font-size: 13px;

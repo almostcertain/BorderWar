@@ -83,11 +83,50 @@
     return s;
   }
 
+  // True from the moment a lobby connection is issued until the match starts
+  // (or the player leaves / the link dies). Scopes Transport's link-status
+  // callback below to the lobby — once a match is running, reconnect is
+  // Transport's own business and the lobby screen is long gone.
+  let inLobby = false;
+  let lobbyLinkOpened = false; // did this lobby's socket ever open?
+
+  Transport.onStatus = function(status) {
+    if (!inLobby) return;
+    if (status === 'open') {
+      lobbyLinkOpened = true;
+      // The roster arrives with the server's first lobby_info, right after this.
+      UI.setLobbyStatus(myRole, 'Connected — joining lobby…', true);
+    } else if (status === 'lost') {
+      // A lobby has nothing to resume (the server refuses a rejoin before a
+      // match starts), so stop Transport's retries and put the forms back.
+      // A server `error` already on screen (e.g. game already started) is
+      // more specific than this, so it is left alone.
+      const wasOpen = lobbyLinkOpened;
+      leaveLobby();
+      if (!document.getElementById('lobbyError').textContent) {
+        UI.setLobbyError(wasOpen
+          ? 'Lost connection to the server.'
+          : "Couldn't reach the multiplayer server. Is it running? (node server/index.js)");
+      }
+    }
+  };
+
+  function leaveLobby() {
+    inLobby = false;
+    lobbyLinkOpened = false;
+    myRole = 'sp';
+    iAmHost = false;
+    Transport.disconnect();
+    UI.hideLobby();
+  }
+
   function hostLobby() {
     const gameID = randomGameID();
     const username = UI.getHostUsername() || 'Host';
     myRole = 'host';
     iAmHost = false; // confirmed once this connection's own lobby_info arrives
+    inLobby = true;
+    lobbyLinkOpened = false;
 
     Transport.disconnect();
     Runner.reset();
@@ -105,6 +144,8 @@
     if (!info.code) { UI.setLobbyError('Enter a join code.'); return; }
     myRole = 'join';
     iAmHost = false;
+    inLobby = true;
+    lobbyLinkOpened = false;
 
     Transport.disconnect();
     Runner.reset();
@@ -129,6 +170,8 @@
   document.getElementById('hostCreateBtn').addEventListener('click', hostLobby);
   document.getElementById('hostStartBtn').addEventListener('click', startHostedGame);
   document.getElementById('joinBtn').addEventListener('click', joinLobby);
+  document.getElementById('hostLeaveBtn').addEventListener('click', leaveLobby);
+  document.getElementById('joinLeaveBtn').addEventListener('click', leaveLobby);
 
   // The link is up. Nothing has arrived on it yet — `start` is the next thing
   // to be delivered — so this is where the things that must be empty *before*
@@ -153,7 +196,7 @@
       // message is one fewer place for the two to ever disagree.
       const lobby = msg.lobby || {};
       iAmHost = !!lobby.creatorClientId && lobby.creatorClientId === msg.myClientID;
-      UI.updateLobbyFromInfo(lobby, myRole, iAmHost);
+      UI.updateLobbyFromInfo(lobby, myRole, iAmHost, msg.myClientID);
       return;
     }
 
@@ -182,6 +225,8 @@
         if (Array.isArray(msg.turns)) for (const t of msg.turns) Runner.addTurn(t);
         return;
       }
+
+      inLobby = false; // the match is starting; the lobby screen is done
 
       // The match's configuration comes back from the server rather than being
       // read out of the DOM controls here. In singleplayer LocalServer merely
@@ -253,6 +298,8 @@
     // A new match is a new connection. Tearing the old one down first stops a
     // previous match's LocalServer pump from outliving it and emitting turns
     // into a game that has been re-initialised underneath it.
+    inLobby = false;
+    myRole = 'sp';
     Transport.disconnect();
     Runner.reset();
 
@@ -321,6 +368,10 @@
   document.getElementById('restartBtn').addEventListener('click', () => {
     document.getElementById('endOverlay').classList.add('hidden');
     document.getElementById('overlay').classList.remove('hidden');
+    // The lobby that fed the finished match is gone; don't show its stale code.
+    inLobby = false;
+    myRole = 'sp';
+    UI.hideLobby();
     // The finished match's player still exists until Game.init() runs again,
     // which would otherwise leave the debug panel floating over this menu.
     document.getElementById('debugPanel').classList.add('hidden');

@@ -157,11 +157,13 @@
       <button id="hostCreateBtn">Create Lobby</button>
 
       <div id="hostLobby" class="hidden">
-        <div class="lobbyLabel">Join code</div>
-        <div id="lobbyCode"></div>
-        <div class="lobbyLabel">Players</div>
+        <div id="hostStatus" class="lobbyStatus"></div>
+        <div class="lobbyLabel">Join code (click to copy)</div>
+        <div id="lobbyCode" title="Copy join code"></div>
+        <div class="lobbyLabel">Players <span id="hostPlayerCount"></span></div>
         <ul id="lobbyRoster" class="lobbyRoster"></ul>
         <button id="hostStartBtn" class="hidden">Start Game</button>
+        <button id="hostLeaveBtn" class="lobbyLeave">Leave Lobby</button>
       </div>
     </div>
 
@@ -171,9 +173,11 @@
       <button id="joinBtn">Join Lobby</button>
 
       <div id="joinLobby" class="hidden">
-        <div class="lobbyLabel">Players</div>
+        <div id="joinStatus" class="lobbyStatus"></div>
+        <div class="lobbyLabel">Players <span id="joinPlayerCount"></span></div>
         <ul id="joinRoster" class="lobbyRoster"></ul>
         <div id="joinWaiting">Waiting for the host to start…</div>
+        <button id="joinLeaveBtn" class="lobbyLeave">Leave Lobby</button>
       </div>
     </div>
 

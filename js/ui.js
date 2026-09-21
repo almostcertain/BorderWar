@@ -1172,6 +1172,8 @@ const UI = {
       });
     });
 
+    document.getElementById('lobbyCode').addEventListener('click', () => this.copyLobbyCode());
+
     // Nicety only (task spec: "not a requirement") — prefill whichever
     // username field exists from the last time this browser hosted/joined.
     let savedUsername = '';
@@ -1215,16 +1217,52 @@ const UI = {
   // both mean this is safe to show before the server has said anything).
   showHostLobby(gameID) {
     this.setLobbyError('');
+    this._lobbyKnownIDs = null;
     document.getElementById('lobbyCode').textContent = gameID;
     document.getElementById('hostLobby').classList.remove('hidden');
+    document.getElementById('hostCreateBtn').classList.add('hidden');
     document.getElementById('hostStartBtn').classList.add('hidden');
     document.getElementById('lobbyRoster').innerHTML = '';
+    document.getElementById('hostPlayerCount').textContent = '';
+    this.setLobbyStatus('host', 'Connecting to server…', false);
   },
 
   showJoinLobby() {
     this.setLobbyError('');
+    this._lobbyKnownIDs = null;
     document.getElementById('joinLobby').classList.remove('hidden');
+    document.getElementById('joinBtn').classList.add('hidden');
     document.getElementById('joinRoster').innerHTML = '';
+    document.getElementById('joinPlayerCount').textContent = '';
+    this.setLobbyStatus('join', 'Connecting to server…', false);
+  },
+
+  // Back to the plain create/join forms. Used by Leave, by a lost connection,
+  // and when the match-end screen returns to the menu, so a dead lobby's code
+  // and roster never linger.
+  hideLobby() {
+    this._lobbyKnownIDs = null;
+    document.getElementById('hostLobby').classList.add('hidden');
+    document.getElementById('hostCreateBtn').classList.remove('hidden');
+    document.getElementById('joinLobby').classList.add('hidden');
+    document.getElementById('joinBtn').classList.remove('hidden');
+  },
+
+  // `ok` adds the green "live" dot; the connecting state has none.
+  setLobbyStatus(role, text, ok) {
+    const el = document.getElementById(role === 'host' ? 'hostStatus' : 'joinStatus');
+    el.textContent = text;
+    el.classList.toggle('ok', !!ok);
+  },
+
+  // Nothing is written to the clipboard unless the browser allows it; the code
+  // is on screen either way, so a refusal is not worth an error.
+  copyLobbyCode() {
+    const code = document.getElementById('lobbyCode').textContent;
+    if (!code || !navigator.clipboard) return;
+    navigator.clipboard.writeText(code).then(() => {
+      this.setLobbyStatus('host', 'Join code copied — share it with your friends.', true);
+    }, () => { /* clipboard blocked */ });
   },
 
   // Rendered from a `lobby_info` broadcast (protocol.js's {lobby, myClientID})
@@ -1235,23 +1273,41 @@ const UI = {
   // the match, so on the join panel there is no Start button in the DOM to
   // begin with, and on the host panel it stays hidden for anyone who is not
   // (yet, or ever, on this connection) the recorded creator.
-  updateLobbyFromInfo(lobby, role, isHost) {
+  updateLobbyFromInfo(lobby, role, isHost, myClientID) {
     const players = (lobby && lobby.players) || [];
     const creatorClientId = lobby && lobby.creatorClientId;
-    if (role === 'host') {
-      this.renderLobbyRoster(document.getElementById('lobbyRoster'), players, creatorClientId);
-      document.getElementById('hostStartBtn').classList.toggle('hidden', !isHost);
-    } else if (role === 'join') {
-      this.renderLobbyRoster(document.getElementById('joinRoster'), players, creatorClientId);
-    }
+
+    // Anyone not in the previous roster gets a brief highlight — but not on the
+    // first roster we receive, where everybody is "new" only to us.
+    const known = this._lobbyKnownIDs;
+    const fresh = new Set();
+    if (known) for (const p of players) if (!known.has(p.clientID)) fresh.add(p.clientID);
+    this._lobbyKnownIDs = new Set(players.map((p) => p.clientID));
+
+    const ids = role === 'host'
+      ? { roster: 'lobbyRoster', count: 'hostPlayerCount' }
+      : { roster: 'joinRoster', count: 'joinPlayerCount' };
+    this.renderLobbyRoster(document.getElementById(ids.roster), players, creatorClientId, myClientID, fresh);
+    document.getElementById(ids.count).textContent = '(' + players.length + ')';
+
+    let status;
+    const newcomer = players.find((p) => fresh.has(p.clientID));
+    if (newcomer) status = (newcomer.username || 'A player') + ' joined the lobby.';
+    else if (role === 'host') status = players.length > 1 ? 'Ready when you are.' : 'Lobby open — waiting for players to join.';
+    else status = 'Connected to the lobby.';
+    this.setLobbyStatus(role, status, true);
+
+    if (role === 'host') document.getElementById('hostStartBtn').classList.toggle('hidden', !isHost);
   },
 
-  renderLobbyRoster(ul, players, creatorClientId) {
+  renderLobbyRoster(ul, players, creatorClientId, myClientID, fresh) {
     ul.innerHTML = '';
     for (const p of players) {
       const li = document.createElement('li');
       li.textContent = p.username || ('Player ' + p.clientID);
       if (p.clientID === creatorClientId) li.classList.add('isHost');
+      if (p.clientID === myClientID) li.classList.add('isYou');
+      if (fresh && fresh.has(p.clientID)) li.classList.add('justJoined');
       ul.appendChild(li);
     }
   },
