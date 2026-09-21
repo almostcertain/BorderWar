@@ -433,6 +433,7 @@ const UI = {
       `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
     document.getElementById('hpName').textContent = p.name;
     document.getElementById('hpSub').textContent =
+      (p.isBot ? '🤖 ' : '') +
       (p.isTribe ? 'Tribe' : '') +
       (Game.areAllied(Game.me, p.id) ? ' Allied' : '') +
       (Game.isTraitor(p) ? ' 🗡 Traitor' : '');
@@ -867,7 +868,8 @@ const UI = {
     document.getElementById('leaderboard').innerHTML = ranked.map(p => {
       const pct = (p.tiles.size / GameMap.landTiles * 100).toFixed(1);
       const c = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
-      const mark = (Game.areAllied(Game.me, p.id) ? '🤝' : '') +
+      const mark = (p.isBot ? '🤖' : '') +
+                   (Game.areAllied(Game.me, p.id) ? '🤝' : '') +
                    (Game.isTraitor(p) ? '🗡' : '') +
                    (p.isDisconnected ? '🔌' : '');
       return `<div class="lbRow${p.id === Game.me ? ' me' : ''}">
