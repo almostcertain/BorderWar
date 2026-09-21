@@ -57,12 +57,13 @@ Object.assign(Game, {
   NATION_TROOP_CAP_MULT: 0.75,
   NATION_GROWTH_MULT: 0.95,
 
-  // OpenFront's Bot-specific caps, verbatim from openfront.wiki/Bots: "Bots
-  // are limited to half the normal maximum population" and "Bots grow 30%
-  // slower than human players" (toAdd *= 0.7). Independent of the Nation
-  // multipliers above — Tribes are the "simple Bot" type Nations are not.
-  TRIBE_TROOP_CAP_MULT: 0.5,
-  TRIBE_GROWTH_MULT: 0.7,
+  // OpenFront's Bot-specific caps, from Config.ts (the wiki's "half the
+  // population, 30% slower growth" is out of date): maxTroops / 3 and
+  // toAdd *= 0.5. Independent of the Nation multipliers above — Tribes are the
+  // "simple Bot" type Nations are not. The small cap is what keeps a tribe's
+  // big per-attack commitment (TribeAI) from making it a real power.
+  TRIBE_TROOP_CAP_MULT: 1 / 3,
+  TRIBE_GROWTH_MULT: 0.5,
 
   // `cityLevels` is the sum of levels across the player's built cities (what
   // unitsOwned(p, 'city') already tracks), not a count of cities — see the

@@ -1001,42 +1001,98 @@ const AI = {
   }
 };
 
-// Tribe behaviour, after openfront.wiki/Bots — the "simple Bot" type deliberately
-// kept dumb: no diplomacy(), no economy(), no navalThink(). A tribe just picks a
-// random bordering neighbour (unclaimed land included) and nibbles at it. This is
-// the whole AI; every strength cut that makes that nibbling stay weak forever
-// (half pop cap, 30% slower growth, the human-attacker discount, cheap neutral
-// land) lives in Game, not here — see TRIBE_TROOP_CAP_MULT / TRIBE_GROWTH_MULT /
-// tileCost.
+// Tribe behaviour, ported from OpenFront's TribeExecution + AiAttackBehavior
+// (the wiki's "bots spend 5% of their troops" is the old attackAmount, which the
+// tribe code no longer calls). A tribe is still the "simple Bot" type — no
+// diplomacy(), no economy(), no navalThink() — but it is NOT timid per attack:
+// on a fixed 4-8s beat it commits everything above a reserve, and unclaimed
+// land only has to clear the small `expand` reserve. What keeps tribes weak is
+// their small cap and slow growth (TRIBE_TROOP_CAP_MULT / TRIBE_GROWTH_MULT in
+// economy.js), which bound how much any one of those attacks can carry.
 const TribeAI = {
+  // TribeExecution's constructor rolls, per tribe. Drawn once at init.
+  rollTraits() {
+    const r = (lo, hi) => lo + Math.floor(Game.rng() * (hi - lo + 1));
+    const beatTicks = r(40, 80);
+    return {
+      beat: beatTicks / Game.TICKS_PER_SEC,        // seconds between decisions
+      phase: r(0, beatTicks) / Game.TICKS_PER_SEC, // wait before the first one
+      trigger: r(50, 60) / 100,  // fill ratio needed before picking a fight
+      reserve: r(30, 40) / 100,  // fill ratio kept back when fighting a player
+      expand: r(10, 20) / 100,   // fill ratio kept back when grabbing free land
+      opened: false
+    };
+  },
+
   update() {
     for (const p of Game.players) {
       if (!p.isTribe || !p.alive) continue;
-      p.nextThink -= Game.TICK_DT;
-      if (p.nextThink <= 0) {
-        p.nextThink = 3 + Game.rng() * 4;
+      const tr = p.tribeTraits;
+      if (!tr) continue;
+      // The first beat is the per-tribe phase offset, every later one is the
+      // fixed beat (OpenFront: ticks % attackRate === attackTick).
+      if (p.tribeNextAt === undefined) p.tribeNextAt = tr.phase;
+      p.tribeNextAt -= Game.TICK_DT;
+      if (p.tribeNextAt <= 0) {
+        p.tribeNextAt += tr.beat;
         this.think(p);
       }
     }
   },
 
+  // AiAttackBehavior.sendAttack for a tribe: everything above the reserve goes
+  // out in one push. No cap on concurrent attacks — launchAttack folds any
+  // second push at the same target into the first, as OpenFront's does.
+  sendAttack(p, target) {
+    const tr = p.tribeTraits;
+    const keep = Game.maxTroops(p) * (target === NEUTRAL ? tr.expand : tr.reserve);
+    const troops = Math.floor(p.troops - keep);
+    if (troops < 1) return false;
+    return Game.launchAttack(p.id, target, troops);
+  },
+
   think(p) {
     if (p.tiles.size === 0) return;
-    // One nibble in flight at a time, same restraint AI.think applies to
-    // Nations — a tribe never stacks a second attack on top of the first.
-    if (Game.attacks.some(a => a.attacker === p.id)) return;
-
+    const tr = p.tribeTraits;
     const targets = AI.borderTargets(p);
-    if (targets.size === 0) return;
-    const ids = [...targets.keys()];
-    const target = ids[Math.floor(Game.rng() * ids.length)];
-    if (AI.annexIfEnclosed(p, target)) return;
 
-    // openfront.wiki/Bots: "Bots use 5% of their troops" per attack, a fifth
-    // of the 20% a human or Nation commits — the source of the "extremely
-    // small-scale attacks... a few pixels of land at a time" behaviour.
-    const troops = Math.floor(p.troops / 20);
-    if (troops < 20) return;
-    Game.launchAttack(p.id, target, troops);
+    // First decision ever: grab free land straight away, then wait a beat.
+    if (!tr.opened) {
+      tr.opened = true;
+      if (targets.has(NEUTRAL)) this.sendAttack(p, NEUTRAL);
+      return;
+    }
+
+    // Free land always comes first, and does not wait on the trigger ratio.
+    if (targets.has(NEUTRAL) && this.sendAttack(p, NEUTRAL)) return;
+
+    // attackRandomTarget: save up to the trigger ratio before fighting anyone.
+    if (p.troops / Game.maxTroops(p) < tr.trigger) return;
+
+    // Retaliate against whoever has the biggest push aimed at us.
+    let hitter = -1, biggest = 0;
+    for (const a of Game.attacks) {
+      if (a.target !== p.id || a.retreating || a.troops <= biggest) continue;
+      if (p.allies.has(a.attacker)) continue;
+      biggest = a.troops; hitter = a.attacker;
+    }
+    if (hitter >= 0 && this.attackPlayer(p, hitter)) return;
+
+    // Otherwise a random bordering player, shuffled. Nations and humans are
+    // skipped on a coin flip, so tribes mostly pick on each other.
+    const ids = [...targets.keys()].filter(id => id >= 0);
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Game.rng() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    for (const id of ids) {
+      if (!Game.players[id].isTribe && Game.rng() < 0.5) continue;
+      if (this.attackPlayer(p, id)) return;
+    }
+  },
+
+  attackPlayer(p, target) {
+    if (AI.annexIfEnclosed(p, target)) return true;
+    return this.sendAttack(p, target);
   }
 };
