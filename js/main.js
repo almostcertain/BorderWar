@@ -210,6 +210,14 @@
   });
   document.getElementById('lobbyListRefreshBtn').addEventListener('click', refreshLobbyList);
 
+  // Join is the default tab on a fresh load (index.html's `active` class),
+  // so its polling must start immediately rather than waiting for a tab
+  // click that may never come — otherwise the public/rotating lobby list
+  // would sit empty until the player clicked away and back.
+  if (document.querySelector('.modeTab[data-mode="join"]').classList.contains('active')) {
+    startLobbyListPolling();
+  }
+
   // Host only. The button this calls from is hidden/disabled for anyone
   // whose last lobby_info said otherwise (UI.updateLobbyFromInfo), and the
   // server independently re-checks authorship (GameServer.handleStartGame)

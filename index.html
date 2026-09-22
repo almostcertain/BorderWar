@@ -126,12 +126,12 @@
     <label id="nameRow">Name <input id="playerName" type="text" maxlength="20" placeholder="You" autocomplete="off" spellcheck="false"></label>
 
     <div id="modeTabs">
-      <button type="button" class="modeTab active" data-mode="sp">Singleplayer</button>
+      <button type="button" class="modeTab" data-mode="sp">Singleplayer</button>
       <button type="button" class="modeTab" data-mode="host">Host</button>
-      <button type="button" class="modeTab" data-mode="join">Join</button>
+      <button type="button" class="modeTab active" data-mode="join">Join</button>
     </div>
 
-    <div id="spMode" class="modeBody">
+    <div id="spMode" class="modeBody hidden">
       <label>Map
         <select id="mapSize">
           <option value="small">Small</option>
@@ -184,7 +184,7 @@
       </div>
     </div>
 
-    <div id="joinMode" class="modeBody hidden">
+    <div id="joinMode" class="modeBody">
       <label>Join code <input id="joinCode" type="text" maxlength="12" placeholder="ABC123"></label>
       <button id="joinBtn">Join Lobby</button>
 
