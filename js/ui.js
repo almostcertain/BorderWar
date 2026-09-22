@@ -1378,6 +1378,7 @@ const UI = {
     document.getElementById('lobbyRoster').innerHTML = '';
     document.getElementById('hostPlayerCount').textContent = '';
     this.setLobbyStatus('host', 'Connecting to server…', false);
+    this._hidePreLobbyChrome();
   },
 
   showJoinLobby() {
@@ -1389,6 +1390,19 @@ const UI = {
     document.getElementById('joinRoster').innerHTML = '';
     document.getElementById('joinPlayerCount').textContent = '';
     this.setLobbyStatus('join', 'Connecting to server…', false);
+    this._hidePreLobbyChrome();
+  },
+
+  // Once connected to a lobby (host or join), the other ways to start a
+  // match no longer make sense to show — clicking the hero "Join Open Game"
+  // button or another mode tab wouldn't leave this lobby, just show a
+  // confusingly unconnected panel next to a still-live one. Hidden rather
+  // than disabled so the lobby screen (roster, code/status, leave button)
+  // is the only thing on screen while connected.
+  _hidePreLobbyChrome() {
+    document.getElementById('quickJoin').classList.add('hidden');
+    document.querySelector('.orDivider').classList.add('hidden');
+    document.getElementById('modeTabs').classList.add('hidden');
   },
 
   // Back to the plain create/join forms. Used by Leave, by a lost connection,
@@ -1401,6 +1415,9 @@ const UI = {
     document.getElementById('joinLobby').classList.add('hidden');
     document.getElementById('joinBtn').classList.remove('hidden');
     document.getElementById('publicLobbyBrowser').classList.remove('hidden');
+    document.getElementById('quickJoin').classList.remove('hidden');
+    document.querySelector('.orDivider').classList.remove('hidden');
+    document.getElementById('modeTabs').classList.remove('hidden');
   },
 
   // `ok` adds the green "live" dot; the connecting state has none.
