@@ -21,7 +21,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const os = require('os');
 const GameManager = require('./gamemanager');
+const log = require('./log');
 
 // Not 8123: .claude/launch.json's "borderwar" config already claims 8123 for
 // the plain static dev server used throughout Phase 0/1 browser verification.
@@ -127,16 +129,23 @@ const CONNECTION_WINDOW_MS = 1000;
 const MAX_NEW_CONNECTIONS_PER_WINDOW = 20;
 let _connWindowStart = Date.now();
 let _connCountInWindow = 0;
+// A flood would otherwise print one warning per rejected socket; log the first
+// rejection of each window with a count of how many it turned away.
+let _rejectedInWindow = 0;
 
 wss.on('connection', (ws) => {
   const now = Date.now();
   if (now - _connWindowStart >= CONNECTION_WINDOW_MS) {
     _connWindowStart = now;
     _connCountInWindow = 0;
+    _rejectedInWindow = 0;
   }
   _connCountInWindow++;
   if (_connCountInWindow > MAX_NEW_CONNECTIONS_PER_WINDOW) {
-    console.warn('[borderwar-server] connection rate exceeded, rejecting');
+    if (_rejectedInWindow++ === 0) {
+      log.warn('server', 'connection rate exceeded (>' + MAX_NEW_CONNECTIONS_PER_WINDOW
+        + '/s), rejecting new sockets');
+    }
     try { ws.close(1013, 'server busy'); } catch (e) { /* already closing */ }
     return;
   }
@@ -148,13 +157,26 @@ wss.on('connection', (ws) => {
   // synchronous 'default' game to log against immediately (MP-2.1's
   // PlaceholderGame routed everything to one hardcoded lobby before any
   // message existed — GameServer/GameManager replace that wholesale).
-  console.log('[borderwar-server] connection opened, awaiting join/rejoin');
   gameManager.handleConnection(ws);
 });
 
+// Non-loopback IPv4 addresses, so the startup line can say where LAN players
+// connect rather than only "localhost".
+function lanAddresses() {
+  const out = [];
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs || []) {
+      if (a.family === 'IPv4' && !a.internal) out.push(a.address);
+    }
+  }
+  return out;
+}
+
 server.listen(PORT, () => {
-  console.log('[borderwar-server] listening on http://localhost:' + PORT
-    + ' (WS upgrade at /ws) — ready');
+  log.info('server', 'listening on port ' + PORT + ' (WS at /ws)');
+  log.info('server', 'local:  http://localhost:' + PORT);
+  for (const ip of lanAddresses()) log.info('server', 'LAN:    http://' + ip + ':' + PORT);
+  gameManager.startHeartbeat();
 });
 
 // Graceful shutdown. Verified against ws's own source (lib/websocket-server.js
@@ -167,11 +189,11 @@ server.listen(PORT, () => {
 // to close wss and the underlying HTTP server, whose own close() likewise
 // only waits for in-flight requests/sockets to end rather than forcing them.
 function shutdown(signal) {
-  console.log('[borderwar-server] ' + signal + ' received, shutting down');
+  log.info('server', signal + ' received, shutting down');
   for (const ws of wss.clients) ws.terminate();
   wss.close(() => {
     server.close(() => {
-      console.log('[borderwar-server] shutdown complete');
+      log.info('server', 'shutdown complete');
       process.exit(0);
     });
   });

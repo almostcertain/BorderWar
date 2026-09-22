@@ -11,6 +11,15 @@
 
 const Protocol = require('../js/net/protocol.js');
 const Client = require('./client');
+const log = require('./log');
+
+// A player's name for log lines. Usernames come straight off the wire, so
+// control characters (a newline would forge a log line) are stripped and the
+// length capped.
+function who(client) {
+  const name = String(client.username).replace(/[\x00-\x1f\x7f]/g, '').slice(0, 32);
+  return name + ' (#' + client.clientID + ')';
+}
 
 // MP-3.4: how often the ACTIVE-phase liveness sweep runs (see _sweepLiveness).
 // A few seconds is plenty of granularity for detecting a 30s timeout — this
@@ -33,6 +42,8 @@ const MAX_INTENTS_PER_CLIENT_PER_TURN = 20;
 class GameServer {
   constructor(gameID) {
     this.gameID = gameID;
+    this._tag = 'game ' + gameID; // log prefix
+    this._startedAt = null;       // Date.now() when start() ran, for the end-of-game duration
 
     // Protocol.GAME_PHASE.{LOBBY, ACTIVE, FINISHED} — reused from protocol.js
     // rather than redefined here (§9 MP-2.2: "Protocol.GAME_PHASE already has
@@ -127,6 +138,8 @@ class GameServer {
     opts = opts || {};
 
     if (this.stage !== Protocol.GAME_PHASE.LOBBY) {
+      log.warn(this._tag, 'rejected join from "' + String(opts.username).replace(/[\x00-\x1f\x7f]/g, '').slice(0, 32)
+        + '": game already started');
       Client.closeWithError(client.ws, 'game-already-started',
         'Game "' + this.gameID + '" has already left the lobby; no mid-game joins (MP-2.2 scope — see MP-3.4/4.1 for later join/reconnect work).');
       return null;
@@ -144,6 +157,10 @@ class GameServer {
     // whole rule — no explicit transfer mechanic (see the constructor note).
     if (this.creatorClientId === null) this.creatorClientId = clientID;
 
+    log.info(this._tag, who(client) + ' joined'
+      + (client.spectator ? ' as spectator' : '')
+      + (clientID === this.creatorClientId ? ' (host)' : '')
+      + ' - ' + this.clients.size + ' in lobby');
     this._broadcastLobbyInfo();
     return clientID;
   }
@@ -185,6 +202,7 @@ class GameServer {
   // shape of "best-effort" here — flagged, not silently pretended to work.
   rejoinClient(ws, lastTurn) {
     if (this.stage === Protocol.GAME_PHASE.LOBBY) {
+      log.warn(this._tag, 'rejected rejoin: game has not started');
       Client.closeWithError(ws, 'nothing-to-rejoin',
         'Game "' + this.gameID + '" has not started yet — send join, not rejoin.');
       return null;
@@ -198,6 +216,7 @@ class GameServer {
     client.spectator = false;
     client.active = true;
     this.clients.set(clientID, client);
+    log.info(this._tag, who(client) + ' rejoined from turn ' + (Number.isInteger(lastTurn) ? lastTurn : 0));
 
     const turnNumber = (Number.isInteger(lastTurn) && lastTurn >= 0) ? lastTurn : 0;
     this._send(ws, Protocol.msg.start(this.turns.slice(turnNumber), this.gameStartInfo, clientID));
@@ -234,12 +253,13 @@ class GameServer {
     if (!client) return;
 
     if (this.stage === Protocol.GAME_PHASE.ACTIVE) {
-      this._disconnectClient(client);
+      this._disconnectClient(client, 'connection closed');
       return;
     }
 
     client.active = false;
     this.clients.delete(clientID);
+    log.info(this._tag, who(client) + ' left - ' + this.clients.size + ' in lobby');
     // Roster-changed broadcast (MP-2.3). _broadcastLobbyInfo no-ops once the
     // game has left LOBBY, so this is a no-op for a FINISHED-phase removal.
     this._broadcastLobbyInfo();
@@ -256,9 +276,10 @@ class GameServer {
   // sets it false. Once false, a second call (e.g. the next sweep tick still
   // seeing this client before its interval-scoped skip) is a guarded no-op —
   // exactly the idempotency the timeout sweep requires.
-  _disconnectClient(client) {
+  _disconnectClient(client, reason) {
     if (!client.active) return;
     client.active = false;
+    log.info(this._tag, who(client) + ' disconnected (' + reason + ')');
 
     const intent = Protocol.stamp(Protocol.intent.markDisconnected(true), client.clientID);
     this.intents.push(intent);
@@ -281,7 +302,8 @@ class GameServer {
     for (const client of this.clients.values()) {
       if (!client.active) continue;
       if (now - client.lastPing > GameServer.disconnectedTimeout) {
-        this._disconnectClient(client);
+        this._disconnectClient(client, 'timed out, no ping for '
+          + Math.round(GameServer.disconnectedTimeout / 1000) + 's');
       } else {
         anyActive = true;
       }
@@ -296,7 +318,8 @@ class GameServer {
     } else if (this._emptySince === null) {
       this._emptySince = now;
     } else if (now - this._emptySince > GameServer.abandonedTimeout) {
-      this.end();
+      this.end('abandoned, nobody connected for '
+        + Math.round(GameServer.abandonedTimeout / 1000) + 's');
     }
   }
 
@@ -368,9 +391,13 @@ class GameServer {
     }
 
     const majority = activeClients.length / 2;
-    for (const count of counts.values()) {
+    for (const [winner, count] of counts) {
       if (count > majority) {
-        this.end();
+        // Sim player ids: humans occupy 0..H-1 (see start()); anything higher
+        // is an AI nation.
+        const human = this.gameStartInfo && this.gameStartInfo.players.find((p) => p.playerId === winner);
+        const label = human ? String(human.username).replace(/[\x00-\x1f\x7f]/g, '').slice(0, 32) : 'AI nation ' + winner;
+        this.end('won by ' + label + ' (' + count + '/' + activeClients.length + ' votes)');
         break;
       }
     }
@@ -465,6 +492,10 @@ class GameServer {
       if (!flag) continue;
 
       this.desyncFlagged.add(clientID);
+      log.warn(this._tag, 'DESYNC: ' + who(client) + ' hash differs at turn ' + turnNumber
+        + (hasStrictMajority
+          ? ' (' + bestCount + '/' + totalReporting + ' clients agree on the other hash)'
+          : ' (no majority among ' + totalReporting + ' clients)'));
       this._send(client.ws, Protocol.msg.desync(
         turnNumber,
         hasStrictMajority ? bestHash : null,
@@ -592,6 +623,12 @@ class GameServer {
     };
 
     this.stage = Protocol.GAME_PHASE.ACTIVE;
+    this._startedAt = Date.now();
+    const cfg = this.gameStartInfo.config;
+    log.info(this._tag, 'started: ' + players.length + ' player' + (players.length === 1 ? '' : 's')
+      + (this.clients.size > players.length ? ' + ' + (this.clients.size - players.length) + ' spectator(s)' : '')
+      + ', map ' + cfg.mapSize + ', ' + cfg.bots + ' bots, ' + cfg.tribes + ' tribes, '
+      + cfg.difficulty + ' difficulty');
     this._turnIntervalID = setInterval(() => this.endTurn(), Protocol.TURN_INTERVAL_MS);
     // MP-3.4: liveness sweep runs for exactly the ACTIVE-phase lifetime,
     // stopped alongside the turn interval in end() below.
@@ -629,8 +666,15 @@ class GameServer {
     }
   }
 
-  // Stop the interval(s) and transition to FINISHED. Idempotent.
-  end() {
+  // Stop the interval(s) and transition to FINISHED. Idempotent. `reason` is
+  // only for the log line.
+  end(reason) {
+    if (this.stage === Protocol.GAME_PHASE.ACTIVE) {
+      const secs = this._startedAt === null ? 0 : Math.round((Date.now() - this._startedAt) / 1000);
+      log.info(this._tag, 'ended: ' + (reason || 'ended')
+        + ' - ' + Math.floor(secs / 60) + 'm' + String(secs % 60).padStart(2, '0') + 's, '
+        + this.turns.length + ' turns');
+    }
     if (this._turnIntervalID !== null) {
       clearInterval(this._turnIntervalID);
       this._turnIntervalID = null;
@@ -651,7 +695,7 @@ class GameServer {
   // that has only ever been tested against well-formed traffic.
   _send(ws, msg) {
     if (Protocol.validateMessage(msg, 's2c') !== null) {
-      console.error('[borderwar-server] GameServer refused to send a malformed message', msg);
+      log.error(this._tag, 'refused to send a malformed message: ' + JSON.stringify(msg));
       return;
     }
     if (!ws || ws.readyState !== ws.OPEN) return;

@@ -16,6 +16,7 @@
 const Protocol = require('../js/net/protocol.js');
 const Client = require('./client');
 const GameServer = require('./gameserver');
+const log = require('./log');
 
 // How often the periodic sweep below runs. This is the "periodically" half
 // of the reap requirement (the other half — reap on disconnect — happens
@@ -23,6 +24,9 @@ const GameServer = require('./gameserver');
 // this loop is O(games), and there are never many concurrent games on a
 // self-hosted box (§6.1).
 const REAP_INTERVAL_MS = 5000;
+
+// How often the heartbeat line prints, and only while a match is ACTIVE.
+const HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
 class GameManager {
   // A ceiling on concurrently-existing games (LOBBY/ACTIVE combined —
@@ -50,7 +54,28 @@ class GameManager {
     if (this.games.has(gameID)) return this.games.get(gameID);
     const game = new GameServer(gameID);
     this.games.set(gameID, game);
+    log.info('game ' + gameID, 'lobby created');
     return game;
+  }
+
+  // Periodic "still alive" line, printed only while at least one match is
+  // ACTIVE so an idle server stays quiet. Started by server/index.js once the
+  // port is bound; unref'd like the reap timer.
+  startHeartbeat() {
+    const id = setInterval(() => {
+      let active = 0, players = 0, turn = 0;
+      for (const game of this.games.values()) {
+        if (game.stage !== Protocol.GAME_PHASE.ACTIVE) continue;
+        active++;
+        for (const c of game.clients.values()) if (c.active && !c.spectator) players++;
+        turn = Math.max(turn, game.turns.length);
+      }
+      if (active === 0) return;
+      log.info('server', 'heartbeat: ' + active + ' active game' + (active === 1 ? '' : 's')
+        + ', ' + players + ' player' + (players === 1 ? '' : 's') + ', turn ' + turn);
+    }, HEARTBEAT_INTERVAL_MS);
+    if (typeof id.unref === 'function') id.unref();
+    this._heartbeatIntervalID = id;
   }
 
   getGame(gameID) {
@@ -69,8 +94,10 @@ class GameManager {
     for (const [gameID, game] of this.games) {
       if (game.stage === Protocol.GAME_PHASE.FINISHED) {
         this.games.delete(gameID);
+        log.info('game ' + gameID, 'reaped (finished)');
       } else if (game.stage === Protocol.GAME_PHASE.LOBBY && game.clients.size === 0) {
         this.games.delete(gameID);
+        log.info('game ' + gameID, 'reaped (empty lobby)');
       }
     }
   }
@@ -83,16 +110,19 @@ class GameManager {
       try {
         msg = JSON.parse(raw);
       } catch (e) {
+        log.warn('server', 'rejected connection: first message was not valid JSON');
         Client.closeWithError(ws, 'bad-json', 'First message must be valid JSON.');
         return;
       }
 
       const err = Protocol.validateMessage(msg, 'c2s');
       if (err) {
+        log.warn('server', 'rejected connection: invalid first message (' + err + ')');
         Client.closeWithError(ws, 'bad-first-message', err);
         return;
       }
       if (msg.type !== 'join' && msg.type !== 'rejoin') {
+        log.warn('server', 'rejected connection: first message was "' + msg.type + '", not join/rejoin');
         Client.closeWithError(ws, 'bad-first-message',
           'first message must be "join" or "rejoin", got "' + msg.type + '"');
         return;
@@ -101,6 +131,7 @@ class GameManager {
       if (msg.type === 'rejoin') {
         const game = this.getGame(msg.gameID);
         if (!game) {
+          log.warn('game ' + msg.gameID, 'rejected rejoin: no such game');
           Client.closeWithError(ws, 'no-such-game', 'Game "' + msg.gameID + '" does not exist.');
           return;
         }
@@ -119,6 +150,8 @@ class GameManager {
         // games are running, since it adds one client to an existing
         // Map entry rather than a new one. See MAX_CONCURRENT_GAMES' own
         // comment for why this exists at all now.
+        log.warn('server', 'rejected join to "' + msg.gameID + '": at the '
+          + GameManager.MAX_CONCURRENT_GAMES + '-game limit');
         Client.closeWithError(ws, 'server-busy', 'Too many games in progress. Try again shortly.');
         return;
       }
