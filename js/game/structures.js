@@ -175,15 +175,18 @@ Object.assign(Game, {
 
   // Sum of levels across this player's built structures of `type`, plus a
   // flat 1 for each one still under construction — see the UNITS comment.
-  unitsOwned(p, type) { return (p && p.units && p.units[type]) || 0; },
+  // Floored at 0: `|| 0` alone only catches falsy values, so a genuine
+  // negative count (a bug elsewhere) would otherwise sail through into
+  // unitCost's exponent and underprice the next build.
+  unitsOwned(p, type) { return Math.max(0, (p && p.units && p.units[type]) || 0); },
 
   // Lifetime count of this player's own builds/upgrades of `type` — never
   // decremented, whether by losing the unit or by it being captured away.
-  unitsBuilt(p, type) { return (p && p.unitsBuilt && p.unitsBuilt[type]) || 0; },
+  unitsBuilt(p, type) { return Math.max(0, (p && p.unitsBuilt && p.unitsBuilt[type]) || 0); },
 
   // Still-under-construction structures this player has paid for. See the
   // field comment on Player.unitsPending.
-  unitsPending(p, type) { return (p && p.unitsPending && p.unitsPending[type]) || 0; },
+  unitsPending(p, type) { return Math.max(0, (p && p.unitsPending && p.unitsPending[type]) || 0); },
 
   unitCost(p, type) {
     const def = this.unitDef(type);

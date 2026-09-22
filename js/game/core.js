@@ -397,16 +397,16 @@ const Game = {
         // every tick, and again 120 times over inside peakGrowthRatio's scan.
         // Only counts COMPLETED structures — one still under construction
         // doesn't grant its pop bonus yet. See buildings' `built` flag.
-        units: { city: 0, fort: 0 },
+        units: { city: 0, fort: 0, factory: 0, port: 0 },
         // Lifetime count of this player's own builds, by type — never
         // decremented. What unitCost actually prices against; see its comment.
-        unitsBuilt: { city: 0, fort: 0 },
+        unitsBuilt: { city: 0, fort: 0, factory: 0, port: 0 },
         // Under-construction structures this player has committed gold to but
         // that haven't finished yet. Folded into unitCost alongside `units` so
         // queuing several at once still prices each one higher than the last —
         // without this, price doubling would only bite once the first of a
         // batch actually completes, since `units` itself stays put till then.
-        unitsPending: { city: 0, fort: 0 },
+        unitsPending: { city: 0, fort: 0, factory: 0, port: 0 },
         tiles: new Set(),
         // Owned tiles with at least one non-owned neighbour — kept in sync by
         // setOwner's border bookkeeping. refreshFrontier scans this instead
@@ -686,8 +686,13 @@ const Game = {
         // OpenFront's own captureUnit (which transfers every unit type
         // uniformly, City/Factory/Port included), per user request.
         // unitsBuilt (lifetime, pricing) is untouched, same as a captured
-        // structure — only the current holding disappears.
-        if (old >= 0) this.players[old].units[b.type] -= b.level;
+        // structure — only the current holding disappears. Floored at 0 so a
+        // stale/uninitialized count can never go negative and underprice the
+        // owner's next build (see unitCost).
+        if (old >= 0) {
+          const op = this.players[old];
+          op.units[b.type] = Math.max(0, this.unitsOwned(op, b.type) - b.level);
+        }
         this.buildings.delete(i);
       } else {
         // Overrun mid-upgrade: the level in progress is lost the same way a
@@ -706,9 +711,17 @@ const Game = {
         }
         // A structure's full level moves with it, per OpenFront's own
         // captureUnit — see the UNITS comment on why units[type] is a sum of
-        // levels rather than a headcount.
-        if (old >= 0) this.players[old].units[b.type] -= b.level;
-        if (newOwner >= 0) this.players[newOwner].units[b.type] += b.level;
+        // levels rather than a headcount. Floored at 0 so a stale/
+        // uninitialized count can never go negative and underprice the
+        // owner's next build (see unitCost).
+        if (old >= 0) {
+          const op = this.players[old];
+          op.units[b.type] = Math.max(0, this.unitsOwned(op, b.type) - b.level);
+        }
+        if (newOwner >= 0) {
+          const np = this.players[newOwner];
+          np.units[b.type] = this.unitsOwned(np, b.type) + b.level;
+        }
       }
     }
     // Border shading depends on a tile's neighbors too (see Render.paintTile),
