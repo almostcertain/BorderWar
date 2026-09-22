@@ -131,7 +131,12 @@ const Game = {
   // nothing in the simulation may branch on it, read it back, or derive a
   // value from it. If in doubt, leave it out — a slightly slower hash is
   // cheap, a desync the hash was told to ignore is not.
-  COSMETIC_STATE: ['nukeBlasts', 'samFlashes'],
+  // nationCount/placements (MP-3.5 defeat screen) join the list for the same
+  // reason: both are derived, write-once-per-player bookkeeping that nothing
+  // in the sim ever reads back — only UI.checkEndGame does — even though
+  // eliminatePlayer computes placements off shared, Game.me-blind player
+  // state so every client would agree on it anyway.
+  COSMETIC_STATE: ['nukeBlasts', 'samFlashes', 'nationCount', 'placements'],
   alliances: [],
   requests: [],
   lastRequestAt: new Map(),
@@ -449,7 +454,36 @@ const Game = {
     this.spawning = true;
     this.running = false;
     this.winnerId = null;
+    // Nations only — humans + bots, never tribes — is what "5th out of 32"
+    // on the defeat screen counts against. Fixed for the whole match: it
+    // never shrinks as nations die, so a placement recorded mid-match still
+    // reads correctly once the match is long over.
+    this.nationCount = H + botCount;
+    // playerId -> finishing place (1 = last nation standing), filled in by
+    // eliminatePlayer as nations die. A nation still alive has no entry —
+    // the eventual winner never gets one, since it never dies.
+    this.placements = new Map();
     this.dirty = true;
+  },
+
+  // The one place a nation's `alive` flips to false — both the tile/troop
+  // sweep in tick() and annexRegion's wipe-out route call this instead of
+  // setting p.alive directly, so every elimination also records the
+  // placement the defeat screen (UI.checkEndGame) reads: how many nations
+  // (tribes excluded — they were never contestants) were still alive,
+  // including this one, at the moment it went out. Guarded by p.alive so a
+  // player already eliminated can't be double-counted or overwrite its
+  // placement.
+  eliminatePlayer(p) {
+    if (!p.alive) return;
+    if (!p.isTribe) {
+      let aliveCount = 0;
+      for (const q of this.players) {
+        if (!q.isTribe && q.alive) aliveCount++;
+      }
+      this.placements.set(p.id, aliveCount);
+    }
+    p.alive = false;
   },
 
   // Same no-reason/reason shape as buildBlockReason: null means the tap is
@@ -841,7 +875,7 @@ const Game = {
     this.stepNukes();
 
     for (const p of this.players) {
-      if (p.alive && p.tiles.size === 0 && p.troops < 20) p.alive = false;
+      if (p.alive && p.tiles.size === 0 && p.troops < 20) this.eliminatePlayer(p);
     }
 
     // Win condition (MP-3.5), computed here — not in UI — because it has to

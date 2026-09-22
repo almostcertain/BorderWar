@@ -408,13 +408,11 @@
 
     Render.draw();
     UI.update();
-    // MP-3.5: Game.running is what BECOMES false the instant a winner is
-    // decided (see Game.tick()), so gating this call on Game.running would
-    // stop calling checkEndGame at the exact moment it's needed — including
-    // for a client that goes !running on the very same tick the winner was
-    // set. Game.winnerId is the real trigger; checkEndGame's own
-    // endGameHandled latch (see ui.js) keeps it a one-shot from here on.
-    if (Game.winnerId !== null) UI.checkEndGame();
+    // Called every frame, unconditionally: checkEndGame now also has to
+    // notice this client's own defeat the instant it happens, which can be
+    // long before Game.winnerId is decided (see its own comment in ui.js).
+    // Its endGameHandled/lossShown latches make each half of that a one-shot.
+    UI.checkEndGame();
   }
 
   document.getElementById('startBtn').addEventListener('click', start);

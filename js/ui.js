@@ -4,6 +4,20 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// 1 -> '1st', 2 -> '2nd', 11 -> '11th', 21 -> '21st', etc. Only the defeat
+// screen's placement line needs this, so it lives here rather than a shared
+// utils module.
+function ordinal(n) {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return n + 'th';
+  switch (n % 10) {
+    case 1: return n + 'st';
+    case 2: return n + 'nd';
+    case 3: return n + 'rd';
+    default: return n + 'th';
+  }
+}
+
 const UI = {
   ratio: 0.2, // kept equal to DEFAULT_RATIO
   lastLeaderboard: 0,
@@ -332,6 +346,8 @@ const UI = {
     // but reset() runs on that same restart, so this has to be cleared here
     // too or a second match would find it still true from the first.
     this.endGameHandled = false;
+    // Cleared alongside endGameHandled for the same reason — see checkEndGame.
+    this.lossShown = false;
     document.getElementById('frontsRow').classList.add('hidden');
     document.getElementById('frontsRow').innerHTML = '';
     document.getElementById('diploBanner').classList.add('hidden');
@@ -1155,24 +1171,47 @@ const UI = {
     return null;
   },
 
-  // MP-3.5: purely reactive. The win condition itself now lives in
-  // Game.tick() (see the block right after its elimination sweep) as a
-  // global, Game.me-blind fact — Game.winnerId — set identically on every
-  // client on the same turn. This function never computes anything and never
-  // writes to Game: it only reads Game.winnerId/Game.players and decides,
-  // locally, which of three overlays *this* client should show, then casts
-  // this client's one vote. `endGameHandled` (cleared by reset(), which every
-  // restart runs) is the "already reacted" latch so it fires once per match
-  // instead of every frame main.js calls it while winnerId stays set.
+  // MP-3.5: purely reactive. The win condition itself lives in Game.tick()
+  // (see the block right after its elimination sweep) as a global,
+  // Game.me-blind fact — Game.winnerId — set identically on every client on
+  // the same turn. This function never computes anything and never writes to
+  // Game: it only reads Game.winnerId/Game.players/Game.placements and
+  // decides, locally, which overlay *this* client should show, then casts
+  // this client's one vote.
+  //
+  // This client's own elimination is split out from that vote on purpose.
+  // Game.winnerId only exists once the whole match is decided, which can be
+  // long after this player is out — bots keep fighting each other, or a
+  // multiplayer match keeps running for everyone else — so waiting for it
+  // would leave a defeated player watching a nation they no longer control
+  // for the rest of the match. `lossShown` fires the instant `me.alive` goes
+  // false, independent of winnerId, so the defeat screen (with the
+  // placement Game.eliminatePlayer recorded) shows right away. The
+  // network-visible part — casting this client's `winner` vote — still
+  // waits for Game.winnerId itself to be decided; voting a still-null
+  // winner here would tell the server the match ended before it has.
+  // `endGameHandled`/`lossShown` (both cleared by reset(), which every
+  // restart runs) are the "already reacted" latches so each half fires once
+  // per match instead of every frame main.js calls this.
   checkEndGame() {
+    const me = Game.players[Game.me];
+
+    if (me && !me.alive && !this.lossShown) {
+      this.lossShown = true;
+      const place = Game.placements.get(Game.me);
+      const text = place
+        ? 'You were the ' + ordinal(place) + ' out of ' + Game.nationCount + ' starting nations to fall.'
+        : 'Your nation has been wiped off the map.';
+      this.showEnd('Defeated', text);
+    }
+
     if (Game.winnerId === null || this.endGameHandled) return;
     this.endGameHandled = true;
 
-    const me = Game.players[Game.me];
     if (Game.winnerId === Game.me) {
       this.showEnd('Victory', 'You control the world.');
     } else if (!me.alive) {
-      this.showEnd('Defeated', 'Your nation has been wiped off the map.');
+      // Already shown above, with the placement text — leave it as is.
     } else {
       // Bug #2 (MP-3.5 brief): still alive, but someone else won — the case
       // the old me-relative checks could never reach, so this client used to

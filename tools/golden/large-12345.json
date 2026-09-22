@@ -4,13 +4,13 @@
     "js/map.js": "4f856309068a2abcc7356374ae3f2784354f19d91fca86c11bae33e36a69313a",
     "js/fx.js": "3deb08ca132e6773feb5be6d20089f236352130f08ed2ac75b038232dc99935b",
     "js/game/shared.js": "8735ad40029c02040e8c69380540fba2534ffa80848fc4bcd1aef5db234e7e92",
-    "js/game/core.js": "bda8db27655cd0d35778d1c48a723950a83f3151369e401892b032530fa93336",
+    "js/game/core.js": "e194d4ca16d8bc2b83187fbec08858a6da3454f9ba7e9592d92c3737b95cc301",
     "js/game/structures.js": "0abfdd3265e562b6d4e50bbdd9793608933990263e08d39af1282c8c507a28be",
     "js/game/economy.js": "58814fc41c32a268c7bb049ba41f569310b20091f8a0bfe952833f683d818c60",
     "js/game/diplomacy.js": "357fa693674ed94c73998f455f73e3afca0d610f82a5037df768150580fc814d",
     "js/game/attacks.js": "8ebd5a1c021ced626b9d53a0b800fe4a1edf404d78d25dc860e58751c487e16b",
     "js/game/combat.js": "641cc7e8108f2c93d609b59179a71b85aec7123228e461369470f69e6c0fef9e",
-    "js/game/annex.js": "4aabae8ac71c5889e9fcc06a829d6f2fcb090b57aa3983f50ac00e110792cba3",
+    "js/game/annex.js": "7a6f5af651ada1e613c8d1aad62f5942ff6db86a951fe64adfaf1e3957c50fa6",
     "js/game/seapath.js": "d117bd5c5069972d0b182053202bb8834bb0d3f443651579eb16d5e111cd4e78",
     "js/game/naval.js": "283232bc82181aea36e1839b3184daccff620917b2ff95ee8f6077931e9e738a",
     "js/game/rail.js": "c342642119824bdb18c958f6291db5b544c2badd7e468bb5f78cbdc02c6c8686",
@@ -518,7 +518,7 @@
   ],
   "digest": {
     "ownerFNV": 1710943982,
-    "stateSHA256": "3ddc2d27ffd7cf4fb6dba83d71c279b6da3fc94966e862048a9294562b3a1dea"
+    "stateSHA256": "69f410737a514ba595eedad7ae5c165968d3d223e43737acbb42f989e8817a4f"
   },
   "simulationTicks": 5900,
   "coverage": {

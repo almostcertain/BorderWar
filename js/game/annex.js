@@ -283,7 +283,7 @@ Object.assign(Game, {
       winner.gold += spoils;
       loser.gold = 0;
       loser.troops = 0;
-      loser.alive = false;
+      this.eliminatePlayer(loser);
     }
   },
 
