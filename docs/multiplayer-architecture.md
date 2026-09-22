@@ -42,13 +42,14 @@ play is ever on the table.
 See §6.1. This is a deployment choice only; it does not touch the architecture.
 Drives **MP-2.4** and a wire-origin detail in **MP-2.1**.
 
-**D4 — Private lobbies only for v1.**
+**D4 — Private lobbies only for v1, plus two opt-in public exceptions.**
 Host creates a game, shares the `gameID` as a join code, friends join, host starts. No
-matchmaking, no accounts. Public lobbies stay deferred to MP-5.1 — **except** the narrow
-opt-in browsable list shipped under issue #9 (see MP-5.1 below): a host can flag their own
-lobby public and it appears in a list on the Join screen, but joining and starting are
-unchanged — still host-initiated, no accounts, no matchmaking. Auto-cycling public lobbies
-(this section's original MP-5.1 scope) remain deferred.
+matchmaking, no accounts. Two narrow, later exceptions to that default (see MP-5.1 below):
+issue #9 lets a host flag their own lobby public so it appears in a list on the Join
+screen, still host-initiated; issue #12 adds a single always-open, host-less lobby the
+server itself creates, fills, and auto-starts on a timer, then replaces. Neither adds
+accounts or matchmaking in the OpenFront `Master.ts`/`MapPlaylist.ts` sense — there is no
+scheduler picking maps on a fixed cadence, just one rotating slot.
 
 **Out of scope for v1, per D2/D4 and §4:** accounts, matchmaking, public lobby lists,
 chat, emoji, gold/troop donation, embargoes, player reports, telemetry, anti-cheat.
@@ -1099,8 +1100,10 @@ since the digest now tracks more state; `ok:true`/zero-divergence is what was ve
 ### Phase 5 — Optional / later
 
 - **MP-5.1** Public auto-created lobbies on a timer (`Master.ts` + `MapPlaylist.ts` shape).
-  Still deferred in full; a narrower slice — host-flagged public lobbies with a browsable
-  list, no auto-cycling — shipped under issue #9. See the task write-up just below.
+  Shipped in two slices: host-flagged public lobbies with a browsable list, no
+  auto-cycling, under issue #9; and the auto-cycling half itself — a server-created,
+  host-less lobby that fills and starts on its own, then rotates in a replacement —
+  under issue #12. See the two task write-ups just below.
 - **MP-5.2** Game record persistence and replay — the retained turn log plus the seed is
   already a complete replay; add save/load and a replay-mode `LocalServer` that feeds
   archived turns (`LocalServer.replayTurns`).
@@ -1135,6 +1138,47 @@ since the digest now tracks more state; `ok:true`/zero-divergence is what was ve
 - Done when: a host-flagged lobby appears in a second client's Join-screen list, clicking
   an entry fills the join code and connects, and the entry disappears once the host starts.
   Verified live over `node server/index.js` with two browser tabs.
+
+**MP-5.1 (full) — Rotating open lobbies (issue #12) — ✅ shipped**
+- Depends: MP-5.1 (partial, issue #9)
+- Files: `server/gamemanager.js`, `server/gameserver.js`, `js/ui.js`
+- The auto-cycling half issue #9 deferred: `GameManager` keeps exactly one host-less,
+  always-public lobby open (`_spawnAutoLobby`, called once from the constructor and again
+  from `_onAutoLobbyStarted` every time one actually starts), cycling map size through a
+  fixed rotation (`AUTO_LOBBY_ROTATION`: small/medium/large — xlarge excluded, it's the
+  perf-stress size, not a pick-up-and-play one). `GameServer.configureAutoLobby()` marks
+  a lobby `isAutoLobby`, which changes three behaviors: `joinClient` can no longer have its
+  `isPublic` flag overridden by a joiner's own `join.public` (first-joiner-wins doesn't
+  apply to what has no human host); `GameManager.reap()` no longer deletes it just because
+  it's an empty LOBBY-stage game (`listPublicLobbies` still needs it to exist and be
+  listed even at zero players); and `_maybeAdvanceAutoLobby` — called on every join/leave —
+  drives the fill-or-timer rule from issue #9 verbatim: at `autoConfig.maxNations` human
+  players it starts immediately (no bots left to spawn), at `GameServer.autoLobbyMinPlayers`
+  (2) it starts a one-shot `GameServer.autoLobbyCountdownMs` (30s) timer, and below that it
+  cancels any running timer — so a lobby that dips back under the threshold doesn't still
+  fire a few seconds later with too few players. Bot count at start is computed then, not
+  stored in `autoConfig`: `maxNations - humanCount`, i.e. humans literally take Nation
+  slots a bot would otherwise fill, per issue #9's own phrasing.
+- `listPublicLobbies()` and the `lobby_info` broadcast both grew an `isAuto` flag plus
+  `mapSize`/`minPlayers`/`maxPlayers`/`autoStartAt` for an auto lobby (`autoStartAt` is
+  `null` whenever no countdown is running) — both are the server's own `obj`-typed payload
+  shapes (`Protocol.validateMessage` does not look inside them, see that method's own
+  comment), so no protocol.js schema change was needed. `js/ui.js` renders an auto lobby's
+  Join-screen entry as "Open lobby — <size>" plus a live-ish (4s-polled) countdown instead
+  of a host's name, and the in-lobby status line shows "Open lobby — starts once N players
+  join." or "Starting in Ns…" instead of the host-flow's default text; the static
+  `#joinWaiting` "Waiting for the host to start…" caption (which predates this task and
+  assumes a human host) is blanked for an auto lobby rather than left saying something
+  false.
+- No sim files touched — no golden re-record.
+- Done when: the server has exactly one open public lobby at all times, even right after
+  one just filled and started; two players joining it triggers a 30s countdown that a
+  third player leaving (dropping back below 2) cancels; and hitting `maxNations` players
+  starts it immediately with 0 bots. Verified with a scripted two-`GameServer`-instance
+  smoke test (timer start/cancel/fire, fill-up, empty-lobby reap survival) and live over
+  `node server/index.js` with two real browser tabs: joined the open lobby, watched the
+  30s countdown broadcast to both, watched it start into the spawn-phase map with the
+  expected bot count, and watched a replacement lobby appear in the list immediately after.
 
 ---
 

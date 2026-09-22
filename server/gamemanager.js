@@ -28,6 +28,21 @@ const REAP_INTERVAL_MS = 5000;
 // How often the heartbeat line prints, and only while a match is ACTIVE.
 const HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
+// Issue #12: rotating open lobbies. One rotation entry per map size GameServer
+// cycles through, in order, wrapping — `maxNations` is the total Nation-slot
+// count for that entry (bots + humans never exceeds it; see GameServer._
+// startAutoLobby). xlarge is deliberately excluded: it's the perf-stress size
+// (see docs/multiplayer-architecture.md's xlarge testing note), not a fit for
+// a pick-up-and-play open lobby. Bot/tribe counts otherwise follow the same
+// defaults index.html ships for a manually-hosted medium game (9 bots, 16
+// tribes), scaled by map size.
+const AUTO_LOBBY_ROTATION = [
+  { mapSize: 'small', maxNations: 6, tribes: 10 },
+  { mapSize: 'medium', maxNations: 9, tribes: 16 },
+  { mapSize: 'large', maxNations: 14, tribes: 24 }
+];
+const AUTO_LOBBY_DIFFICULTY = 'medium';
+
 class GameManager {
   // A ceiling on concurrently-existing games (LOBBY/ACTIVE combined —
   // FINISHED ones are reaped promptly and don't count). §6.1's own framing
@@ -48,6 +63,47 @@ class GameManager {
     // script) alive — it's a housekeeping sweep, not load-bearing work.
     this._reapIntervalID = setInterval(() => this.reap(), REAP_INTERVAL_MS);
     if (typeof this._reapIntervalID.unref === 'function') this._reapIntervalID.unref();
+
+    // Issue #12: which AUTO_LOBBY_ROTATION entry the next spawned auto lobby
+    // uses. Advances once per spawn (see _spawnAutoLobby), wrapping via `%`
+    // in that method rather than here, so this can just keep counting up
+    // without its own overflow handling.
+    this._autoLobbyRotationIndex = 0;
+    this._spawnAutoLobby();
+  }
+
+  // Issue #12: create the one open, host-less public lobby this server always
+  // keeps available, and remember its config for when it actually starts
+  // (_onAutoLobbyStarted below). A fresh gameID every time — reusing one
+  // would let a stale client's cached join code silently land in a
+  // different lobby than the one it saw.
+  _spawnAutoLobby() {
+    const entry = AUTO_LOBBY_ROTATION[this._autoLobbyRotationIndex % AUTO_LOBBY_ROTATION.length];
+    this._autoLobbyRotationIndex++;
+
+    const gameID = 'OPEN-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+    const game = new GameServer(gameID);
+    game.configureAutoLobby({
+      mapSize: entry.mapSize,
+      tribes: entry.tribes,
+      difficulty: AUTO_LOBBY_DIFFICULTY,
+      maxNations: entry.maxNations
+    }, () => this._onAutoLobbyStarted(gameID));
+    this.games.set(gameID, game);
+    log.info('game ' + gameID, 'open rotating lobby created (' + entry.mapSize + ', up to '
+      + entry.maxNations + ' players)');
+  }
+
+  // The auto lobby's own start() just fired (a human filled every Nation
+  // slot, or the fill/countdown timer elapsed) — spawn its replacement so
+  // there is always exactly one open lobby waiting, per issue #9's "After
+  // the game starts, another open lobby is created". The just-started game
+  // stays in `this.games` under its old gameID (ACTIVE, then reaped once
+  // FINISHED, same as any other match) — only a brand new entry is added
+  // here, nothing about `oldGameID` is touched.
+  _onAutoLobbyStarted(oldGameID) {
+    log.info('game ' + oldGameID, 'open lobby started - rotating in a replacement');
+    this._spawnAutoLobby();
   }
 
   createGame(gameID) {
@@ -92,12 +148,25 @@ class GameManager {
     const out = [];
     for (const game of this.games.values()) {
       if (!game.isPublic || game.stage !== Protocol.GAME_PHASE.LOBBY) continue;
-      const host = game.clients.get(game.creatorClientId);
-      out.push({
-        gameID: game.gameID,
-        host: (host && host.username) || 'Host',
-        playerCount: game.clients.size
-      });
+
+      // Issue #12: an auto lobby has no human host (game.creatorClientId is
+      // whichever player happened to join first, purely incidental — see
+      // GameServer.joinClient's isAutoLobby guard), so the Join screen needs
+      // different fields to render it: map/slot info and a live countdown
+      // instead of a host name. entry.host is left undefined rather than
+      // 'Host' so js/ui.js's renderPublicLobbies can tell the two kinds
+      // apart without a separate boolean lookup.
+      const entry = { gameID: game.gameID, playerCount: game.clients.size, isAuto: !!game.isAutoLobby };
+      if (game.isAutoLobby) {
+        entry.mapSize = game.autoConfig.mapSize;
+        entry.minPlayers = GameServer.autoLobbyMinPlayers;
+        entry.maxPlayers = game.autoConfig.maxNations;
+        entry.autoStartAt = game._autoStartAt; // null while no countdown is running
+      } else {
+        const host = game.clients.get(game.creatorClientId);
+        entry.host = (host && host.username) || 'Host';
+      }
+      out.push(entry);
     }
     return out;
   }
@@ -115,7 +184,12 @@ class GameManager {
       if (game.stage === Protocol.GAME_PHASE.FINISHED) {
         this.games.delete(gameID);
         log.info('game ' + gameID, 'reaped (finished)');
-      } else if (game.stage === Protocol.GAME_PHASE.LOBBY && game.clients.size === 0) {
+      } else if (game.stage === Protocol.GAME_PHASE.LOBBY && game.clients.size === 0 && !game.isAutoLobby) {
+        // Issue #12: an auto lobby is meant to sit open and empty, waiting
+        // for players, exactly like it does the instant _spawnAutoLobby
+        // creates it — this exempts it from the same "nobody ever joined"
+        // rule that reaps a manually-hosted lobby the moment its lobby
+        // empties out again.
         this.games.delete(gameID);
         log.info('game ' + gameID, 'reaped (empty lobby)');
       }

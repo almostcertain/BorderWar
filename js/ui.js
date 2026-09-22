@@ -1320,10 +1320,22 @@ const UI = {
     list.forEach((entry) => {
       const li = document.createElement('li');
       const name = document.createElement('span');
-      name.textContent = (entry.host || 'Host') + "'s game";
+      // Issue #12: an auto (rotating) lobby has no human host — labeled by
+      // map size instead of a host's name, same distinction
+      // gamemanager.js's listPublicLobbies() draws (entry.host is only ever
+      // set for a manually-hosted lobby).
+      name.textContent = entry.isAuto
+        ? 'Open lobby — ' + String(entry.mapSize || '').replace(/^./, (c) => c.toUpperCase())
+        : (entry.host || 'Host') + "'s game";
       const count = document.createElement('span');
       count.className = 'lobbyListCount';
-      count.textContent = entry.playerCount + (entry.playerCount === 1 ? ' player' : ' players');
+      let countText = entry.playerCount + (entry.playerCount === 1 ? ' player' : ' players');
+      if (entry.isAuto) countText += '/' + entry.maxPlayers;
+      if (entry.isAuto && typeof entry.autoStartAt === 'number') {
+        const secs = Math.max(0, Math.round((entry.autoStartAt - Date.now()) / 1000));
+        countText += ' — starts in ' + secs + 's';
+      }
+      count.textContent = countText;
       li.appendChild(name);
       li.appendChild(count);
       li.addEventListener('click', () => onPick(entry.gameID));
@@ -1409,17 +1421,40 @@ const UI = {
     const ids = role === 'host'
       ? { roster: 'lobbyRoster', count: 'hostPlayerCount' }
       : { roster: 'joinRoster', count: 'joinPlayerCount' };
-    this.renderLobbyRoster(document.getElementById(ids.roster), players, creatorClientId, myClientID, fresh);
+    // No human host to badge in an auto lobby (issue #12) — creatorClientId
+    // here is just whichever player happened to join first, not a role.
+    this.renderLobbyRoster(document.getElementById(ids.roster), players,
+      (lobby && lobby.isAuto) ? null : creatorClientId, myClientID, fresh);
     document.getElementById(ids.count).textContent = '(' + players.length + ')';
 
     let status;
     const newcomer = players.find((p) => fresh.has(p.clientID));
     if (newcomer) status = (newcomer.username || 'A player') + ' joined the lobby.';
     else if (role === 'host') status = players.length > 1 ? 'Ready when you are.' : 'Lobby open — waiting for players to join.';
+    // Issue #12: this lobby has no human host to start it — say so instead
+    // of the generic join message, and show the countdown once one is
+    // running (lobby.autoStartAt, set by GameServer._maybeAdvanceAutoLobby)
+    // so a joiner isn't left guessing when the match will begin.
+    else if (lobby && lobby.isAuto) {
+      if (typeof lobby.autoStartAt === 'number') {
+        const secs = Math.max(0, Math.round((lobby.autoStartAt - Date.now()) / 1000));
+        status = 'Starting in ' + secs + 's…';
+      } else {
+        status = 'Open lobby — starts once ' + (lobby.minPlayers || 2) + ' or more players join.';
+      }
+    }
     else status = 'Connected to the lobby.';
     this.setLobbyStatus(role, status, true);
 
     if (role === 'host') document.getElementById('hostStartBtn').classList.toggle('hidden', !isHost);
+    // index.html's static join-panel caption assumes a human host; an auto
+    // lobby (issue #12) has none, and joinStatus above already carries the
+    // real status for it, so the caption is blanked rather than left saying
+    // something untrue.
+    if (role === 'join') {
+      document.getElementById('joinWaiting').textContent =
+        (lobby && lobby.isAuto) ? '' : 'Waiting for the host to start…';
+    }
   },
 
   renderLobbyRoster(ul, players, creatorClientId, myClientID, fresh) {

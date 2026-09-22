@@ -95,6 +95,31 @@ class GameServer {
     // matching architecture doc D4's v1 default).
     this.isPublic = false;
 
+    // Issue #12: rotating open lobbies. A server-created lobby (GameManager._
+    // spawnAutoLobby) sets these via configureAutoLobby() right after
+    // construction, before any client can join — never toggled any other way.
+    // isAutoLobby is what makes joinClient skip the "first joiner sets
+    // isPublic from their own join.public" rule below (an auto lobby is
+    // always public, regardless of what a joining client's own message
+    // happens to carry) and is what turns on the min-players/countdown/
+    // fill-up logic in _maybeAdvanceAutoLobby. autoConfig is
+    // { mapSize, tribes, difficulty, maxNations } — maxNations is the total
+    // Nation-slot count for this rotation entry (bots + humans never exceeds
+    // it; each human that joins takes one slot a bot would otherwise fill,
+    // per issue #9's "who would be replacing the Nations").
+    this.isAutoLobby = false;
+    this.autoConfig = null;
+    // Called once, from start(), the moment this auto lobby actually starts
+    // — GameManager uses it to spawn the replacement lobby (the "rotating"
+    // half of this feature). Never set for a manually-hosted lobby.
+    this._onAutoStart = null;
+    // setTimeout id for the fill/countdown-to-start timer, and the epoch ms
+    // it will fire at (broadcast to clients so the Join screen can show a
+    // live countdown) — both null whenever the timer isn't running (not
+    // enough players yet, or already cleared/fired).
+    this._autoStartTimerID = null;
+    this._autoStartAt = null;
+
     this._turnIntervalID = null;
 
     // MP-3.4: the ACTIVE-phase ping-timeout sweep, started/stopped alongside
@@ -162,16 +187,20 @@ class GameServer {
 
     // First successful joiner becomes the creator/host. Deliberately the
     // whole rule — no explicit transfer mechanic (see the constructor note).
+    // An auto lobby (issue #12) has no human host and is always public —
+    // configureAutoLobby already set isPublic true before anyone could join,
+    // and a joiner's own join.public must not be able to flip it back off.
     if (this.creatorClientId === null) {
       this.creatorClientId = clientID;
-      this.isPublic = !!opts.public;
+      if (!this.isAutoLobby) this.isPublic = !!opts.public;
     }
 
     log.info(this._tag, who(client) + ' joined'
       + (client.spectator ? ' as spectator' : '')
-      + (clientID === this.creatorClientId ? ' (host)' : '')
+      + (clientID === this.creatorClientId && !this.isAutoLobby ? ' (host)' : '')
       + ' - ' + this.clients.size + ' in lobby');
     this._broadcastLobbyInfo();
+    this._maybeAdvanceAutoLobby();
     return clientID;
   }
 
@@ -273,6 +302,11 @@ class GameServer {
     // Roster-changed broadcast (MP-2.3). _broadcastLobbyInfo no-ops once the
     // game has left LOBBY, so this is a no-op for a FINISHED-phase removal.
     this._broadcastLobbyInfo();
+    // Issue #12: a departure can drop an auto lobby back below its min-player
+    // threshold, which must cancel an in-flight countdown — see
+    // _maybeAdvanceAutoLobby. No-ops for a manually-hosted lobby (isAutoLobby
+    // false) and for a FINISHED-phase removal (stage check inside it).
+    this._maybeAdvanceAutoLobby();
   }
 
   // Shared by removeClient's ACTIVE branch (a clean close) and
@@ -546,9 +580,112 @@ class GameServer {
       }))
     };
 
+    // Issue #12: extra fields an auto lobby's Join-screen entry needs that a
+    // manually-hosted one has no use for (no host to configure them, no
+    // fill/countdown mechanic) — kept off the payload entirely rather than
+    // sent as null/0 for a normal lobby, since `obj` fields are unchecked by
+    // Protocol.validateMessage (see this method's own comment above) and
+    // there is nothing for a manual-lobby client to do with them anyway.
+    if (this.isAutoLobby) {
+      lobby.isAuto = true;
+      lobby.mapSize = this.autoConfig.mapSize;
+      lobby.minPlayers = GameServer.autoLobbyMinPlayers;
+      lobby.maxPlayers = this.autoConfig.maxNations;
+      lobby.autoStartAt = this._autoStartAt; // null while no countdown is running
+    }
+
     for (const client of this.clients.values()) {
       this._send(client.ws, Protocol.msg.lobbyInfo(lobby, client.clientID));
     }
+  }
+
+  // --- Rotating open lobbies (issue #12) --------------------------------
+  //
+  // Called by joinClient/removeClient whenever this lobby's human roster
+  // changes; a no-op for a manually-hosted lobby (isAutoLobby false) and for
+  // an auto lobby that has already left LOBBY (the fill-up branch below can
+  // otherwise race a start already triggered by the timer branch in the same
+  // tick — see _startAutoLobby's own stage re-check for the belt-and-braces
+  // half of that).
+  //
+  // Three states, checked in this order because "full" must win over "still
+  // counting down": at/over maxNations starts immediately (issue #9's "once
+  // the human player slots fill up"); at/over minPlayers with room left
+  // starts a one-shot countdown if one isn't already running (issue #9's
+  // "start after a timer runs out and there are at least two human
+  // players"); below minPlayers clears any in-flight countdown, so a lobby
+  // that dips back under the threshold (someone left) doesn't still fire on
+  // its own a few seconds later with too few players.
+  _maybeAdvanceAutoLobby() {
+    if (!this.isAutoLobby || this.stage !== Protocol.GAME_PHASE.LOBBY) return;
+
+    const humanCount = Array.from(this.clients.values()).filter((c) => !c.spectator).length;
+
+    if (humanCount >= this.autoConfig.maxNations) {
+      this._clearAutoStartTimer();
+      this._startAutoLobby();
+      return;
+    }
+    if (humanCount >= GameServer.autoLobbyMinPlayers) {
+      if (this._autoStartTimerID === null) {
+        this._autoStartAt = Date.now() + GameServer.autoLobbyCountdownMs;
+        this._autoStartTimerID = setTimeout(() => this._startAutoLobby(), GameServer.autoLobbyCountdownMs);
+        this._broadcastLobbyInfo(); // tell everyone the countdown just started
+      }
+    } else {
+      this._clearAutoStartTimer();
+    }
+  }
+
+  // Cancels an in-flight countdown, if any, and tells the lobby so a
+  // displayed countdown disappears rather than freezing on a stale value.
+  // Idempotent — safe to call whether or not a timer is actually running.
+  _clearAutoStartTimer() {
+    if (this._autoStartTimerID === null) return;
+    clearTimeout(this._autoStartTimerID);
+    this._autoStartTimerID = null;
+    this._autoStartAt = null;
+    this._broadcastLobbyInfo();
+  }
+
+  // Fires either from the countdown's setTimeout or immediately from the
+  // fill-up branch above. Re-checks LOBBY stage and the min-player floor
+  // because both can have changed between a timer being scheduled and it
+  // actually firing (the fill-up branch already started the match, or
+  // enough players left in the meantime) — a stale timer must be a silent
+  // no-op, never a match starting with too few players.
+  //
+  // AI nation count is computed here, not baked into autoConfig, because it
+  // depends on how many humans actually showed up: maxNations total slots,
+  // minus one per human, per issue #9 ("replacing the Nations").
+  _startAutoLobby() {
+    this._autoStartTimerID = null;
+    this._autoStartAt = null;
+    if (this.stage !== Protocol.GAME_PHASE.LOBBY) return;
+
+    const humanCount = Array.from(this.clients.values()).filter((c) => !c.spectator).length;
+    if (humanCount < GameServer.autoLobbyMinPlayers) return;
+
+    const bots = Math.max(0, this.autoConfig.maxNations - humanCount);
+    this.start({
+      mapSize: this.autoConfig.mapSize,
+      bots: bots,
+      tribes: this.autoConfig.tribes,
+      difficulty: this.autoConfig.difficulty
+    });
+  }
+
+  // Called once by GameManager right after constructing an auto lobby
+  // (before any client can join it, so there is no race with joinClient's
+  // own reads of isAutoLobby/autoConfig). `config` is
+  // { mapSize, tribes, difficulty, maxNations }; `onStart` is invoked once,
+  // from start(), the moment this lobby actually begins — see that field's
+  // own comment on the constructor.
+  configureAutoLobby(config, onStart) {
+    this.isAutoLobby = true;
+    this.isPublic = true;
+    this.autoConfig = config;
+    this._onAutoStart = onStart;
   }
 
   // The `start_game` message's handler (MP-2.3, closing the gap MP-2.2 left:
@@ -650,6 +787,14 @@ class GameServer {
     for (const client of this.clients.values()) {
       this._send(client.ws, Protocol.msg.start(this.turns, this.gameStartInfo, client.clientID));
     }
+
+    // Issue #12: the "rotating" half of rotating open lobbies — tell
+    // GameManager this auto lobby just started so it can spawn its
+    // replacement. Fires after the start broadcast above, and only once
+    // (start() itself is guarded against re-entry by the LOBBY-stage check
+    // at its top), so a second GameServer never exists for the same
+    // gameID/onStart pair.
+    if (this._onAutoStart) this._onAutoStart();
   }
 
   // §6's four lines, unchanged: snapshot the buffered intents into a turn,
@@ -679,6 +824,7 @@ class GameServer {
   // Stop the interval(s) and transition to FINISHED. Idempotent. `reason` is
   // only for the log line.
   end(reason) {
+    this._clearAutoStartTimer(); // defensive: never leaves a dangling setTimeout behind
     if (this.stage === Protocol.GAME_PHASE.ACTIVE) {
       const secs = this._startedAt === null ? 0 : Math.round((Date.now() - this._startedAt) / 1000);
       log.info(this._tag, 'ended: ' + (reason || 'ended')
@@ -732,5 +878,14 @@ GameServer.disconnectedTimeout = 30000;
 // ends it and lets it be reaped. Static, like disconnectedTimeout, so a test
 // can shorten it.
 GameServer.abandonedTimeout = 2 * 60 * 1000;
+
+// Issue #12: rotating open lobbies. Static, like disconnectedTimeout/
+// abandonedTimeout above, so a test can shorten the countdown without
+// editing shipped source. autoLobbyMinPlayers matches issue #9's "at least
+// two human players"; autoLobbyCountdownMs (30s) mirrors this project's own
+// multiplayer spawn-phase duration (docs/multiplayer-architecture.md D1)
+// rather than inventing an unrelated number.
+GameServer.autoLobbyMinPlayers = 2;
+GameServer.autoLobbyCountdownMs = 30 * 1000;
 
 module.exports = GameServer;
