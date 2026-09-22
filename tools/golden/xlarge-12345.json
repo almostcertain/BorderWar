@@ -8,7 +8,7 @@
     "js/game/structures.js": "0abfdd3265e562b6d4e50bbdd9793608933990263e08d39af1282c8c507a28be",
     "js/game/economy.js": "58814fc41c32a268c7bb049ba41f569310b20091f8a0bfe952833f683d818c60",
     "js/game/diplomacy.js": "357fa693674ed94c73998f455f73e3afca0d610f82a5037df768150580fc814d",
-    "js/game/attacks.js": "8ebd5a1c021ced626b9d53a0b800fe4a1edf404d78d25dc860e58751c487e16b",
+    "js/game/attacks.js": "b4b488011abb385b10bf3d2c31a168276af0e61c7a7bc8d245e9e4164a41d0c6",
     "js/game/combat.js": "641cc7e8108f2c93d609b59179a71b85aec7123228e461369470f69e6c0fef9e",
     "js/game/annex.js": "7a6f5af651ada1e613c8d1aad62f5942ff6db86a951fe64adfaf1e3957c50fa6",
     "js/game/seapath.js": "d117bd5c5069972d0b182053202bb8834bb0d3f443651579eb16d5e111cd4e78",
@@ -125,80 +125,80 @@
     },
     {
       "tick": 1150,
-      "hash": 790152254
+      "hash": 4073919594
     },
     {
       "tick": 1200,
-      "hash": 914521802
+      "hash": 2648602243
     },
     {
       "tick": 1250,
-      "hash": 1862185134
+      "hash": 2881582401
     },
     {
       "tick": 1300,
-      "hash": 228078156
+      "hash": 2146636437
     },
     {
       "tick": 1350,
-      "hash": 309754873
+      "hash": 769802966
     },
     {
       "tick": 1400,
-      "hash": 1422727736
+      "hash": 4143886074
     },
     {
       "tick": 1450,
-      "hash": 477569405
+      "hash": 4152537484
     },
     {
       "tick": 1500,
-      "hash": 1679110062
+      "hash": 2117902746
     },
     {
       "tick": 1550,
-      "hash": 2408108015
+      "hash": 1581027366
     },
     {
       "tick": 1600,
-      "hash": 289969520
+      "hash": 837374810
     },
     {
       "tick": 1650,
-      "hash": 1142024233
+      "hash": 2117103029
     },
     {
       "tick": 1700,
-      "hash": 2207178773
+      "hash": 2272023022
     },
     {
       "tick": 1750,
-      "hash": 2635490644
+      "hash": 2296323293
     },
     {
       "tick": 1800,
-      "hash": 2106082304
+      "hash": 3445108116
     },
     {
       "tick": 1850,
-      "hash": 3440209469
+      "hash": 2427553515
     },
     {
       "tick": 1900,
-      "hash": 747153726
+      "hash": 1398867495
     },
     {
       "tick": 1950,
-      "hash": 3642615340
+      "hash": 2682320191
     },
     {
       "tick": 2000,
-      "hash": 996914574
+      "hash": 1853796454
     }
   ],
   "digest": {
     "ownerFNV": 2092050478,
-    "stateSHA256": "16e0dd585ced1b2e4689e82cdae7b116ffc5e7be336b1261d27a67672b4e8cda"
+    "stateSHA256": "74697adb9cf441abc24245ac82fc4a4fb0168bd3067846df08ef37876dc1b6ae"
   },
   "simulationTicks": 1900,
   "coverage": {

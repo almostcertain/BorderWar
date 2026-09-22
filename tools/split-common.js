@@ -16,13 +16,21 @@ function load(context, file) {
 }
 // Realm-independent, type-preserving serialization. Object keys are sorted;
 // Map/Set insertion order is retained because simulation iteration observes it.
+//
+// A true ancestor cycle (an object reachable from itself, e.g. two warships
+// each holding the other as `.target` while a shell fired at one holds the
+// same object again) can't be inlined without recursing forever, so it's cut
+// off with a marker instead of walked. This does not make the digest blind to
+// that state: the object is still fully hashed in full at whatever top-level
+// slot actually owns it (Game.warships' own entries) — only the redundant,
+// already-infinite tail through the back-reference is dropped.
 function stable(value, ancestors = new Set()) {
   if (value === undefined) return ['undefined'];
   if (typeof value === 'function') return ['function', value.toString()];
   if (typeof value === 'number' && !Number.isFinite(value)) return ['number', String(value)];
   if (Object.is(value, -0)) return ['number', '-0'];
   if (value === null || typeof value !== 'object') return value;
-  if (ancestors.has(value)) throw new Error('Cyclic state is unsupported');
+  if (ancestors.has(value)) return ['Cycle'];
   ancestors.add(value);
   const recur = v => stable(v, ancestors);
   const tag = Object.prototype.toString.call(value);

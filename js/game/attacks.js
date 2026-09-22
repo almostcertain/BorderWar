@@ -273,6 +273,22 @@ Object.assign(Game, {
     }
     // Anything still landlocked among its own kind falls to the attacker.
     for (const i of [...defender.tiles]) this.setOwner(i, attackerId);
+
+    // This carve-up is a shortcut around the normal tile-by-tile siege —
+    // ownership moves in bulk via setOwner above, never through stepAttack's
+    // per-tile defenderLossPerTile deduction — so unlike an ordinary kill,
+    // troops here are never actually reduced to near-zero as tiles run out.
+    // Left alone, a defender with any real reserve (e.g. most of it already
+    // committed elsewhere, to a boat or another front, so the DEAD_DEFENDER_
+    // TILES threshold triggered before combat spent it down) becomes a
+    // 0-tile nation sitting on troops that regrow toward maxTroops' BASE_POP
+    // floor forever: alive, but with nothing left to hold or retake — and no
+    // defeat screen, since the tick() elimination sweep only catches troops
+    // < 20. Finalized here instead, the same way annexRegion's wipe-out route
+    // already has to (see its own comment) for the identical reason: no
+    // combat to zero it out.
+    defender.troops = 0;
+    this.eliminatePlayer(defender);
   },
 
   stepAttack(a) {
