@@ -88,6 +88,13 @@ class GameServer {
     // which is an accepted v1 limitation, not a bug to route around here.
     this.creatorClientId = null;
 
+    // Issue #9: whether this lobby is listed in GET /lobbies. Only ever set
+    // from the creator's own `join.public` (see joinClient) — same
+    // first-joiner-wins rule as creatorClientId, so a later joiner can't flip
+    // a lobby public/private after the fact. Defaults false (private,
+    // matching architecture doc D4's v1 default).
+    this.isPublic = false;
+
     this._turnIntervalID = null;
 
     // MP-3.4: the ACTIVE-phase ping-timeout sweep, started/stopped alongside
@@ -155,7 +162,10 @@ class GameServer {
 
     // First successful joiner becomes the creator/host. Deliberately the
     // whole rule — no explicit transfer mechanic (see the constructor note).
-    if (this.creatorClientId === null) this.creatorClientId = clientID;
+    if (this.creatorClientId === null) {
+      this.creatorClientId = clientID;
+      this.isPublic = !!opts.public;
+    }
 
     log.info(this._tag, who(client) + ' joined'
       + (client.spectator ? ' as spectator' : '')

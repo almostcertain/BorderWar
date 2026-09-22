@@ -127,6 +127,10 @@
     iAmHost = false;
     Transport.disconnect();
     UI.hideLobby();
+    // Back on the plain Join form (if that's the active tab) — resume the
+    // browser so a leave-and-relist doesn't require reselecting the tab.
+    const joinTab = document.querySelector('.modeTab[data-mode="join"]');
+    if (joinTab && joinTab.classList.contains('active')) startLobbyListPolling();
   }
 
   function hostLobby() {
@@ -144,17 +148,21 @@
     Transport.connect(onConnect, onServerMessage, {
       local: false,
       gameID: gameID,
-      username: username
+      username: username,
+      public: UI.isPublicLobby()
     });
   }
 
-  function joinLobby() {
+  function joinLobby(gameIDOverride) {
+    if (gameIDOverride) document.getElementById('joinCode').value = gameIDOverride;
     const info = UI.getJoinInputs();
-    if (!info.code) { UI.setLobbyError('Enter a join code.'); return; }
+    const code = gameIDOverride || info.code;
+    if (!code) { UI.setLobbyError('Enter a join code.'); return; }
     myRole = 'join';
     iAmHost = false;
     inLobby = true;
     lobbyLinkOpened = false;
+    stopLobbyListPolling();
 
     Transport.disconnect();
     Runner.reset();
@@ -162,10 +170,45 @@
 
     Transport.connect(onConnect, onServerMessage, {
       local: false,
-      gameID: info.code,
+      gameID: code,
       username: info.username || 'Player'
     });
   }
+
+  // Issue #9: the Join screen's public lobby browser. Polling, not a pushed
+  // update, to match this server's existing shape — GET /lobbies (server/
+  // index.js) is a stateless snapshot, no per-connection subscription to
+  // maintain. Runs only while the plain Join form is actually on screen
+  // (started on the Join tab's click, stopped the moment a join/host
+  // connection is issued or another tab is picked) so a menu left idle on
+  // Singleplayer or Host isn't quietly polling the server forever.
+  let lobbyListIntervalID = null;
+  const LOBBY_LIST_POLL_MS = 4000;
+
+  function refreshLobbyList() {
+    Transport.fetchLobbyList().then((list) => UI.renderPublicLobbies(list, (gameID) => joinLobby(gameID)));
+  }
+
+  function startLobbyListPolling() {
+    stopLobbyListPolling();
+    refreshLobbyList();
+    lobbyListIntervalID = setInterval(refreshLobbyList, LOBBY_LIST_POLL_MS);
+  }
+
+  function stopLobbyListPolling() {
+    if (lobbyListIntervalID !== null) {
+      clearInterval(lobbyListIntervalID);
+      lobbyListIntervalID = null;
+    }
+  }
+
+  document.querySelectorAll('.modeTab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      if (tab.dataset.mode === 'join') startLobbyListPolling();
+      else stopLobbyListPolling();
+    });
+  });
+  document.getElementById('lobbyListRefreshBtn').addEventListener('click', refreshLobbyList);
 
   // Host only. The button this calls from is hidden/disabled for anyone
   // whose last lobby_info said otherwise (UI.updateLobbyFromInfo), and the

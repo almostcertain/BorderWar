@@ -354,6 +354,22 @@ const Transport = {
     return this.send(Protocol.msg.startGame(config));
   },
 
+  // Issue #9 (public lobby browser): a plain HTTP GET, not a WS message —
+  // this runs from the Join screen before any socket exists, and the server
+  // answers it from GameManager.listPublicLobbies() without a game to route
+  // through. Same http(s)/location.host derivation as connectRemote's "THE
+  // DERIVATION" comment above; kept separate because this one is httpBase,
+  // not wsBase. Resolves to [] (never rejects) on any network/parse failure
+  // so a caller can always just render the result, local mode included
+  // (fetch('/lobbies') 404s against nothing running and resolves to []).
+  fetchLobbyList() {
+    const httpBase = (location.protocol === 'https:' ? 'https://' : 'http://') + location.host;
+    return fetch(httpBase + '/lobbies')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((list) => (Array.isArray(list) ? list : []))
+      .catch(() => []);
+  },
+
   // --- The WebSocket seam ----------------------------------------------------
   //
   // Implemented (MP-2.3), against the real server MP-2.1/MP-2.2 built.
@@ -388,6 +404,7 @@ const Transport = {
     const gameID = opts.gameID;
     const username = opts.username;
     const spectator = !!opts.spectator;
+    const isPublic = !!opts.public;
     const persistentID = getPersistentID();
 
     // MP-4.1: remembered so an unexpected close can reconnect on its own —
@@ -424,7 +441,7 @@ const Transport = {
     this.connected = true;
 
     this._wireSocket(this.ws, {
-      firstMessage: Protocol.msg.join(gameID, username, persistentID, spectator),
+      firstMessage: Protocol.msg.join(gameID, username, persistentID, spectator, isPublic),
       isRejoin: false,
       // "the link is up" — mirrors LocalServer.start's onconnect timing
       // (called once the connection exists, before any server message is

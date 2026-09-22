@@ -1255,6 +1255,43 @@ const UI = {
     return { code: code, username: this.getPlayerName() };
   },
 
+  // Issue #9: the host form's "Public" checkbox, read at the same moment
+  // getHostConfig() is (hostLobby(), just before Transport.connect).
+  isPublicLobby() {
+    return !!document.getElementById('hostPublic').checked;
+  },
+
+  // Issue #9: renders GET /lobbies' result into the Join screen's browser
+  // list. `onPick(gameID)` is called on click — main.js owns what that
+  // means (fill the join code and connect), same division as everywhere
+  // else in this file. Re-rendered wholesale on every refresh; this list is
+  // never large enough (§6.1: "never many concurrent games on a self-hosted
+  // box") to need the incremental diffing updateLobbyFromInfo does for the
+  // in-lobby roster.
+  renderPublicLobbies(list, onPick) {
+    const ul = document.getElementById('publicLobbyList');
+    ul.innerHTML = '';
+    if (!list || list.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'lobbyListEmpty';
+      li.textContent = 'No public lobbies right now.';
+      ul.appendChild(li);
+      return;
+    }
+    list.forEach((entry) => {
+      const li = document.createElement('li');
+      const name = document.createElement('span');
+      name.textContent = (entry.host || 'Host') + "'s game";
+      const count = document.createElement('span');
+      count.className = 'lobbyListCount';
+      count.textContent = entry.playerCount + (entry.playerCount === 1 ? ' player' : ' players');
+      li.appendChild(name);
+      li.appendChild(count);
+      li.addEventListener('click', () => onPick(entry.gameID));
+      ul.appendChild(li);
+    });
+  },
+
   // Called by main.js's hostLobby() the moment Transport.connect is issued —
   // shows the join code immediately so it can be shared while the socket is
   // still opening (§6.1 derivation, backpressure buffering in transport.js
@@ -1276,6 +1313,7 @@ const UI = {
     this._lobbyKnownIDs = null;
     document.getElementById('joinLobby').classList.remove('hidden');
     document.getElementById('joinBtn').classList.add('hidden');
+    document.getElementById('publicLobbyBrowser').classList.add('hidden');
     document.getElementById('joinRoster').innerHTML = '';
     document.getElementById('joinPlayerCount').textContent = '';
     this.setLobbyStatus('join', 'Connecting to server…', false);
@@ -1290,6 +1328,7 @@ const UI = {
     document.getElementById('hostCreateBtn').classList.remove('hidden');
     document.getElementById('joinLobby').classList.add('hidden');
     document.getElementById('joinBtn').classList.remove('hidden');
+    document.getElementById('publicLobbyBrowser').classList.remove('hidden');
   },
 
   // `ok` adds the green "live" dot; the connecting state has none.

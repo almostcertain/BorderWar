@@ -980,3 +980,49 @@ html, body {
   color: #ff6b6b;
   font-size: 13px;
 }
+
+.checkboxLabel {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.linkBtn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin-left: 8px;
+  font-size: 12px;
+  color: #3d7dff;
+  opacity: 0.85;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+#publicLobbyList li {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#publicLobbyList li:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+#publicLobbyList li .lobbyListCount {
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+#publicLobbyList .lobbyListEmpty {
+  cursor: default;
+  opacity: 0.5;
+  font-size: 13px;
+}
+
+#publicLobbyList .lobbyListEmpty:hover {
+  background: rgba(255, 255, 255, 0.05);
+}

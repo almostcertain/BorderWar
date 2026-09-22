@@ -336,8 +336,11 @@ const Protocol = {
     join: {
       dir: 'c2s',
       fields: { gameID: 'str', username: 'str', persistentID: 'str' },
-      optional: { spectator: 'bool' },
-      notes: 'lobby only; the server assigns clientID'
+      optional: { spectator: 'bool', public: 'bool' },
+      notes: 'lobby only; the server assigns clientID. `public` (MP-5.1, narrow '
+        + 'scope: issue #9) is only honored from the creator\'s own join — see '
+        + 'GameServer.joinClient — the same "first joiner wins" rule as '
+        + 'creatorClientId, so a later joiner cannot flip a lobby public/private.'
     },
     rejoin: {
       dir: 'c2s',
@@ -453,9 +456,10 @@ const Protocol = {
 
   msg: {
     // Client -> Server
-    join(gameID, username, persistentID, spectator) {
+    join(gameID, username, persistentID, spectator, isPublic) {
       const m = { type: 'join', gameID: gameID, username: username, persistentID: persistentID };
       if (spectator !== undefined) m.spectator = !!spectator;
+      if (isPublic !== undefined) m.public = !!isPublic;
       return m;
     },
     rejoin(gameID, lastTurn, persistentID) {

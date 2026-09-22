@@ -104,7 +104,26 @@ function serveStatic(req, res) {
   });
 }
 
-const server = http.createServer(serveStatic);
+// Issue #9: the public lobby browser's data source. A plain JSON GET, not a
+// WS message — it needs to work from the Join screen before any socket
+// exists, and answering it doesn't touch a specific game's turn loop, so it
+// doesn't belong in gamemanager.js's per-connection message switch. Checked
+// ahead of serveStatic since nothing under REPO_ROOT is named this.
+function serveLobbyList(req, res) {
+  const body = JSON.stringify(gameManager.listPublicLobbies());
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+    'Pragma': 'no-cache'
+  });
+  res.end(body);
+}
+
+const server = http.createServer((req, res) => {
+  const urlPath = req.url.split('?')[0];
+  if (req.method === 'GET' && urlPath === '/lobbies') return serveLobbyList(req, res);
+  return serveStatic(req, res);
+});
 
 // Upgrade only at /ws, matching §3/§6.1's "server/index.js serves the static
 // game and the WS upgrade from the same origin" — one process, one port, so

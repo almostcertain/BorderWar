@@ -44,7 +44,11 @@ Drives **MP-2.4** and a wire-origin detail in **MP-2.1**.
 
 **D4 — Private lobbies only for v1.**
 Host creates a game, shares the `gameID` as a join code, friends join, host starts. No
-matchmaking, no public game list, no accounts. Public lobbies stay deferred to MP-5.1.
+matchmaking, no accounts. Public lobbies stay deferred to MP-5.1 — **except** the narrow
+opt-in browsable list shipped under issue #9 (see MP-5.1 below): a host can flag their own
+lobby public and it appears in a list on the Join screen, but joining and starting are
+unchanged — still host-initiated, no accounts, no matchmaking. Auto-cycling public lobbies
+(this section's original MP-5.1 scope) remain deferred.
 
 **Out of scope for v1, per D2/D4 and §4:** accounts, matchmaking, public lobby lists,
 chat, emoji, gold/troop donation, embargoes, player reports, telemetry, anti-cheat.
@@ -1095,12 +1099,42 @@ since the digest now tracks more state; `ok:true`/zero-divergence is what was ve
 ### Phase 5 — Optional / later
 
 - **MP-5.1** Public auto-created lobbies on a timer (`Master.ts` + `MapPlaylist.ts` shape).
+  Still deferred in full; a narrower slice — host-flagged public lobbies with a browsable
+  list, no auto-cycling — shipped under issue #9. See the task write-up just below.
 - **MP-5.2** Game record persistence and replay — the retained turn log plus the seed is
   already a complete replay; add save/load and a replay-mode `LocalServer` that feeds
   archived turns (`LocalServer.replayTurns`).
 - **MP-5.3** Binary wire encoding (`zbin` analogue).
 - **MP-5.4** Move the sim into a Web Worker.
 - **MP-5.5** Spectators (`spectator` flag already in `join`).
+
+**MP-5.1 (partial) — Host-flagged public lobbies + browser (issue #9) — ✅ shipped**
+- Depends: MP-2.2, MP-2.3
+- Files: `js/net/protocol.js`, `js/net/transport.js`, `server/gamemanager.js`,
+  `server/gameserver.js`, `server/index.js`, `index.html`, `js/ui.js`, `js/main.js`,
+  `css/style.css`
+- Scope, deliberately narrower than the original MP-5.1 bullet above: the host ticks a
+  "Public" checkbox before creating a lobby (`join`'s new optional `public` field, honored
+  only from the creator's own join — same first-joiner-wins rule as `creatorClientId`, so
+  a later joiner can't flip it). The lobby then appears in a list on the Join screen. The
+  host is still the one who clicks Start; there is no timer, no auto-cycling, no
+  matchmaking, and no accounts — those stay deferred, unlike OpenFront's `Master.ts` /
+  `MapPlaylist.ts` model this bullet originally referenced.
+- Wire shape: a plain `GET /lobbies` HTTP route on the existing static-file server
+  (`server/index.js`), answered from `GameManager.listPublicLobbies()` — `[{gameID, host,
+  playerCount}]` for LOBBY-stage games with `isPublic` set. Deliberately **not** a WS
+  message type: it needs to work from the Join screen before any socket exists, and a
+  stateless snapshot GET needs no per-connection subscription bookkeeping. The client
+  (`Transport.fetchLobbyList()`) polls it every 4s while the plain Join form is on screen,
+  stopping the moment a connection is issued or another tab is picked, plus a manual
+  Refresh button.
+- A lobby drops off the list the instant the game leaves LOBBY stage (`start()` flips
+  `stage` to `ACTIVE`) — `listPublicLobbies()` filters on stage, no separate cleanup needed.
+- No sim files touched (net/server/UI only, none of `js/game/*`, `js/ai.js`, `js/map.js`,
+  `js/noise.js`) — no golden re-record.
+- Done when: a host-flagged lobby appears in a second client's Join-screen list, clicking
+  an entry fills the join code and connects, and the entry disappears once the host starts.
+  Verified live over `node server/index.js` with two browser tabs.
 
 ---
 
@@ -1112,7 +1146,7 @@ Phase 1  intent pipeline    no server, SP now runs on the MP code path
 Phase 2  server             two scripted clients share a turn stream
 Phase 3  multi-human sim    real 2+ player matches
 Phase 4  resilience         reconnect, desync detection, rate limiting
-Phase 5  optional           public lobbies, replay, binary wire, worker
+Phase 5  optional           public lobbies (partial, #9), replay, binary wire, worker
 ```
 
 The commitment point is Phase 1: once singleplayer runs through `Transport` /

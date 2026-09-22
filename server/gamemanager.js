@@ -82,6 +82,26 @@ class GameManager {
     return this.games.get(gameID) || null;
   }
 
+  // Issue #9: backs GET /lobbies (server/index.js). Only LOBBY-stage games
+  // flagged public — a game that's started or finished has nothing left to
+  // join, and joinClient already rejects joins to either (see its own
+  // comment). Host display name is whichever client became creatorClientId;
+  // falls back to 'Host' the same way js/main.js's hostLobby() does if a
+  // username somehow came through empty.
+  listPublicLobbies() {
+    const out = [];
+    for (const game of this.games.values()) {
+      if (!game.isPublic || game.stage !== Protocol.GAME_PHASE.LOBBY) continue;
+      const host = game.clients.get(game.creatorClientId);
+      out.push({
+        gameID: game.gameID,
+        host: (host && host.username) || 'Host',
+        playerCount: game.clients.size
+      });
+    }
+    return out;
+  }
+
   removeGame(gameID) {
     this.games.delete(gameID);
   }
@@ -157,7 +177,7 @@ class GameManager {
       }
       const game = this.createGame(msg.gameID);
       const client = new Client(ws);
-      const clientID = game.joinClient(client, { username: msg.username, spectator: msg.spectator });
+      const clientID = game.joinClient(client, { username: msg.username, spectator: msg.spectator, public: msg.public });
       if (clientID === null) return; // joinClient already closed/errored it (mid-game join)
       this._wire(game, ws, clientID);
     });

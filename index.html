@@ -170,6 +170,7 @@
       </label>
       <label>Bots <input id="hostBotCount" type="number" min="0" max="31" value="9"></label>
       <label>Tribes <input id="hostTribeCount" type="number" min="0" max="80" value="16"></label>
+      <label class="checkboxLabel"><input id="hostPublic" type="checkbox"> Public (visible in lobby browser)</label>
       <button id="hostCreateBtn">Create Lobby</button>
 
       <div id="hostLobby" class="hidden">
@@ -186,6 +187,11 @@
     <div id="joinMode" class="modeBody hidden">
       <label>Join code <input id="joinCode" type="text" maxlength="12" placeholder="ABC123"></label>
       <button id="joinBtn">Join Lobby</button>
+
+      <div id="publicLobbyBrowser">
+        <div class="lobbyLabel">Public lobbies <button id="lobbyListRefreshBtn" class="linkBtn">Refresh</button></div>
+        <ul id="publicLobbyList" class="lobbyRoster"></ul>
+      </div>
 
       <div id="joinLobby" class="hidden">
         <div id="joinStatus" class="lobbyStatus"></div>
