@@ -1,13 +1,79 @@
 // Bot behaviour: expansion, and — since alliances exist — diplomacy.
 //
 // OpenFront branches almost every diplomatic decision on a difficulty setting.
-// This game has none yet, so every threshold below is their MEDIUM column,
-// noted at each site so the rest can be filled in when difficulty arrives.
+// The thresholds below are their MEDIUM column; PROFILES carries the few that
+// the Easy and Hard tiers move, and profile() picks the row for the match.
 const AI = {
+  // What a difficulty changes about how a Nation *plays*. The other half — how
+  // many troops it starts with, how high its cap and growth run — is
+  // Game.NATION_DIFFICULTY in game/economy.js. Tribes ignore both.
+  //
+  // MEDIUM MUST STAY THE BASELINE: every value in that row is the constant it
+  // replaced, so a Medium match plays exactly as it did before difficulty
+  // existed (the sim goldens pin this). Tune Easy and Hard around it.
+  //
+  //   thinkMult / navalMult  scale the gap between land / naval decisions —
+  //                          Easy reacts slowly, Hard reacts quickly.
+  //   attackRatio            share of troops a fresh nation-vs-nation strike
+  //                          commits; neutralRatio is the same for free land.
+  //   confusion              1-in-n chance an alliance answer is a coin flip
+  //                          instead of a decision; 0 = never confused.
+  //   betrayHelpless         betray an ally whose army is under 1/n of ours.
+  //   betrayOpportunist      also betray a traitor who can't punish it, or the
+  //                          last neighbour on the map.
+  //   nukes                  whether it builds Silos and fires warheads at all.
+  //   nukeChance / hydrogenChance  1-in-n roll per economy cycle to fire, and
+  //                          to make that warhead a Hydrogen Bomb.
+  PROFILES: {
+    easy: {
+      thinkMult: 1.6, navalMult: 1.6,
+      attackRatio: 0.4, neutralRatio: 0.3,
+      confusion: 10,
+      betrayHelpless: 20, betrayOpportunist: false,
+      nukes: false, nukeChance: 0, hydrogenChance: 4
+    },
+    medium: {
+      thinkMult: 1, navalMult: 1,
+      attackRatio: 0.55, neutralRatio: 0.35,
+      confusion: 20,
+      betrayHelpless: 10, betrayOpportunist: true,
+      nukes: true, nukeChance: 8, hydrogenChance: 4
+    },
+    hard: {
+      thinkMult: 0.7, navalMult: 0.7,
+      attackRatio: 0.65, neutralRatio: 0.45,
+      confusion: 0,
+      betrayHelpless: 5, betrayOpportunist: true,
+      nukes: true, nukeChance: 5, hydrogenChance: 3
+    }
+  },
+
+  profile() {
+    return this.PROFILES[Game.difficulty] || this.PROFILES[Game.DEFAULT_DIFFICULTY];
+  },
+
+
   // OpenFront's Relation enum is a banding of the raw [-100, 100] value:
   // < -50 Hostile, < 0 Distrustful, < 50 Neutral, >= 50 Friendly.
   DISTRUSTFUL: 0,
   FRIENDLY: 50,
+
+  // Kickoff observation (2026-09-10): a fresh, un-atWar nation bordering a
+  // Tribe was committing the full 55% ratio below to its very first strike,
+  // stacked on top of tribePriorityMult()'s up-to-3x score bonus and
+  // tileCost's 30% defender discount for a Tribe target (see
+  // BOT_DEFENDER_LOSS_MULT). That one opening attack was routinely enough to
+  // overrun a meaningful chunk of a Tribe's whole border in a single tick —
+  // long before the Tribe's own slow 5%-troop nibble (TribeAI.think, every
+  // 3-7s) could produce any visible growth of its own. From the player's
+  // seat this reads as "tribes don't expand," because the bordering ones
+  // never get the chance to: they're gone before their own AI cycle would
+  // have shown anything. TRIBE_ATTACK_RATIO gives a fresh strike on a Tribe
+  // the same restrained commit as a neutral-land grab instead of a full
+  // nation-vs-nation opener — enough to keep pressuring it, not enough to
+  // erase its border in one hit — mirroring TRIBE_SKIRMISH_RATIO's existing
+  // reasoning for the already-atWar case just below.
+  TRIBE_ATTACK_RATIO: 0.35,   // vs. the normal 0.55 for a fresh nation-vs-nation attack
 
   // Real OpenFront's own AI gives Tribes no special targeting priority (its
   // only Tribe-specific rule is the neutral-tile toll discount and the
@@ -40,23 +106,25 @@ const AI = {
   TRIBE_PRIORITY_FLOOR: 0.5,      // never decays below 1.5x, for the rest of the match
   TRIBE_PRIORITY_WINDOW: 240,     // linearly fades from kickoff bonus to the floor over 4 minutes
 
-  update(dt) {
+  update() {
+    const prof = this.profile();
     for (const p of Game.players) {
       if (!p.isBot || !p.alive) continue;
 
-      p.nextThink -= dt;
+      p.nextThink -= Game.TICK_DT;
       if (p.nextThink <= 0) {
-        p.nextThink = 2 + Game.rng() * 3;
+        p.nextThink = (2 + Game.rng() * 3) * prof.thinkMult;
         this.diplomacy(p);
         this.economy(p);
+        this.reviewAttacks(p);
         this.think(p);
       }
 
       // Separate, slower cooldown: navalThink runs a sea-path BFS rather than
       // a cheap map scan, so it doesn't get to think on land's cadence.
-      p.nextNavalThink -= dt;
+      p.nextNavalThink -= Game.TICK_DT;
       if (p.nextNavalThink <= 0) {
-        p.nextNavalThink = 15 + Game.rng() * 10;
+        p.nextNavalThink = (15 + Game.rng() * 10) * prof.navalMult;
         this.navalThink(p);
       }
     }
@@ -81,9 +149,11 @@ const AI = {
     }
   },
 
-  // Only answer a renewal the ally has already asked for. A bot never opens the
-  // renewal itself, exactly as OpenFront's nations behave — the human's ally
-  // has to make the first move.
+  // Only answer a renewal the ally has already asked for. A bot never opens
+  // the renewal itself, exactly as OpenFront's nations behave — whichever
+  // side of the alliance p is (human or NPC), the *other* side has to make
+  // the first move. Not human-specific: with more than one human in a match
+  // this fires identically for every alliance a bot holds, human ally or not.
   handleExtensions(p) {
     for (const al of Game.alliances) {
       if (al.a !== p.id && al.b !== p.id) continue;
@@ -105,13 +175,16 @@ const AI = {
     }
   },
 
-  // OpenFront's getAllianceDecision, Medium column throughout. `isResponse` is
-  // true when answering someone else's offer rather than opening one.
+  // OpenFront's getAllianceDecision, Medium column throughout bar the
+  // confusion rate. `isResponse` is true when answering someone else's offer
+  // rather than opening one.
   allianceDecision(p, other, isResponse) {
     if (!other || !other.alive) return false;
 
     // Medium nations are confused 5% of the time, and then simply flip a coin.
-    if (this.chance(20)) return this.chance(2);
+    // Easy ones twice as often; Hard ones never are.
+    const confusion = this.profile().confusion;
+    if (confusion && this.chance(confusion)) return this.chance(2);
 
     // Nearly always refuse a traitor. This is the sharpest edge of the betrayal
     // penalty: for half a minute nobody will deal with you.
@@ -145,9 +218,11 @@ const AI = {
 
   // OpenFront's maybeBetray, Medium column: stab the helpless, stab a traitor
   // who cannot punish you for it, and stab your last neighbour when the map is
-  // otherwise yours.
+  // otherwise yours. Easy keeps only a much blunter form of the first; Hard
+  // stabs the merely weak.
   maybeBetray(p) {
     if (p.allies.size === 0) return;
+    const prof = this.profile();
     const borderCount = [...this.borderTargets(p, true).keys()].filter(id => id >= 0).length;
 
     for (const allyId of [...p.allies]) {
@@ -158,9 +233,9 @@ const AI = {
       // sharper maxTroops-aware version is Hard and Impossible only, and
       // triggers far more often, so using it here would make bots backstab at
       // roughly the rate their hardest difficulty does.
-      const helpless = p.troops >= other.troops * 10;
-      const stabbable = Game.isTraitor(other) && other.troops < p.troops * 1.2;
-      const alone = borderCount === 1 && other.troops * 3 < p.troops;
+      const helpless = p.troops >= other.troops * prof.betrayHelpless;
+      const stabbable = prof.betrayOpportunist && Game.isTraitor(other) && other.troops < p.troops * 1.2;
+      const alone = prof.betrayOpportunist && borderCount === 1 && other.troops * 3 < p.troops;
 
       if (helpless || stabbable || alone) {
         Game.breakAlliance(p.id, allyId);
@@ -186,9 +261,124 @@ const AI = {
   // see project memory). Picking whichever pool member the bot currently
   // owns fewer of, instead of a fixed member, makes purchases alternate
   // between them as the shared price climbs rather than fixating on one.
+  // How many separate SAM Launchers to plant for territorial coverage before
+  // further spend switches to leveling up the weakest one instead — see
+  // economy()'s own comment on why charges (per-structure) matter more past
+  // that point than range (which barely moves per level anyway). Not an
+  // OpenFront difficulty column port — their AI files weren't scoped for
+  // this session, same disclaimer as TRIBE_PRIORITY_BONUS/maybeNuke above —
+  // just a number small enough to spread a couple of launchers across a
+  // nation's coastline/border before committing to upgrades.
+  SAM_COVERAGE_TARGET: 2,
+
+  // --- Strategic savings ---------------------------------------------------
+  // economy() below buys whatever it can afford as it walks Game.UNITS, and
+  // that alone is enough to put the entire Silo/nuke/SAM half of the tech
+  // tree permanently out of a bot's reach. Fort is the culprit: its price is
+  // LINEAR and capped at 250k (see its UNITS entry), and fortSite() finds a
+  // fresh border tile essentially forever, so a mature nation buys another
+  // Fort every time its treasury crosses 250k and never climbs past it.
+  // Measured headless over a 20-minute, 9-bot large-map match before this
+  // change: 230 Forts for 52.9M gold — 69% of all bot spending — median bot
+  // treasury peaking at 60k against a 1M Silo, and across every seed tried,
+  // zero Silos, zero SAM Launchers and zero nukes launched, ever. Bots
+  // weren't declining to go nuclear; they were structurally incapable of it.
+  //
+  // Two fixes, both here rather than in the cost table (prices are ported
+  // from OpenFront's Config.ts and shouldn't be retuned to paper over an AI
+  // problem):
+  //
+  //   (a) FORT_CAP_BASE below bounds the Fort sink, so a treasury can grow.
+  //   (b) savingsGoal()/savingsReserve() give the bot ONE big-ticket item it
+  //       is currently saving for and forbid every cheaper purchase from
+  //       eating into that reserve — the "when it does [compete for the
+  //       money], this becomes a choice rather than a reflex" the economy()
+  //       comment above has been anticipating.
+  //
+  // Forts protect what a nation has built, so their cap scales with what
+  // there is to protect rather than with raw territory: a bot may hold this
+  // many Forts plus one per City it owns. Generous enough that a big nation
+  // still fortifies a real front (a 9-city nation gets 11), tight enough that
+  // Fort stops being an infinite hole in the budget.
+  FORT_CAP_BASE: 2,
+
+  // Don't start hoarding for a 1M Silo out of a two-city economy — the pause
+  // in City/Factory/Port growth would cost more than the missile is worth,
+  // and maxTroops keys off City level, so a bot that stops developing stops
+  // being able to fight at all. Three cities is roughly where a bot's income
+  // (flat GOLD_PER_SEC plus train/trade-ship lumps) can refill a reserve
+  // without freezing everything else for the rest of the match.
+  SILO_MIN_CITIES: 3,
+
+  // Which single big-ticket purchase this bot is currently banking toward, or
+  // null for "nothing — spend freely." Strictly ordered, one goal at a time:
+  // a bot that tried to save for a Silo and a SAM at once would reserve 2.5M
+  // and never buy either.
+  //
+  //   1. Silo first. Without one, no nuke of any kind can ever be launched
+  //      (resolveNukeLaunch rejects outright), and it's the gate on the whole
+  //      branch.
+  //   2. Then SAM cover, but only once somebody else's Silo actually exists
+  //      to defend against — a launcher bought before anyone can nuke you is
+  //      1.5M spent on nothing. Capped at SAM_COVERAGE_TARGET, matching the
+  //      coverage-then-upgrade rule economy() already applies.
+  //   3. Otherwise keep an Atom Bomb's price in the bank permanently, so a
+  //      built Silo is an armed Silo. Without this the bot buys the Silo,
+  //      immediately spends the next 250k it sees on a Fort, and the launcher
+  //      sits empty — which is exactly the failure this whole block exists to
+  //      stop, one rung further up the ladder.
+  //
+  // All three counts come off ONE walk of Game.buildings rather than the two
+  // countBuilt() calls plus a separate rival scan the obvious spelling would
+  // make: this runs per bot per economy() cycle, and countBuilt is already a
+  // whole-map walk on its own. The rival count includes the human's Silos —
+  // "who can nuke me" has nothing to do with who is a bot.
+  savingsGoal(p) {
+    if (Game.unitsOwned(p, 'city') < this.SILO_MIN_CITIES) return null;
+
+    let ownSilos = Game.unitsPending(p, 'silo');
+    let ownSams = 0, rivalSilos = 0;
+    for (const b of Game.buildings.values()) {
+      if (!b.built) continue;
+      const owner = GameMap.owner[b.tile];
+      if (b.type === 'silo') {
+        if (owner === p.id) ownSilos++;
+        else if (owner >= 0 && !Game.areAllied(p.id, owner)) rivalSilos++;
+      } else if (b.type === 'sam' && owner === p.id) {
+        ownSams++;
+      }
+    }
+
+    // A tier that never fires has no use for a Silo or a warhead's reserve, but
+    // still wants cover against someone else's.
+    const nukes = this.profile().nukes;
+    if (nukes && ownSilos < 1) return 'silo';
+    if (rivalSilos > 0 && ownSams < this.SAM_COVERAGE_TARGET) return 'sam';
+    return nukes ? 'atombomb' : null;
+  },
+
+  savingsReserve(p, goal) {
+    return goal ? Game.unitCost(p, goal) : 0;
+  },
+
   economy(p) {
+    // The one thing this bot is banking toward, and the treasury floor every
+    // OTHER purchase below has to respect — see savingsGoal's comment. The
+    // goal type itself is exempt (its reserve IS its price), so the branch
+    // that finally buys it isn't blocked by its own savings.
+    const goal = this.savingsGoal(p);
+    const reserve = this.savingsReserve(p, goal);
+    const spendable = t => p.gold - (t === goal ? 0 : reserve);
+
     const consideredTypes = new Set();
     for (const u of Game.UNITS) {
+      // Warship/AtomBomb/HydrogenBomb (see their own UNITS entries'
+      // `action: true`) never land on a land tile via buildBlockReason/
+      // build — each gets its own dedicated purchase call below instead.
+      // Silo has no flag: it's an ordinary territory-bound structure like
+      // City/Factory/Port/Fort, so it rides this generic loop and
+      // buildSite(p) (the ternary below's fallback) same as they do.
+      if (u.action) continue;
       if (consideredTypes.has(u.type)) continue;
       const pool = u.costGroup || [u.type];
       for (const t of pool) consideredTypes.add(t);
@@ -202,12 +392,188 @@ const AI = {
         }
       }
 
-      // Forts are only worth building once there's at least one city to defend.
-      if (type === 'fort' && Game.unitsOwned(p, 'city') < 1) continue;
-      if (p.gold < Game.unitCost(p, type)) continue;
+      // Forts, Silos, and SAM Launchers are only worth building once there's
+      // at least one city to defend/support — a Silo in particular is the
+      // single most expensive flat-cost purchase in the game (1M, same as a
+      // maxed-out City), and a SAM Launcher's own 1.5M starting price is
+      // higher still, neither worth a fresh nation's very first gold.
+      if ((type === 'fort' || type === 'silo' || type === 'sam') && Game.unitsOwned(p, 'city') < 1) continue;
+
+      // A Silo is only ever worth its 1M to a nation that will fire from it.
+      if (type === 'silo' && !this.profile().nukes) continue;
+
+      // Fort's own cap — see FORT_CAP_BASE. Checked before the price test so
+      // a built-out nation's Fort gold is left in the treasury for the
+      // savings goal instead of being handed to a 231st Defense Fort.
+      if (type === 'fort' &&
+          this.countBuilt(p, 'fort') + Game.unitsPending(p, 'fort') >=
+            this.FORT_CAP_BASE + Game.unitsOwned(p, 'city')) continue;
+
+      if (spendable(type) < Game.unitCost(p, type)) continue;
+
+      // SAM's real payoff past its first couple of launchers is charges, not
+      // range: samRange(level) asymptotes almost immediately (level 1→2 gains
+      // barely a tile), but a SAM's samQueue cap IS its level — a level-2 SAM
+      // can shoot down two converging nukes without waiting on SAM_COOLDOWN,
+      // a level-1 one can't (see stepSAMs/dynamicSamRange). buildSite alone
+      // never surfaces that: on any nation past a trivial size it keeps
+      // finding a fresh tile every cycle, so bots would scatter unlimited
+      // lone level-1 SAMs and never once upgrade one — real coverage, but
+      // no nation ever gets a SAM that can actually stop a two-nuke strike.
+      // Once SAM_COVERAGE_TARGET launchers already give the territory
+      // spread, further SAM spend concentrates on leveling up the weakest
+      // one instead of planting yet another single-charge launcher.
+      if (type === 'sam' && this.countBuilt(p, 'sam') >= this.SAM_COVERAGE_TARGET) {
+        // Unconditional continue, even when nothing is upgradable THIS cycle
+        // (every SAM already mid-upgrade) — falling through to buildSite
+        // below would otherwise plant a fresh 3rd/4th/... SAM the moment the
+        // existing ones are all busy, defeating the whole point of capping
+        // structure count in favor of levels.
+        const upgradeTile = this.weakestBuilt(p, 'sam');
+        if (upgradeTile >= 0 && Game.canUpgrade(p.id, upgradeTile)) Game.upgrade(p.id, upgradeTile);
+        continue;
+      }
+
       const tile = type === 'fort' ? this.fortSite(p) : type === 'port' ? this.portSite(p) : this.buildSite(p);
       if (tile >= 0) Game.build(p.id, type, tile);
+      // No fresh site at all (a small/landlocked/built-out nation) but the
+      // type still has room to grow in place — upgrade the weakest one
+      // rather than leaving this cycle's gold unspent. Fort/Silo/Warship/
+      // the bombs are all upgradable:false, so this only ever fires for
+      // City/Factory/Port/SAM, and never fights the branch above for SAM.
+      else if (Game.unitDef(type).upgradable) {
+        const upgradeTile = this.weakestBuilt(p, type);
+        if (upgradeTile >= 0 && Game.canUpgrade(p.id, upgradeTile)) Game.upgrade(p.id, upgradeTile);
+      }
     }
+
+    // Warship/AtomBomb/HydrogenBomb are `action: true` (see the loop's own
+    // comment above) — none of them land in Game.buildings, so each needs
+    // its own site/target selection and its own purchase call rather than
+    // the generic build() the loop above uses. A Port is a hard requirement
+    // for Warship (per Game.resolveWarshipLaunch's own comment — a
+    // deliberate user design request, not an OpenFront fidelity thing),
+    // checked here too so a bot without one skips straight past instead of
+    // wasting a coastalTiles scan on a purchase that's going to fail anyway.
+    if (Game.unitsOwned(p, 'port') >= 1 && spendable('warship') >= Game.unitCost(p, 'warship') &&
+        Game.warships.filter(w => w.owner === p.id).length < Game.MAX_WARSHIPS_PER_PLAYER) {
+      const site = this.warshipSite(p);
+      if (site >= 0) Game.buildWarship(p.id, site);
+    }
+
+    this.maybeNuke(p);
+  },
+
+  // A bot with a ready Silo and a warhead's worth of gold banked (see
+  // savingsGoal — keeping that gold banked is what makes this reachable at
+  // all) occasionally fires an Atom Bomb at whichever rival it currently
+  // borders/fights the most, using the same `contact` signal think() already
+  // computes via borderTargets. Tribes and neutral land are skipped: a
+  // Tribe's whole army is already Fort/Warship-tier cheap to just walk over,
+  // and nuking unclaimed land destroys nothing worth destroying. Gated at
+  // 1-in-8 per economy() cycle (which itself runs every 2-5s per bot) so a
+  // bot with a ready Silo doesn't nuke on literally the first opportunity
+  // every time.
+  //
+  // Still not a port of OpenFront's own nuke-targeting AI (Config.ts/the bot
+  // behaviour files have real troop-cluster alertness scoring for this that
+  // wasn't part of this session's scope), but no longer a blind random tile
+  // either — nukeTarget() below aims at the target's own hardware, which is
+  // the part that actually made a strike feel deliberate rather than random
+  // when watched.
+  //
+  // Hydrogen Bomb chance, on top of the base 1-in-8: it's 6.67x the Atom
+  // Bomb's price (5M vs 750k) for 3.3x the outer blast radius (see
+  // NUKE_MAGNITUDES), so it only pays for itself against a rival with enough
+  // territory/troops for that radius to actually land on something —
+  // dropped on a nation the size of a Tribe it would mostly detonate over
+  // empty conquered dirt. HYDROGEN_WORTHY below gates on the target
+  // outweighing the bot itself; this chance then further rations it so a
+  // flush bot doesn't reach for the biggest bomb every single time the
+  // worthy-target condition holds.
+  // (1-in-n; the per-difficulty value lives in PROFILES.hydrogenChance.)
+  maybeNuke(p) {
+    const prof = this.profile();
+    if (!prof.nukeChance) return;
+    if (p.gold < Game.unitCost(p, 'atombomb')) return;
+    // hasReadySilo() rather than the cheaper unitsOwned(p, 'silo') check this
+    // replaced, for two reasons. It tests SILO_COOLDOWN as well as ownership,
+    // so a reloading Silo doesn't burn the 1-in-8 roll below on a
+    // launchNuke() that can only return false. And it reads the real
+    // buildings map instead of the p.units running total, which is observably
+    // capable of going NEGATIVE (seen headless: a bot ending a match at
+    // units.silo === -1 while still holding land) — an unrelated bookkeeping
+    // bug in setOwner's capture/destroy accounting, but one that would
+    // silently disarm a bot's Silo for the rest of the match if this gate
+    // depended on that counter.
+    if (!this.hasReadySilo(p)) return;
+    if (!this.chance(prof.nukeChance)) return;
+
+    let best = -1, bestContact = 0;
+    for (const [targetId, contact] of this.borderTargets(p)) {
+      if (targetId < 0) continue;
+      const t = Game.players[targetId];
+      if (!t || !t.alive || t.isTribe) continue;
+      if (contact > bestContact) { bestContact = contact; best = targetId; }
+    }
+    if (best < 0) return;
+
+    const target = Game.players[best];
+    const targetTile = this.nukeTarget(target);
+    if (targetTile < 0) return;
+
+    const hydrogenWorthy = target.tiles.size > p.tiles.size || target.troops > p.troops;
+    const type = hydrogenWorthy && p.gold >= Game.unitCost(p, 'hydrogenbomb') && this.chance(prof.hydrogenChance)
+      ? 'hydrogenbomb' : 'atombomb';
+    Game.launchNuke(p.id, type, targetTile);
+  },
+
+  // At least one owned, completed, off-cooldown Silo — the same test
+  // resolveNukeLaunch applies, checked here so maybeNuke can bail before
+  // spending its 1-in-8 roll.
+  hasReadySilo(p) {
+    for (const b of Game.buildings.values()) {
+      if (b.type !== 'silo' || !b.built) continue;
+      if (GameMap.owner[b.tile] !== p.id) continue;
+      if (Game.elapsed - b.lastLaunchAt >= Game.SILO_COOLDOWN) return true;
+    }
+    return false;
+  },
+
+  // Where to actually put the warhead. A nuke's whole value is what the blast
+  // destroys — structures change hands with the ground and die with it — so
+  // aim at the target's own hardware rather than a uniformly random tile of a
+  // nation that may be 90% empty conquered dirt. Ranked by what hurts most to
+  // lose: their Silo first (it's the only thing that can nuke back), then
+  // their SAM cover (removing it clears the way for the next strike), then
+  // the economy. Jittered so a nation under repeated fire doesn't eat every
+  // warhead on the same tile — and deliberately NOT a full scoring pass over
+  // blast-radius contents, which is the OpenFront-fidelity version this still
+  // isn't.
+  //
+  // Falls back to a random owned tile when the target has nothing built,
+  // which is also the pre-existing behaviour for every target.
+  NUKE_TARGET_PRIORITY: { silo: 4, sam: 3, city: 2, factory: 1, port: 1 },
+
+  nukeTarget(target) {
+    let best = -1, bestScore = 0;
+    for (const b of Game.buildings.values()) {
+      if (!b.built) continue;
+      if (GameMap.owner[b.tile] !== target.id) continue;
+      const weight = this.NUKE_TARGET_PRIORITY[b.type] || 0;
+      if (weight === 0) continue;
+      // Jitter is strictly smaller than one priority step, so it shuffles
+      // between equally-valuable targets without ever letting a Port outrank
+      // a Silo.
+      const score = weight * 4 + Math.floor(Game.rng() * 4);
+      if (score > bestScore) { bestScore = score; best = b.tile; }
+    }
+    if (best >= 0) return best;
+
+    if (target.tiles.size === 0) return -1;
+    let n = Math.floor(Game.rng() * target.tiles.size);
+    for (const t of target.tiles) if (n-- <= 0) return t;
+    return -1;
   },
 
   // Inland by preference: a city on the front line is a gift to whoever takes
@@ -226,17 +592,49 @@ const AI = {
     return fallback;
   },
 
-  // Border-adjacent by preference — the opposite of buildSite's interior bias.
-  // A fort placed on the front line covers the most contested ground with its
-  // protection radius.
+  // Fort placed exactly on the front line was found to die for free: the
+  // instant the enemy took a single tile it stood on, it was destroyed
+  // before its protection bonus ever mattered (a fort is destroyed, not
+  // captured, when its tile changes hands — see Game.setOwner's fort
+  // branch). Set back fortBorderBuffer() tiles from
+  // the border/coast instead — still border-adjacent by preference (the
+  // opposite of buildSite's interior bias) so it covers contested ground
+  // with its protection radius, just no longer the literal first tile lost.
+  // The defense/speed bonus doesn't stack (Game.fortInRange is a boolean
+  // "any fort in range", not a count), so a second fort inside an existing
+  // one's radius buys nothing but wastes gold and a build slot — skip
+  // any candidate tile already covered, built or still under construction.
+  //
+  // The setback is a FRACTION of the protection radius, not the flat 4 tiles
+  // this held while Game.fortRange() was a flat 30. Those two numbers are the
+  // same knob read twice: the buffer buys survivability by trading away
+  // forward coverage, and 4/30 is the ratio that was tuned. Left absolute, a
+  // medium-map fort (radius 7.5) set back 4 tiles would reach only 3.5 tiles
+  // past the border — a bot spending up to 250k gold on an aura that covers
+  // essentially none of the ground being fought over. Scaled, xlarge still
+  // gets exactly 4 and the smaller sizes get 1-2.
+  FORT_BUFFER_RATIO: 4 / 30,
+
+  fortBorderBuffer() {
+    return Math.max(1, Math.round(Game.fortRange() * this.FORT_BUFFER_RATIO));
+  },
+
   fortSite(p) {
     if (p.tiles.size === 0) return -1;
+    const buffer = this.fortBorderBuffer();
     let fallback = -1;
+    let fallbackDepth = -1;
     for (let attempt = 0; attempt < 15; attempt++) {
       const tile = this.sampleTile(p);
       if (tile < 0 || Game.buildings.has(tile)) continue;
-      if (fallback < 0) fallback = tile;
-      if (!this.isInterior(p, tile)) return tile;
+      if (Game.fortInRange(tile, p.id, true)) continue;
+      // How many full rings of owned tiles surround this candidate, capped
+      // at the buffer — small nations that don't own enough depth anywhere
+      // still get their best available candidate via fallbackDepth rather
+      // than skipping the fort entirely.
+      const depth = this.interiorDepth(p, tile, buffer);
+      if (depth > fallbackDepth) { fallback = tile; fallbackDepth = depth; }
+      if (depth >= buffer) return tile;
     }
     return fallback;
   },
@@ -257,6 +655,48 @@ const AI = {
     return -1;
   },
 
+  // Picks a sensible coastal destination to send a new Warship toward — not
+  // where it launches from any more (Game.resolveWarshipLaunch always picks
+  // the nearest owned Port for that part). Reuses the same real
+  // coastalTiles() scan portSite does (blind random sampling misses the
+  // coast too often on a large empire, per that function's own comment),
+  // then snaps each candidate shore tile out onto the nearest actual open
+  // water touching it.
+  warshipSite(p) {
+    for (const t of this.coastalTiles(p)) {
+      const water = Game.nearestOwnedWaterNear(p.id, t, Game.WARSHIP_SNAP_MAX_DIST);
+      if (water >= 0) return water;
+    }
+    return -1;
+  },
+
+  // How many completed structures of `type` p currently owns — distinct from
+  // Game.unitsOwned, which sums LEVELS rather than counting placements (see
+  // the UNITS comment in game/structures.js on why). Needed wherever a per-STRUCTURE
+  // effect (SAM's charge slots) has to be told apart from a per-LEVEL sum
+  // that prices identically either way.
+  countBuilt(p, type) {
+    let n = 0;
+    for (const b of Game.buildings.values()) {
+      if (b.type === type && b.built && GameMap.owner[b.tile] === p.id) n++;
+    }
+    return n;
+  },
+
+  // The owned, completed, not-already-upgrading structure of `type` with the
+  // lowest level — spending an upgrade here first keeps a nation's set of
+  // that type from ending up with one maxed one and the rest permanently
+  // stuck at level 1.
+  weakestBuilt(p, type) {
+    let best = -1, bestLevel = Infinity;
+    for (const b of Game.buildings.values()) {
+      if (b.type !== type || !b.built || b.upgrading) continue;
+      if (GameMap.owner[b.tile] !== p.id) continue;
+      if (b.level < bestLevel) { bestLevel = b.level; best = b.tile; }
+    }
+    return best;
+  },
+
   sampleTile(p) {
     let n = Math.floor(Game.rng() * p.tiles.size);
     for (const t of p.tiles) if (n-- <= 0) return t;
@@ -269,6 +709,35 @@ const AI = {
     if (n < 4) return false;                   // coast or map edge
     for (let k = 0; k < n; k++) if (GameMap.owner[nb[k]] !== p.id) return false;
     return true;
+  },
+
+  // Ring-by-ring BFS out from `tile`, counting how many full rings stay
+  // entirely owned by `p` before hitting a non-owned tile or the map edge
+  // (fortSite's border/coast signal), capped at `cap` since callers only
+  // care up to their required buffer depth. Distinct from isInterior above
+  // (a single-ring yes/no used by buildSite) — fortSite needs the actual
+  // depth so it can still rank a too-small nation's best-available site
+  // instead of only ever getting a hard yes/no at one fixed radius.
+  interiorDepth(p, tile, cap) {
+    const nb = Game.abuf;
+    let ring = [tile];
+    const seen = new Set(ring);
+    let depth = 0;
+    while (depth < cap) {
+      const next = [];
+      for (const t of ring) {
+        const n = GameMap.neighbors(t, nb);
+        if (n < 4) return depth;                // coast or map edge
+        for (let k = 0; k < n; k++) {
+          const nt = nb[k];
+          if (GameMap.owner[nt] !== p.id) return depth;
+          if (!seen.has(nt)) { seen.add(nt); next.push(nt); }
+        }
+      }
+      ring = next;
+      depth++;
+    }
+    return depth;
   },
 
   // Update (2026-08-19): live-tested TRIBE_PRIORITY_BONUS/FLOOR alone and it
@@ -299,6 +768,138 @@ const AI = {
   // the p.tiles.size check.
   TRIBE_SKIRMISH_RATIO: 0.2,   // vs. the normal 0.55 for a fresh nation attack
 
+  // --- Cutting losses ------------------------------------------------------
+  // A human watching a push bleed out can hit retreat and get 75% of the
+  // committed troops home (Game.ATTACK_RETREAT_MALUS); a bot used to ride every
+  // failing front down to zero. reviewAttacks gives it the same out.
+  //
+  // "Failing" is deliberately two conditions, not one: the front is down to
+  // RETREAT_REMAINING of the most troops it has ever held, AND the defender's
+  // pool still exceeds what is left of it by RETREAT_DEFENDER_EDGE. Losing most
+  // of a stack is normal in a push that is winning ground, so the loss alone
+  // proves nothing — it is the defender still standing well above the remainder
+  // that says the rest would be thrown away. Cost per tile also climbs as an
+  // attack shrinks (tileCost's strength/attackTroops ratio), so waiting only
+  // makes the same retreat more expensive. Tribes are skipped — their defence
+  // is engineered weak (BOT_DEFENDER_LOSS_MULT) — as is a defender close to
+  // handleDeadDefender's collapse threshold, where staying in is the win.
+  RETREAT_REMAINING: 0.35,
+  RETREAT_DEFENDER_EDGE: 1.5,
+  // After retreating from someone, think()/navalScore treat them as a much
+  // poorer target for a while. Without this the bot's troops get back in two
+  // seconds and the very next think() relaunches at the same border at 55%,
+  // paying the 25% malus over and over for the same lost fight.
+  RETREAT_COOLDOWN: 60,
+  RETREAT_PENALTY: 0.15,
+
+  // --- Weighing a new enemy -------------------------------------------------
+  // Score alone (contact x density) made every soft neighbour a target no
+  // matter who they were friends with or what else was going on, so bots picked
+  // fights "willy-nilly". provocation() prices the diplomatic side of a fight —
+  // the returned multiplier goes straight into the target's score, and a fresh
+  // enemy priced below RISK_FLOOR is simply not attacked at all.
+  //
+  // It only bites on a *fresh* enemy. Someone already at war with us, or who
+  // hates us, is a feud we're already in: no new cost, and a small bonus for
+  // hitting back.
+  RISK_FLOOR: 0.2,
+  FEUD_BONUS: 1.25,
+  // What a target's coalition may weigh, relative to ours, before it starts to
+  // count against attacking: past this, the multiplier is RISK_STRENGTH_EDGE/ratio.
+  RISK_STRENGTH_EDGE: 0.8,
+  RISK_TIES_PENALTY: 0.3,       // the target is allied to one of OUR allies
+  RISK_FRIEND_PENALTY: 0.4,     // relation is already Friendly — an ally in waiting
+  RISK_PROSPECT_PENALTY: 0.6,   // not hostile, and strong enough to be worth allying with
+  RISK_PER_HOSTILE: 0.6,        // per enemy we already have, i.e. per open second front
+  RISK_MAX_HOSTILES: 3,
+
+  // Real players who are, right now, a problem for p: anyone attacking it, and
+  // any neighbour whose opinion of it is already negative. Tribes don't count —
+  // they hold no grudges and their attacks are a nuisance, not a war.
+  hostiles(p, contact) {
+    const out = new Set();
+    for (const a of Game.attacks) {
+      if (a.target !== p.id || a.attacker === p.id) continue;
+      const atk = Game.players[a.attacker];
+      if (atk && atk.alive && !atk.isTribe) out.add(a.attacker);
+    }
+    if (contact) {
+      for (const id of contact.keys()) {
+        const o = id >= 0 && Game.players[id];
+        if (o && o.alive && !o.isTribe && Game.relation(p, id) < 0) out.add(id);
+      }
+    }
+    return out;
+  },
+
+  // Multiplier on a target's attractiveness for the diplomatic cost of making
+  // an enemy of `t`. 1 = free; below RISK_FLOOR = not worth it. `contact` (the
+  // borderTargets map) says which of t's allies can reach us overland; naval
+  // callers pass null and get the half-weight, since an ally has to cross water
+  // too.
+  provocation(p, t, contact, hostiles) {
+    if (t.isTribe) return 1;
+    if (hostiles.has(t.id)) return this.FEUD_BONUS;
+    // Punishing a traitor is popular; nobody minds.
+    if (Game.isTraitor(t)) return 1;
+
+    let f = 1;
+    const mine = Math.max(1, Game.totalTroops(p));
+    const theirs = Game.totalTroops(t);
+
+    // The coalition we would be up against, not just the target on its own.
+    let backing = theirs;
+    for (const allyId of t.allies) {
+      const ally = Game.players[allyId];
+      if (!ally || !ally.alive) continue;
+      if (p.allies.has(allyId)) { f *= this.RISK_TIES_PENALTY; continue; }
+      backing += Game.totalTroops(ally) * (contact && contact.has(allyId) ? 1 : 0.5);
+    }
+    const ratio = backing / mine;
+    if (ratio > this.RISK_STRENGTH_EDGE) f *= Math.max(0.1, this.RISK_STRENGTH_EDGE / ratio);
+
+    // A neighbour we're on decent terms with is worth more as a friend.
+    const rel = Game.relation(p, t.id);
+    if (rel >= this.FRIENDLY) f *= this.RISK_FRIEND_PENALTY;
+    else if (rel >= 0 && theirs >= mine * 0.7) f *= this.RISK_PROSPECT_PENALTY;
+
+    // Every enemy we already have is a front we can't give our full attention.
+    f *= Math.pow(this.RISK_PER_HOSTILE, Math.min(this.RISK_MAX_HOSTILES, hostiles.size));
+    return f;
+  },
+
+  reviewAttacks(p) {
+    const watch = p.attackWatch || (p.attackWatch = new Map());
+    const live = new Set();
+    for (const a of Game.attacks) {
+      if (a.attacker !== p.id) continue;
+      live.add(a.id);
+      // Peak, not launch size: a consolidated top-up raises the bar the
+      // remainder is measured against instead of tripping the threshold.
+      const peak = Math.max(watch.get(a.id) || 0, a.troops);
+      watch.set(a.id, peak);
+
+      if (a.retreating || a.target < 0) continue;
+      const t = Game.players[a.target];
+      if (!t || !t.alive || t.isTribe) continue;
+      if (t.tiles.size <= Game.DEAD_DEFENDER_TILES * 3) continue;
+      if (a.troops > peak * this.RETREAT_REMAINING) continue;
+      if (t.troops <= a.troops * this.RETREAT_DEFENDER_EDGE) continue;
+
+      if (Game.retreatAttack(a)) {
+        (p.retreatedFrom || (p.retreatedFrom = new Map())).set(a.target, Game.elapsed);
+      }
+    }
+    for (const id of watch.keys()) if (!live.has(id)) watch.delete(id);
+  },
+
+  // 1 normally; RETREAT_PENALTY inside RETREAT_COOLDOWN of a retreat from
+  // targetId. Shared by think()'s land scoring and navalScore().
+  retreatPenalty(p, targetId) {
+    const at = p.retreatedFrom && p.retreatedFrom.get(targetId);
+    return at !== undefined && Game.elapsed - at < this.RETREAT_COOLDOWN ? this.RETREAT_PENALTY : 1;
+  },
+
   think(p) {
     if (p.tiles.size === 0) return;
     if (p.troops < Game.maxTroops(p) * 0.35) return;
@@ -314,6 +915,7 @@ const AI = {
     const targets = this.borderTargets(p);
     if (targets.size === 0) return;
 
+    const hostiles = this.hostiles(p, targets);
     let best = null, bestScore = -Infinity;
     for (const [targetId, contact] of targets) {
       // Mid-war, this cycle exists only to look for a Tribe side-skirmish —
@@ -335,13 +937,19 @@ const AI = {
         // neighbour of yours, becomes the obvious next target.
         if (Game.relation(p, targetId) < 0) score *= 1.5;
         if (t.isTribe) score *= this.tribePriorityMult();
+        score *= this.retreatPenalty(p, targetId);
+        const risk = this.provocation(p, t, targets, hostiles);
+        if (risk < this.RISK_FLOOR) continue;   // not worth the enemy it makes
+        score *= risk;
       }
       if (score > bestScore) { bestScore = score; best = targetId; }
     }
 
     if (best === null) return;
     if (this.annexIfEnclosed(p, best)) return;
-    const ratio = atWar ? this.TRIBE_SKIRMISH_RATIO : (best === NEUTRAL ? 0.35 : 0.55);
+    const prof = this.profile();
+    const ratio = atWar ? this.TRIBE_SKIRMISH_RATIO
+      : (best === NEUTRAL ? prof.neutralRatio : (Game.players[best].isTribe ? this.TRIBE_ATTACK_RATIO : prof.attackRatio));
     Game.launchAttack(p.id, best, Math.floor(p.troops * ratio));
   },
 
@@ -395,6 +1003,7 @@ const AI = {
     const homeCoast = this.coastalTiles(p);
     if (homeCoast.length === 0) return;
 
+    const hostiles = this.hostiles(p, null);
     const candidates = [];
     for (const lm of GameMap.landmasses) {
       let bestTile = -1, bestTileScore = -Infinity, bestTarget = -1;
@@ -407,7 +1016,7 @@ const AI = {
         // too would just waste one.
         if (Game.onSameLandmass(p.id, tile)) continue;
         const dist = this.nearestDist(homeCoast, tile);
-        const score = this.navalScore(p, owner, lm.size, dist);
+        const score = this.navalScore(p, owner, lm.size, dist, hostiles);
         if (score > bestTileScore) { bestTileScore = score; bestTile = tile; bestTarget = owner; }
       }
       if (bestTile >= 0) candidates.push({ tile: bestTile, target: bestTarget, score: bestTileScore });
@@ -425,7 +1034,7 @@ const AI = {
     }
   },
 
-  navalScore(p, targetId, opportunity, dist) {
+  navalScore(p, targetId, opportunity, dist, hostiles) {
     const distFactor = this.navalDistanceFactor(dist);
     if (targetId === NEUTRAL) return opportunity * 1.4 * distFactor;
     const t = Game.players[targetId];
@@ -437,7 +1046,9 @@ const AI = {
     if (Game.isTraitor(t)) score *= 2;
     if (Game.relation(p, targetId) < 0) score *= 1.5;
     if (t.isTribe) score *= this.tribePriorityMult();
-    return score * distFactor;
+    const risk = this.provocation(p, t, null, hostiles);
+    if (risk < this.RISK_FLOOR) return -Infinity;   // same veto as think()
+    return score * risk * distFactor * this.retreatPenalty(p, targetId);
   },
 
   // 1 at dist=0, fading to 0.5 at "comfortable raiding range" (scaled off the
@@ -507,7 +1118,11 @@ const AI = {
   borderTargets(p, includeAllies) {
     const counts = new Map();
     const nb = Game.nbuf;
-    for (const i of p.tiles) {
+    // p.borderTiles (kept live by Game.setOwner), not p.tiles — only a
+    // border tile can have a non-owned neighbour, and walking every tile a
+    // bot owns on each think() cycle was a perimeter-vs-area hitch of its
+    // own once a bot's territory grew large, same as refreshFrontier's.
+    for (const i of p.borderTiles) {
       const n = GameMap.neighbors(i, nb);
       for (let k = 0; k < n; k++) {
         const o = GameMap.owner[nb[k]];
@@ -519,68 +1134,111 @@ const AI = {
     return counts;
   },
 
-  // Checks every point where p's border actually touches targetId's land for
-  // a fully-enclosed pocket and annexes the first one found for free — the
+  // Annexes every fully-enclosed pocket of targetId's land for free — the
   // bot/tribe equivalent of a human noticing a surrounded nation and tapping
-  // it. Without this, only the human ever benefits from encirclement and
-  // tribes only ever die to a human's click. Scans just the contact tiles
-  // (not the whole border), so it doesn't add real cost to a think() cycle
-  // that already walks the same border for borderTargets.
+  // it, taking the whole scatter in one go exactly as that tap now does (see
+  // UI.onTap). Without this, only the human ever benefits from encirclement
+  // and tribes only ever die to a human's click. Game.enclosedPocketsOf scans
+  // just the contact points along p's border, so it doesn't add real cost to
+  // a think() cycle that already walks the same border for borderTargets.
   annexIfEnclosed(p, targetId) {
     if (targetId < 0) return false; // NEUTRAL land can't be annexed
-    const nb = Game.nbuf;
-    const checked = this._annexChecked || (this._annexChecked = new Set());
-    checked.clear();
-    for (const i of p.tiles) {
-      const n = GameMap.neighbors(i, nb);
-      for (let k = 0; k < n; k++) {
-        const j = nb[k];
-        if (GameMap.owner[j] !== targetId || checked.has(j)) continue;
-        checked.add(j);
-        const region = Game.enclosedRegion(j, p.id);
-        if (region) { Game.annexRegion(region, p.id); return true; }
-      }
-    }
-    return false;
+    return Game.annexEnclosedPockets(targetId, p.id) > 0;
   }
 };
 
-// Tribe behaviour, after openfront.wiki/Bots — the "simple Bot" type deliberately
-// kept dumb: no diplomacy(), no economy(), no navalThink(). A tribe just picks a
-// random bordering neighbour (unclaimed land included) and nibbles at it. This is
-// the whole AI; every strength cut that makes that nibbling stay weak forever
-// (half pop cap, 30% slower growth, the human-attacker discount, cheap neutral
-// land) lives in Game, not here — see TRIBE_TROOP_CAP_MULT / TRIBE_GROWTH_MULT /
-// tileCost.
+// Tribe behaviour, ported from OpenFront's TribeExecution + AiAttackBehavior
+// (the wiki's "bots spend 5% of their troops" is the old attackAmount, which the
+// tribe code no longer calls). A tribe is still the "simple Bot" type — no
+// diplomacy(), no economy(), no navalThink() — but it is NOT timid per attack:
+// on a fixed 4-8s beat it commits everything above a reserve, and unclaimed
+// land only has to clear the small `expand` reserve. What keeps tribes weak is
+// their small cap and slow growth (TRIBE_TROOP_CAP_MULT / TRIBE_GROWTH_MULT in
+// economy.js), which bound how much any one of those attacks can carry.
 const TribeAI = {
-  update(dt) {
+  // TribeExecution's constructor rolls, per tribe. Drawn once at init.
+  rollTraits() {
+    const r = (lo, hi) => lo + Math.floor(Game.rng() * (hi - lo + 1));
+    const beatTicks = r(40, 80);
+    return {
+      beat: beatTicks / Game.TICKS_PER_SEC,        // seconds between decisions
+      phase: r(0, beatTicks) / Game.TICKS_PER_SEC, // wait before the first one
+      trigger: r(50, 60) / 100,  // fill ratio needed before picking a fight
+      reserve: r(30, 40) / 100,  // fill ratio kept back when fighting a player
+      expand: r(10, 20) / 100,   // fill ratio kept back when grabbing free land
+      opened: false
+    };
+  },
+
+  update() {
     for (const p of Game.players) {
       if (!p.isTribe || !p.alive) continue;
-      p.nextThink -= dt;
-      if (p.nextThink <= 0) {
-        p.nextThink = 3 + Game.rng() * 4;
+      const tr = p.tribeTraits;
+      if (!tr) continue;
+      // The first beat is the per-tribe phase offset, every later one is the
+      // fixed beat (OpenFront: ticks % attackRate === attackTick).
+      if (p.tribeNextAt === undefined) p.tribeNextAt = tr.phase;
+      p.tribeNextAt -= Game.TICK_DT;
+      if (p.tribeNextAt <= 0) {
+        p.tribeNextAt += tr.beat;
         this.think(p);
       }
     }
   },
 
+  // AiAttackBehavior.sendAttack for a tribe: everything above the reserve goes
+  // out in one push. No cap on concurrent attacks — launchAttack folds any
+  // second push at the same target into the first, as OpenFront's does.
+  sendAttack(p, target) {
+    const tr = p.tribeTraits;
+    const keep = Game.maxTroops(p) * (target === NEUTRAL ? tr.expand : tr.reserve);
+    const troops = Math.floor(p.troops - keep);
+    if (troops < 1) return false;
+    return Game.launchAttack(p.id, target, troops);
+  },
+
   think(p) {
     if (p.tiles.size === 0) return;
-    // One nibble in flight at a time, same restraint AI.think applies to
-    // Nations — a tribe never stacks a second attack on top of the first.
-    if (Game.attacks.some(a => a.attacker === p.id)) return;
-
+    const tr = p.tribeTraits;
     const targets = AI.borderTargets(p);
-    if (targets.size === 0) return;
-    const ids = [...targets.keys()];
-    const target = ids[Math.floor(Game.rng() * ids.length)];
-    if (AI.annexIfEnclosed(p, target)) return;
 
-    // openfront.wiki/Bots: "Bots use 5% of their troops" per attack, a fifth
-    // of the 20% a human or Nation commits — the source of the "extremely
-    // small-scale attacks... a few pixels of land at a time" behaviour.
-    const troops = Math.floor(p.troops / 20);
-    if (troops < 20) return;
-    Game.launchAttack(p.id, target, troops);
+    // First decision ever: grab free land straight away, then wait a beat.
+    if (!tr.opened) {
+      tr.opened = true;
+      if (targets.has(NEUTRAL)) this.sendAttack(p, NEUTRAL);
+      return;
+    }
+
+    // Free land always comes first, and does not wait on the trigger ratio.
+    if (targets.has(NEUTRAL) && this.sendAttack(p, NEUTRAL)) return;
+
+    // attackRandomTarget: save up to the trigger ratio before fighting anyone.
+    if (p.troops / Game.maxTroops(p) < tr.trigger) return;
+
+    // Retaliate against whoever has the biggest push aimed at us.
+    let hitter = -1, biggest = 0;
+    for (const a of Game.attacks) {
+      if (a.target !== p.id || a.retreating || a.troops <= biggest) continue;
+      if (p.allies.has(a.attacker)) continue;
+      biggest = a.troops; hitter = a.attacker;
+    }
+    if (hitter >= 0 && this.attackPlayer(p, hitter)) return;
+
+    // Otherwise a random bordering player, shuffled. Nations and humans are
+    // skipped on a coin flip, so tribes mostly pick on each other.
+    const ids = [...targets.keys()].filter(id => id >= 0);
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Game.rng() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    for (const id of ids) {
+      if (!Game.players[id].isTribe && Game.rng() < 0.5) continue;
+      if (this.attackPlayer(p, id)) return;
+    }
+  },
+
+  attackPlayer(p, target) {
+    if (AI.annexIfEnclosed(p, target)) return true;
+    return this.sendAttack(p, target);
   }
 };

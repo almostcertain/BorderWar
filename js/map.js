@@ -36,21 +36,16 @@ const GameMap = {
     const cx = width / 2, cy = height / 2;
 
     // Independent field driving terrain *tier* (plains vs highland vs
-    // mountain) — deliberately decoupled from `elevation` below and sampled
-    // with Noise.ridged rather than Noise.fractal. classifyTerrain used to
-    // slice tiers off elevation's own percentiles, but elevation is
-    // dominated by the radial falloff (built to shape the coastline, high in
-    // the middle by construction) plus plain fbm, whose octaves are all
-    // smooth bumps regardless of frequency — so mountains/highlands always
-    // collapsed into one contiguous blob (or, sampled at a higher frequency,
-    // several smaller but still smooth-edged blobs) near the landmass
-    // centre. Ridged noise folds each octave into a crease instead of a
-    // bump and cascades finer creases along coarser ones, which is what
-    // actually produces winding, branching mountain-range shapes with real
-    // internal texture (see the Africa reference this was built against:
-    // many separate ranges, each with its own internal ridges, not a
-    // plateau).
+    // mountain) — deliberately decoupled from `elevation` below.
+    // classifyTerrain used to slice tiers off elevation's own percentiles,
+    // but elevation is dominated by the radial falloff (built to shape the
+    // coastline, high in the middle by construction), so mountains and
+    // highlands always collapsed into one contiguous blob near the landmass
+    // centre. This is a height field of its own, built to read like a
+    // topographic map — see rangeRoughness for the rules it follows.
     this.roughness = new Float32Array(size);
+    const shape = this.rangeShape(seed);
+    const low = this.rangeLowFreq(width, height, seed, scale * 1.6, shape);
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -64,7 +59,7 @@ const GameMap = {
         e -= Math.max(0, d - 0.55) * 1.4;
 
         this.elevation[i] = e;
-        this.roughness[i] = Noise.ridged(x * scale * 1.6, y * scale * 1.6, seed + 5000, 6);
+        this.roughness[i] = this.rangeRoughness(x * scale * 1.6, y * scale * 1.6, seed, shape, low, x, y);
       }
     }
 
@@ -79,7 +74,79 @@ const GameMap = {
     this.pruneSmallLandmasses(this.MIN_LANDMASS_TILES);
     this.classifyTerrain();
     this.computeShoreDist();
+    this.computeWaterComponents();
     return this.landTiles;
+  },
+
+  // Per-seed character of the terrain: which way the ranges run, how tightly
+  // they're stretched, and how big the hills are. Integer hash of the seed
+  // only — this runs in the sim, so it must not touch Game.rng.
+  rangeShape(seed) {
+    const h = n => {
+      let x = Math.imul((seed | 0) ^ Math.imul(n, 0x9E3779B1), 0x85EBCA6B);
+      x ^= x >>> 15; x = Math.imul(x, 0xC2B2AE35); x ^= x >>> 13;
+      return (x >>> 0) / 4294967296;
+    };
+    // Grain direction as a unit vector from t = tan(angle/2), t in [-1, 1]:
+    // that spans every orientation a ridge can have (lines repeat every half
+    // turn) using only + * / — Math.cos/sin are allowed to differ in the last
+    // bit between browsers, and one flipped tile would desync lockstep.
+    const t = h(1) * 2 - 1, k = 1 + t * t;
+    return {
+      stretch: 1.3 + h(2) * 0.4,   // >1 elongates hills along the grain into ridges
+      warp: 0.25 + h(3) * 0.15,    // how far the grain bends across the map
+      scale: 1.5 + h(4) * 0.5,     // hill size: low = broad massifs, high = finer ridges
+      cos: (1 - t * t) / k, sin: 2 * t / k
+    };
+  },
+
+  // The warp is slow noise, so it is sampled on a coarse grid and
+  // interpolated per tile rather than evaluated at every tile — on xlarge
+  // that was a large share of generation time. Stride is 1 (exact) through
+  // 750 wide and grows with the map, keeping ~125 tiles per feature.
+  rangeLowFreq(width, height, seed, uvScale, shape) {
+    const stride = Math.max(1, Math.round(width / 500));
+    const gw = Math.ceil((width - 1) / stride) + 2, gh = Math.ceil((height - 1) / stride) + 2;
+    const grid = new Float32Array(gw * gh * 2);
+    for (let gy = 0; gy < gh; gy++) {
+      for (let gx = 0; gx < gw; gx++) {
+        const u = gx * stride * uvScale * 0.5, v = gy * stride * uvScale * 0.5, o = (gy * gw + gx) * 2;
+        grid[o] = (Noise.fractal(u, v, seed + 111, 2) - 0.5) * 2 * shape.warp;
+        grid[o + 1] = (Noise.fractal(u, v, seed + 222, 2) - 0.5) * 2 * shape.warp;
+      }
+    }
+    return { stride, gw, grid };
+  },
+
+  // Roughness at (u, v) in noise space; classifyTerrain slices tiers off it.
+  // Tiers are level sets of a real height field, so they follow the rules of
+  // a topographic map rather than the rules of noise:
+  //  - No swirls or folds. The field is never bent hard: the warp only nudges
+  //    the sample point (capped in rangeShape), because bending past about a
+  //    third of a feature size folds the terrain into marbled whorls.
+  //  - One grain across the whole map. Ranges, ridges and spurs in a real
+  //    region all run the same way, so coordinates are stretched along a
+  //    single seed-wide direction. It must be uniform — rotating it from place
+  //    to place shears the noise into combed-hair swirls.
+  //  - Steep ground is smooth, gentle ground is detailed (Noise.eroded).
+  //  - Valleys drain outward. Ridged noise put ridges on a field's
+  //    zero-crossings, which are always closed loops, so every range ringed a
+  //    plain and maps were full of same-shaped sealed "bowls". A height field
+  //    has real peaks and slopes instead: mountains sit inside highland,
+  //    highland inside plains, and low ground runs out to the coast.
+  rangeRoughness(u, v, seed, shape, low, x, y) {
+    // Bilinear read of the coarse warp grid at tile (x, y).
+    const { stride, gw, grid } = low;
+    const gx = (x / stride) | 0, gy = (y / stride) | 0;
+    const fx = x / stride - gx, fy = y / stride - gy;
+    const o00 = (gy * gw + gx) * 2, o10 = o00 + 2, o01 = o00 + gw * 2, o11 = o01 + 2;
+    const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+    const pu = u + grid[o00] * w00 + grid[o10] * w10 + grid[o01] * w01 + grid[o11] * w11;
+    const pv = v + grid[o00 + 1] * w00 + grid[o10 + 1] * w10 + grid[o01 + 1] * w01 + grid[o11 + 1] * w11;
+
+    const a = (pu * shape.cos + pv * shape.sin) / shape.stretch;
+    const b = (-pu * shape.sin + pv * shape.cos) * Math.sqrt(shape.stretch);
+    return Noise.eroded(a * shape.scale, b * shape.scale, seed + 7000, 5, 0.5, 0.45);
   },
 
   // Below this, a landmass is dropped to water rather than kept as an island.
@@ -321,6 +388,35 @@ const GameMap = {
     }
   },
 
+  // Connected-component id for every WATER tile, over the same 4-neighbour
+  // adjacency Game.seaPath's A* actually moves through — the sea's
+  // counterpart to landmassId. Computed once here so seaPath can reject an
+  // unreachable target instantly (two water tiles can only connect if they
+  // share a component) instead of exhausting its whole reachable side of
+  // the map — up to SEA_PATH_GUARD tiles — just to prove there's no route.
+  // Land tiles are left at -1 (unused; never looked up for one).
+  computeWaterComponents() {
+    const size = this.width * this.height;
+    const comp = this.waterComponentId = new Int32Array(size).fill(-1);
+    const queue = this._queue, nb = new Int32Array(4);
+    let id = 0;
+    for (let start = 0; start < size; start++) {
+      if (this.owner[start] !== WATER || comp[start] !== -1) continue;
+      let head = 0, tail = 0;
+      queue[tail++] = start;
+      comp[start] = id;
+      while (head < tail) {
+        const i = queue[head++];
+        const n = this.neighbors(i, nb);
+        for (let k = 0; k < n; k++) {
+          const j = nb[k];
+          if (this.owner[j] === WATER && comp[j] === -1) { comp[j] = id; queue[tail++] = j; }
+        }
+      }
+      id++;
+    }
+  },
+
   isLand(i) { return this.owner[i] !== WATER; },
   isCoastal(i) {
     const nb = this._coastBuf || (this._coastBuf = new Int32Array(4));
@@ -343,8 +439,8 @@ const GameMap = {
 
   // Picks spawn points on land, spread apart, avoiding tiny islands.
   findSpawns(count, rng) {
-    // Spread spawns as evenly as the landmass allows, relaxing the spacing
-    // requirement until every player fits.
+    // Spread spawns as the landmass allows, relaxing the spacing requirement
+    // until every player fits.
     let minDist = Math.sqrt(this.landTiles / count) * 1.1;
 
     for (let attempt = 0; attempt < 12; attempt++) {
@@ -356,10 +452,32 @@ const GameMap = {
         if (!this.isLand(i)) continue;
         if (this.landAround(x, y, 5) < 90) continue;
 
+        // Each candidate draws its own required spacing rather than all
+        // sharing minDist verbatim, so the accepted spawns end up unevenly
+        // distanced — some clustered closer together, others further apart —
+        // instead of the rigid, roughly-Poisson-disc grid a single fixed
+        // threshold produces. 0.5x floor still blocks unfair on-top-of-each-
+        // other placements; 1.5x cap keeps this attempt's average spacing
+        // near minDist so the relaxation loop below still converges.
+        const required = minDist * (0.5 + rng());
+
         let ok = true;
         for (const s of spawns) {
           const sx = s % this.width, sy = (s / this.width) | 0;
-          if (Math.hypot(sx - x, sy - y) < minDist) { ok = false; break; }
+          // sqrt(dx*dx + dy*dy), never Math.hypot. Every client generates the
+          // map itself from the shared seed, so a single tile of disagreement
+          // here is an instant, total desync of everything downstream — and
+          // Math.hypot is one of the calls ECMA-262 leaves
+          // implementation-approximated, so V8/SpiderMonkey/JavaScriptCore can
+          // differ in the last ulp and straddle the `< required` comparison.
+          // The multiplies, the add and the sqrt are all IEEE-754 operations
+          // that every engine must round identically, so this form is exact
+          // rather than merely quantized — which is why it is preferred to
+          // Game.det.hypot here, in what is easily the hottest loop that
+          // touches a hazardous call (up to 8000 candidate tiles x every
+          // spawn already placed, x 12 relaxation attempts).
+          const dx = sx - x, dy = sy - y;
+          if (Math.sqrt(dx * dx + dy * dy) < required) { ok = false; break; }
         }
         if (ok) spawns.push(i);
       }

@@ -17,6 +17,7 @@ const Radial = {
   shown: false,
   lastHide: 0,
   key: '',
+  validatedAt: 0,   // last time refresh() re-ran the wedge validators
 
   OUTER: 92,
   INNER: 38,
@@ -92,6 +93,18 @@ const Radial = {
   // have no Info panel or radial Attack (attack is a direct tap on the map
   // here), so north and west stay empty — but Boat/Betray at east and
   // Peace/Renew at south match their real layout, not a guess.
+  // Note the split each slot now makes. `note`/`disabled` come from the
+  // *BlockReason validators, run right here on the current state, so a wedge
+  // that cannot be pressed says so the instant the menu opens — no round trip.
+  // `act` sends an intent and answers nothing: whether the action actually
+  // happened is decided a turn later, inside the Executor, by the same
+  // validators re-run on every client (MP-1.5, §5). Advisory here,
+  // authoritative there.
+  //
+  // `me` stays in this file: it is Game.me, a view pointer, and every use of it
+  // below is about what to draw for the player looking at the screen. It is
+  // deliberately absent from the intents themselves — the server stamps the
+  // author, so a client cannot act as anyone but itself.
   slots() {
     const me = Game.me, t = this.targetId;
     const out = [null, null, null, null];
@@ -104,14 +117,17 @@ const Radial = {
         // Betray takes the east slot Boat would otherwise hold — you can't
         // invade an ally, so the moment one is boat-blocked it opens up for
         // the other action that only makes sense against one.
-        out[1] = { icon: '🗡', label: 'Betray', cls: 'danger', act: () => Game.breakAlliance(me, t) };
+        out[1] = {
+          icon: '🗡', label: 'Betray', cls: 'danger',
+          act: () => Transport.sendIntent(Protocol.intent.breakAlliance(t))
+        };
         if (Game.extendWindowOpen(al)) {
           const waiting = Game.agreedToExtend(al, me);
           out[2] = {
             icon: '⏳', label: waiting ? 'Sent' : 'Renew', cls: 'good',
             note: waiting ? 'Awaiting reply' : Math.ceil(al.expiresAt - Game.elapsed) + 's left',
             disabled: waiting,
-            act: () => Game.requestExtension(me, t)
+            act: () => Transport.sendIntent(Protocol.intent.allianceExtension(t))
           };
         }
       } else {
@@ -119,7 +135,7 @@ const Radial = {
         out[2] = {
           icon: '🤝', label: 'Peace', cls: 'good',
           note: reason, disabled: !!reason,
-          act: () => Game.requestAlliance(me, t)
+          act: () => Transport.sendIntent(Protocol.intent.allianceRequest(t))
         };
       }
     }
@@ -134,7 +150,7 @@ const Radial = {
       out[1] = {
         icon: '⛵', label: 'Boat', cls: 'good',
         note: reason, disabled: !!reason,
-        act: () => Game.launchNavalInvasion(me, this.tile, troops)
+        act: () => Transport.sendIntent(Protocol.intent.boat(this.tile, troops))
       };
     }
 
@@ -151,6 +167,15 @@ const Radial = {
   // Rebuilt only when something a player can see has actually changed — this is
   // called every frame from UI.update so the cooldown and renewal countdowns
   // stay live, and rewriting the SVG at 60Hz would be silly.
+  // How often the wedges are re-validated while the menu sits open. slots()
+  // is not a cheap read of existing state — the Boat wedge's own note comes
+  // from navalInvasionBlockReason, which resolves a landing tile and then
+  // runs a real sea route search to fill it in. Doing that at 60Hz for a menu
+  // whose only live text is a whole-second countdown was pure waste; a
+  // re-validation every 200ms keeps that countdown honest and the wedge's
+  // enabled/disabled state current within a fifth of a second.
+  REVALIDATE_MS: 200,
+
   refresh() {
     if (!this.shown) return;
     let p = null;
@@ -158,6 +183,12 @@ const Radial = {
       p = Game.players[this.targetId];
       if (!p || !p.alive) { this.hide(); return; }
     }
+
+    // open() clears `key`, so the menu still validates instantly on the frame
+    // it appears rather than waiting out a first interval.
+    const now = performance.now();
+    if (this.key !== '' && now - this.validatedAt < this.REVALIDATE_MS) return;
+    this.validatedAt = now;
 
     const slots = this.slots();
     const key = slots.map(s => s ? [s.icon, s.label, s.note, s.disabled].join('|') : '-').join('/');

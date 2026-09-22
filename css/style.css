@@ -95,21 +95,69 @@ html, body {
   }
 }
 
-#troopRow {
+/* --- Status row: growth chip · population bar · gold chip ----------------- */
+/* Three fixed-height pieces side by side rather than the old label/value/rate
+   text stacked across two separate rows — the population bar itself carries
+   its own current/max reading instead of being a bare strip underneath it,
+   so this one row replaces what used to take three. */
+#statusRow {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
+  align-items: stretch;
+  gap: 6px;
+  height: 30px;
 }
 
-#troopLabel { opacity: 0.6; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
-#troopValue { font-size: 20px; font-weight: 600; }
-#troopCap { opacity: 0.55; font-size: 13px; }
-#troopGrowth { font-size: 13px; color: #6fe08a; }
+#growthChip, #goldChip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#growthChip {
+  background: rgba(111, 224, 138, 0.14);
+  border: 1px solid rgba(111, 224, 138, 0.35);
+  color: #6fe08a;
+}
+
 #troopGrowth.stalled { color: #e0a86f; }
-#troopMarching { font-size: 13px; opacity: 0.8; }
-#tileValue { opacity: 0.6; font-size: 12px; margin-left: auto; }
+#growthChip:has(#troopGrowth.stalled) { background: rgba(224, 168, 111, 0.14); border-color: rgba(224, 168, 111, 0.35); }
+
+#goldChip {
+  background: rgba(240, 200, 105, 0.14);
+  border: 1px solid rgba(240, 200, 105, 0.35);
+  color: #f0c869;
+}
+
+#popBar {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#popBarLabel {
+  position: relative;
+  z-index: 1;
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+#popBarSep { opacity: 0.6; margin: 0 3px; font-weight: 400; }
 
 /* --- Fronts & defenses: your own attacks/boats, plus incoming ones -------- */
 /* One chip per active attack or boat touching the player, in either
@@ -170,27 +218,26 @@ html, body {
 
 .frontClose:active { filter: brightness(0.85); }
 
-/* Its own line rather than another chip in #troopRow: that row is already five
-   readouts wide on a phone, and gold is about to grow a spend control. */
-#goldRow {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
+/* Overlaid on the pop bar's top-right corner rather than its own row — empty
+   (and thus zero-height/width via :not(:empty) below) every match except the
+   rare one with a traitor in it, so it costs no layout space the rest of the
+   time. #popBar clips to its rounded corners, so this stays inside it rather
+   than poking above; the countdown is worth a little crowding on the one
+   line while it runs. */
+#traitorChip {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
+  z-index: 2;
 }
 
-#goldLabel { opacity: 0.6; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
-#goldValue { font-size: 16px; font-weight: 600; color: #f0c869; }
-#goldRate { font-size: 13px; color: #6fe08a; }
-
-/* Empty most of the time, so it takes no room until a betrayal puts it there. */
 #traitorChip:not(:empty) {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: #ff8a8a;
-  background: rgba(180, 40, 40, 0.28);
+  background: rgba(180, 40, 40, 0.55);
   border: 1px solid rgba(255, 120, 120, 0.5);
   border-radius: 4px;
   padding: 1px 5px;
@@ -198,12 +245,39 @@ html, body {
 
 /* --- Debug panel: dev-only gold cheats, top-right ------------------------- */
 
-#debugPanel {
+#debugToggle {
   position: fixed;
-  top: calc(env(safe-area-inset-top) + 6px);
+  /* Sits below #pauseBtn, which owns the top-right corner. */
+  top: calc(env(safe-area-inset-top) + 42px);
   right: 8px;
   z-index: 8;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 120, 120, 0.35);
+  background: rgba(120, 30, 30, 0.55);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#debugToggle:active { filter: brightness(0.85); }
+
+#debugPanel {
+  position: fixed;
+  /* Sits below #debugToggle. */
+  top: calc(env(safe-area-inset-top) + 74px);
+  right: 8px;
+  /* Without a width cap, this row of six buttons is wider than most phones
+     and a narrow desktop window — it used to just run off the left edge of
+     the screen with no way to reach the buttons that fell off. Wrapping
+     inside a capped width keeps every button on-screen instead. */
+  max-width: calc(100vw - 16px);
+  z-index: 8;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
@@ -234,6 +308,38 @@ html, body {
 }
 
 #debugPanel button:active { filter: brightness(0.85); }
+
+#debugPanel button.armed {
+  background: rgba(255, 160, 90, 0.9);
+  color: #2a1200;
+}
+
+/* --- Pause button (singleplayer) ------------------------------------------ */
+
+#pauseBtn {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 6px);
+  right: 8px;
+  z-index: 8;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px;
+  border: 0;
+  background: rgba(11, 18, 32, 0.75);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#pauseBtn:active { filter: brightness(0.85); }
+
+#pauseBtn.paused {
+  background: rgba(255, 190, 70, 0.95);
+  color: #2a1a00;
+}
+
+#pauseBtn.hidden { display: none; }
 
 /* --- Diplomacy banner ----------------------------------------------------- */
 
@@ -376,6 +482,10 @@ html, body {
 #hpGoldValue { color: #f0c869; }
 #hpGoldRate { opacity: 0.55; }
 
+/* Bot's opinion of the player, as a face (UI.updateBotFace). */
+#hpFace { flex: 0 0 auto; font-size: 32px; line-height: 1; }
+#hpFace:empty { display: none; }
+
 /* Spawn selection: shown between Start and the human's first tap, prompting
    where to place their capital while every Nation and Tribe's own starting
    territory is already visible on the map underneath. */
@@ -397,6 +507,55 @@ html, body {
 }
 
 #spawnBanner.warn { color: #ffb46b; }
+
+/* MP-4.2: diagnostic-only desync notice (UI.showDesyncWarning). Same fixed
+   top-center placement family as #spawnBanner, offset lower so the two never
+   overlap if a desync is somehow flagged during spawn select, styled as a
+   warning (red-ish border/text) instead of the neutral spawn banner. Clicking
+   it dismisses it locally — see index.html's comment on #desyncBanner. */
+#desyncBanner {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 44px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 10px 18px;
+  border-radius: 12px;
+  background: rgba(38, 10, 10, 0.92);
+  border: 1px solid rgba(255, 100, 100, 0.45);
+  color: #ff8f8f;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  max-width: min(90vw, 480px);
+  cursor: pointer;
+}
+
+/* MP-4.1: reconnect catch-up readout (UI.updateCatchup). Same fixed
+   top-center placement family as #spawnBanner/#desyncBanner, offset below
+   both so all three can in principle be visible without overlapping; neutral
+   coloring (not a warning) since being behind and draining is expected,
+   working behavior, not a problem to flag like #desyncBanner's. Not
+   `cursor: pointer` — unlike the two banners above it isn't click-dismissible,
+   it just tracks Runner.pendingTurns() and hides itself once the backlog is
+   gone. */
+#catchupBanner {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 82px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 10px 18px;
+  border-radius: 12px;
+  background: rgba(8, 14, 26, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #cfe0ff;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  max-width: min(90vw, 480px);
+  pointer-events: none;
+}
 
 #radial {
   position: fixed;
@@ -453,14 +612,6 @@ html, body {
   pointer-events: none;
 }
 
-#popBar {
-  position: relative;
-  height: 6px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.12);
-  overflow: hidden;
-}
-
 /* Marks peak growth (~42%), so the level worth holding at is visible. */
 #popBarPeak {
   position: absolute;
@@ -498,65 +649,18 @@ html, body {
   background: #ff9f43;
 }
 
-/* --- Build bar ------------------------------------------------------------ */
-/* One button per entry in Game.UNITS, so it grows with that table. Scrolls
-   sideways rather than wrapping: the rest of OpenFront's list is another eight
-   structures, and a HUD that grows a second row on a phone eats the map. */
-#buildBar {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  padding-bottom: 1px;
-}
+/* --- Ratio row: attack-ratio readout + slider ------------------------------ */
+#ratioRow { display: flex; align-items: center; gap: 10px; }
 
-#buildBar::-webkit-scrollbar { display: none; }
-
-.buildBtn {
+#ratioLabel {
   flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  /* Vertical padding is set for the tap target, not the text: at 4px the button
-     came out 36px tall, which is small for a thumb on a phone. */
-  padding: 6px 8px 6px 5px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(16, 26, 46, 0.9);
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.bbKey {
-  font-size: 10px;
-  opacity: 0.5;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 3px;
-  padding: 0 3px;
-  line-height: 1.3;
-}
-
-.bbIcon { font-size: 17px; line-height: 1; }
-.bbBody { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
-.bbName { font-size: 12px; font-weight: 600; }
-.bbCost { font-size: 11px; color: #f0c869; font-variant-numeric: tabular-nums; }
-.bbCount { font-size: 11px; opacity: 0.7; font-variant-numeric: tabular-nums; }
-.bbCount:empty { display: none; }
-
-/* Unaffordable is dimmed, never disabled — a button you cannot press is also a
-   button that cannot tell you what it would have cost. */
-.buildBtn.poor { opacity: 0.6; }
-.buildBtn.poor .bbCost { color: #ff8a8a; }
-
-.buildBtn.armed {
-  border-color: #6db4ff;
-  background: rgba(38, 78, 140, 0.95);
-}
-
-.buildBtn:active { filter: brightness(0.85); }
-
-#sliderRow { display: flex; align-items: center; gap: 10px; }
+#ratioValue { font-weight: 700; }
+#ratioTroops { opacity: 0.6; }
 
 #ratio {
   flex: 1;
@@ -585,7 +689,97 @@ html, body {
 #ratio::-moz-range-track { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.18); }
 #ratio::-moz-range-thumb { width: 24px; height: 24px; border-radius: 50%; background: #e6edf7; border: 2px solid #0b1220; }
 
-#ratioValue { font-size: 14px; width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
+/* --- Build bar ------------------------------------------------------------ */
+/* One compact icon button per entry in Game.UNITS, so it grows with that
+   table. Scrolls sideways rather than wrapping: the rest of OpenFront's list
+   is another eight structures, and a HUD that grows a second row on a phone
+   eats the map. See ui.js's setupBuildBar for the wheel-scroll and edge-fade
+   that keep the overflow reachable and visible on a narrow window. */
+#buildBar {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 1px;
+  /* Centered while the row fits; "safe" falls back to start alignment once
+     more buttons than fit are added, so growth never clips the first icon
+     behind an unreachable scroll offset. */
+  justify-content: safe center;
+}
+
+#buildBar::-webkit-scrollbar { display: none; }
+
+.buildBtn {
+  position: relative;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(16, 26, 46, 0.9);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.bbKey {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  font-size: 9px;
+  opacity: 0.5;
+  line-height: 1;
+}
+
+.bbIcon { font-size: 19px; line-height: 1; }
+.bbName { display: none; }
+.bbBody { display: flex; line-height: 1; }
+.bbCost { font-size: 10px; color: #f0c869; font-variant-numeric: tabular-nums; }
+
+/* Owned count as a corner badge rather than a second stacked line — the
+   button is too small at 52px to fit a name, a cost AND a count as separate
+   lines, and the cost (what the NEXT one costs) stays worth showing even
+   once you own several. */
+.bbCount {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 15px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: #2d5a9e;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.bbCount:empty { display: none; }
+
+/* Unaffordable is dimmed, never disabled — a button you cannot press is also a
+   button that cannot tell you what it would have cost. */
+.buildBtn.poor { opacity: 0.6; }
+.buildBtn.poor .bbCost { color: #ff8a8a; }
+
+/* Nuke buttons before a Missile Silo is owned: dimmed like .poor (same
+   press-but-explain philosophy — the hint line spells out "Build a Missile
+   Silo first"), but without .poor's red cost tint, since the blocker here is
+   the missing Silo, not the gold. */
+.buildBtn.locked { opacity: 0.45; }
+
+.buildBtn.armed {
+  border-color: #6db4ff;
+  background: rgba(38, 78, 140, 0.95);
+}
+
+.buildBtn:active { filter: brightness(0.85); }
+
 /* Doubles as the placement instruction and, briefly, as the refusal reason when
    a build lands somewhere it cannot go. */
 #hint { font-size: 11px; opacity: 0.45; text-align: center; }
@@ -594,7 +788,7 @@ html, body {
 #overlay, #endOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(6, 10, 20, 0.9);
+  background: rgba(6, 10, 20, 1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -648,3 +842,141 @@ html, body {
 }
 
 .panel button:active { background: #2f66d8; }
+
+/* --- MP-2.3: lobby UI — mode tabs, host/join panels, roster ---------------- */
+
+#modeTabs {
+  display: flex;
+  gap: 8px;
+}
+
+.modeTab {
+  flex: 1;
+  padding: 8px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.modeTab.active {
+  opacity: 1;
+  background: #1c2740;
+  border-color: #3d7dff;
+}
+
+.modeBody {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.panel input[type="text"] {
+  padding: 6px 8px;
+  font-size: 15px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #131c2e;
+  color: inherit;
+  text-align: center;
+}
+
+#nameRow input { margin-left: 6px; width: 180px; }
+
+.lobbyLabel {
+  font-size: 12px;
+  opacity: 0.6;
+  text-align: left;
+}
+
+#lobbyCode {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 10px;
+  border-radius: 8px;
+  background: #131c2e;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+}
+
+.lobbyRoster {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 140px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.lobbyRoster li {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.lobbyRoster li.isHost::after {
+  content: " (host)";
+  opacity: 0.5;
+  font-size: 12px;
+}
+
+#joinWaiting {
+  font-size: 13px;
+  opacity: 0.6;
+}
+
+#lobbyCode { cursor: pointer; }
+
+.lobbyStatus {
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  text-align: left;
+}
+
+.lobbyStatus.ok::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #4cd07d;
+}
+
+.lobbyRoster li.isYou::after {
+  content: " (you)";
+  opacity: 0.5;
+  font-size: 12px;
+}
+
+.lobbyRoster li.isHost.isYou::after {
+  content: " (host, you)";
+}
+
+.lobbyRoster li.justJoined {
+  animation: lobbyJoinFlash 1.6s ease-out;
+}
+
+@keyframes lobbyJoinFlash {
+  from { background: rgba(76, 208, 125, 0.55); }
+  to { background: rgba(255, 255, 255, 0.05); }
+}
+
+.panel button.lobbyLeave {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  opacity: 0.75;
+}
+
+#lobbyError {
+  color: #ff6b6b;
+  font-size: 13px;
+}

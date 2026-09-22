@@ -1,0 +1,3 @@
+# Sim goldens (tools/golden) hash the source bytes, so every checkout must be LF,
+# including on Windows where core.autocrlf would otherwise give CRLF.
+* text=auto eol=lf

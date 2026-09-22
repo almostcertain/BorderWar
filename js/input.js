@@ -4,6 +4,9 @@ const Input = {
   moved: 0,
   downAt: 0,
   holdTimer: null,
+  // Live shift-drag warship box-select, or null when not dragging one — see
+  // onDown/onMove/onUp below and Render.drawSelectionBox.
+  selecting: null,
 
   // OpenFront's LONG_PRESS_MS. Long enough not to fire while you are settling
   // into a drag, short enough that it does not feel like the game ignored you.
@@ -19,6 +22,8 @@ const Input = {
     canvas.addEventListener('wheel', e => this.onWheel(e), { passive: false });
     canvas.addEventListener('contextmenu', e => {
       e.preventDefault();
+      // With a build armed, right-click puts it away instead of opening the menu.
+      if (UI.cancelPlacing()) return;
       this.openMenu(e.clientX, e.clientY);
     });
   },
@@ -45,6 +50,11 @@ const Input = {
           const railSnap = UI.placing === 'city' ? Render.findRailSnapTile(e.clientX, e.clientY) : -1;
           const coastSnap = UI.placing === 'port'
             ? Game.nearestOwnedCoastNear(Game.me, Render.screenToTile(e.clientX, e.clientY), Game.PORT_SNAP_MAX_DIST) : -1;
+          // Warship placement has no click-time snap at all — a click can
+          // land anywhere on the map (Game.resolveWarshipLaunch snaps it to
+          // the nearest open water and picks a launching Port on its own).
+          // UI.placeHover just tracks the raw hovered tile, same as any tile
+          // that isn't near a rail/coast for city/port.
           UI.placeHover = railSnap >= 0 ? railSnap : coastSnap >= 0 ? coastSnap : Render.screenToTile(e.clientX, e.clientY);
         }
       }
@@ -106,8 +116,19 @@ const Input = {
           this.openMenu(x, y);
         }, this.LONG_PRESS_MS);
       }
+      // Shift held down on the primary button starts a warship box-select
+      // drag instead of panning — mouse only (touch has no shift), and only
+      // when there's actually a map to select on. `active` flips true once
+      // the drag clears the same 12px tolerance onMove's pan-vs-tap test
+      // uses, so a plain shift-click (no drag) still falls through to
+      // selectWarshipAt in onUp below rather than opening an empty box.
+      if (this.isPrimary(e) && e.shiftKey && e.pointerType === 'mouse' &&
+          Game.running && !Game.spawning && !UI.placing && !Radial.isOpen()) {
+        this.clearHold();
+        this.selecting = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, active: false };
+      }
     }
-    if (this.pointers.size === 2) { this.clearHold(); this.lastPinch = this.pinchDistance(); }
+    if (this.pointers.size === 2) { this.clearHold(); this.selecting = null; this.lastPinch = this.pinchDistance(); }
   },
 
   onMove(e) {
@@ -121,6 +142,12 @@ const Input = {
       // Same 12px tolerance the tap test uses, so a hold and a tap agree on
       // what counts as having stayed still.
       if (this.moved >= 12) this.clearHold();
+      if (this.selecting) {
+        this.selecting.x1 = e.clientX;
+        this.selecting.y1 = e.clientY;
+        if (this.moved >= 12) this.selecting.active = true;
+        return;   // a selection drag never pans the camera
+      }
       Render.cam.x -= dx / Render.cam.scale;
       Render.cam.y -= dy / Render.cam.scale;
     } else if (this.pointers.size === 2) {
@@ -140,6 +167,19 @@ const Input = {
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) this.lastPinch = 0;
     this.clearHold();
+
+    if (wasSingle && wasPrimary && this.selecting) {
+      const sel = this.selecting;
+      this.selecting = null;
+      if (sel.active) {
+        UI.selectWarshipsInBox(Math.min(sel.x0, sel.x1), Math.min(sel.y0, sel.y1),
+                                Math.max(sel.x0, sel.x1), Math.max(sel.y0, sel.y1));
+      } else {
+        UI.selectWarshipAt(e.clientX, e.clientY);
+      }
+      return;
+    }
+    this.selecting = null;
 
     if (wasSingle && wasPrimary && !Radial.isOpen() && this.moved < 12 &&
         performance.now() - this.downAt < 400) {
