@@ -127,10 +127,10 @@
     iAmHost = false;
     Transport.disconnect();
     UI.hideLobby();
-    // Back on the plain Join form (if that's the active tab) — resume the
-    // browser so a leave-and-relist doesn't require reselecting the tab.
-    const joinTab = document.querySelector('.modeTab[data-mode="join"]');
-    if (joinTab && joinTab.classList.contains('active')) startLobbyListPolling();
+    // Back on the menu — the hero card is relevant again regardless of which
+    // secondary tab happens to be selected, so this no longer checks which
+    // one that is (contrast the old join-tab-only polling this replaced).
+    startLobbyListPolling();
   }
 
   function hostLobby() {
@@ -140,6 +140,7 @@
     iAmHost = false; // confirmed once this connection's own lobby_info arrives
     inLobby = true;
     lobbyLinkOpened = false;
+    stopLobbyListPolling();
 
     Transport.disconnect();
     Runner.reset();
@@ -175,18 +176,28 @@
     });
   }
 
-  // Issue #9: the Join screen's public lobby browser. Polling, not a pushed
-  // update, to match this server's existing shape — GET /lobbies (server/
-  // index.js) is a stateless snapshot, no per-connection subscription to
-  // maintain. Runs only while the plain Join form is actually on screen
-  // (started on the Join tab's click, stopped the moment a join/host
-  // connection is issued or another tab is picked) so a menu left idle on
-  // Singleplayer or Host isn't quietly polling the server forever.
+  // Issue #9 (public lobby browser) + the main menu redesign's hero card
+  // (#quickJoin — issue #12's open lobby is now the primary CTA, not tucked
+  // inside the Join tab). Polling, not a pushed update, to match this
+  // server's existing shape — GET /lobbies (server/index.js) is a stateless
+  // snapshot, no per-connection subscription to maintain.
+  //
+  // Runs whenever the menu is on screen and no lobby connection is in
+  // flight — no longer gated to the "join by code" tab being selected, since
+  // the hero card must stay live regardless of which secondary tab is open.
+  // Stopped by joinLobby/hostLobby/start (a connection is about to replace
+  // whatever this was polling for) and resumed by leaveLobby/the restart
+  // button (back on the menu with nothing connected).
   let lobbyListIntervalID = null;
+  let lastLobbyList = [];
   const LOBBY_LIST_POLL_MS = 4000;
 
   function refreshLobbyList() {
-    Transport.fetchLobbyList().then((list) => UI.renderPublicLobbies(list, (gameID) => joinLobby(gameID)));
+    Transport.fetchLobbyList().then((list) => {
+      lastLobbyList = list;
+      UI.renderQuickJoin(list.find((entry) => entry.isAuto) || null);
+      UI.renderPublicLobbies(list.filter((entry) => !entry.isAuto), (gameID) => joinLobby(gameID));
+    });
   }
 
   function startLobbyListPolling() {
@@ -202,21 +213,27 @@
     }
   }
 
-  document.querySelectorAll('.modeTab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      if (tab.dataset.mode === 'join') startLobbyListPolling();
-      else stopLobbyListPolling();
-    });
-  });
   document.getElementById('lobbyListRefreshBtn').addEventListener('click', refreshLobbyList);
 
-  // Join is the default tab on a fresh load (index.html's `active` class),
-  // so its polling must start immediately rather than waiting for a tab
-  // click that may never come — otherwise the public/rotating lobby list
-  // would sit empty until the player clicked away and back.
-  if (document.querySelector('.modeTab[data-mode="join"]').classList.contains('active')) {
-    startLobbyListPolling();
-  }
+  // The hero card's own button — joins whichever lobby the last poll found
+  // flagged `isAuto` (GameManager always keeps exactly one). Disabled by
+  // UI.renderQuickJoin whenever there isn't one yet, so this only ever fires
+  // with a real gameID in hand.
+  document.getElementById('quickJoinBtn').addEventListener('click', () => {
+    const entry = lastLobbyList.find((e) => e.isAuto);
+    if (!entry) return;
+    // joinLobby()'s in-progress UI lives inside #joinMode's body (#joinLobby),
+    // which is only visible while the "Join by code" tab is the active one
+    // (UI.setupLobby's click handler toggles each mode body's `hidden`
+    // class) — switch to it first so a hero-button join from the Host or
+    // Singleplayer tab doesn't connect into a panel nobody can see.
+    document.querySelector('.modeTab[data-mode="join"]').click();
+    joinLobby(entry.gameID);
+  });
+
+  // Starts as soon as the menu does — the hero card has nothing to show
+  // until the first poll resolves.
+  startLobbyListPolling();
 
   // Host only. The button this calls from is hidden/disabled for anyone
   // whose last lobby_info said otherwise (UI.updateLobbyFromInfo), and the
@@ -360,6 +377,7 @@
     // into a game that has been re-initialised underneath it.
     inLobby = false;
     myRole = 'sp';
+    stopLobbyListPolling();
     Transport.disconnect();
     Runner.reset();
 
@@ -431,6 +449,7 @@
     inLobby = false;
     myRole = 'sp';
     UI.hideLobby();
+    startLobbyListPolling();
     // The finished match's player still exists until Game.init() runs again,
     // which would otherwise leave the debug panel floating over this menu.
     document.getElementById('debugPanel').classList.add('hidden');

@@ -1300,6 +1300,34 @@ const UI = {
     return !!document.getElementById('hostPublic').checked;
   },
 
+  // Main menu redesign: the hero card above the mode tabs. `entry` is the
+  // GET /lobbies result's one `isAuto` row (main.js's refreshLobbyList picks
+  // it out), or null while the poll hasn't resolved yet / genuinely no auto
+  // lobby exists (should not happen in practice — GameManager always keeps
+  // one — but a server that's down or between restarts is exactly the case
+  // this falls back for, per Transport.fetchLobbyList's own "resolves to []
+  // on any network failure" contract). Disables the button rather than
+  // leaving it clickable with nothing to join.
+  renderQuickJoin(entry) {
+    const info = document.getElementById('quickJoinInfo');
+    const btn = document.getElementById('quickJoinBtn');
+    if (!entry) {
+      info.textContent = 'No open game right now — check back shortly.';
+      btn.disabled = true;
+      return;
+    }
+    const mapLabel = String(entry.mapSize || '').replace(/^./, (c) => c.toUpperCase());
+    let text = mapLabel + ' map · ' + entry.playerCount + '/' + entry.maxPlayers + ' players';
+    if (typeof entry.autoStartAt === 'number') {
+      const secs = Math.max(0, Math.round((entry.autoStartAt - Date.now()) / 1000));
+      text += ' · starts in ' + secs + 's';
+    } else if (entry.playerCount === 0) {
+      text += ' · be the first in';
+    }
+    info.textContent = text;
+    btn.disabled = false;
+  },
+
   // Issue #9: renders GET /lobbies' result into the Join screen's browser
   // list. `onPick(gameID)` is called on click — main.js owns what that
   // means (fill the join code and connect), same division as everywhere
@@ -1307,35 +1335,28 @@ const UI = {
   // never large enough (§6.1: "never many concurrent games on a self-hosted
   // box") to need the incremental diffing updateLobbyFromInfo does for the
   // in-lobby roster.
+  //
+  // Main menu redesign: `list` is expected to have the `isAuto` entry
+  // already filtered out by main.js's refreshLobbyList — that one lobby now
+  // gets its own hero card (renderQuickJoin above) instead of a row here, so
+  // this only ever renders manually-hosted lobbies.
   renderPublicLobbies(list, onPick) {
     const ul = document.getElementById('publicLobbyList');
     ul.innerHTML = '';
     if (!list || list.length === 0) {
       const li = document.createElement('li');
       li.className = 'lobbyListEmpty';
-      li.textContent = 'No public lobbies right now.';
+      li.textContent = 'No other public lobbies right now.';
       ul.appendChild(li);
       return;
     }
     list.forEach((entry) => {
       const li = document.createElement('li');
       const name = document.createElement('span');
-      // Issue #12: an auto (rotating) lobby has no human host — labeled by
-      // map size instead of a host's name, same distinction
-      // gamemanager.js's listPublicLobbies() draws (entry.host is only ever
-      // set for a manually-hosted lobby).
-      name.textContent = entry.isAuto
-        ? 'Open lobby — ' + String(entry.mapSize || '').replace(/^./, (c) => c.toUpperCase())
-        : (entry.host || 'Host') + "'s game";
+      name.textContent = (entry.host || 'Host') + "'s game";
       const count = document.createElement('span');
       count.className = 'lobbyListCount';
-      let countText = entry.playerCount + (entry.playerCount === 1 ? ' player' : ' players');
-      if (entry.isAuto) countText += '/' + entry.maxPlayers;
-      if (entry.isAuto && typeof entry.autoStartAt === 'number') {
-        const secs = Math.max(0, Math.round((entry.autoStartAt - Date.now()) / 1000));
-        countText += ' — starts in ' + secs + 's';
-      }
-      count.textContent = countText;
+      count.textContent = entry.playerCount + (entry.playerCount === 1 ? ' player' : ' players');
       li.appendChild(name);
       li.appendChild(count);
       li.addEventListener('click', () => onPick(entry.gameID));

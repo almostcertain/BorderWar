@@ -843,30 +843,71 @@ html, body {
 
 .panel button:active { background: #2f66d8; }
 
+/* --- Main menu redesign: the open rotating lobby (#12) is the primary call
+   to action — a hero card above everything else — with Singleplayer/Host/
+   join-by-code demoted to a small secondary tab row underneath. ---------- */
+
+#quickJoin {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(61, 125, 255, 0.18), rgba(61, 125, 255, 0.05));
+  border: 1px solid rgba(61, 125, 255, 0.4);
+}
+
+#quickJoin .lobbyLabel { text-align: center; opacity: 0.75; }
+
+#quickJoinInfo {
+  font-size: 13px;
+  opacity: 0.85;
+  min-height: 1.2em;
+}
+
+.panel button.primaryBtn {
+  padding: 16px;
+  font-size: 17px;
+}
+
+.panel button.primaryBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.orDivider {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.4;
+  text-align: center;
+  margin: -4px 0;
+}
+
 /* --- MP-2.3: lobby UI — mode tabs, host/join panels, roster ---------------- */
 
 #modeTabs {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .modeTab {
   flex: 1;
-  padding: 8px 6px;
-  font-size: 13px;
+  padding: 6px 6px;
+  font-size: 12px;
   font-weight: 600;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   background: transparent;
   color: inherit;
-  opacity: 0.55;
+  opacity: 0.45;
   cursor: pointer;
 }
 
 .modeTab.active {
-  opacity: 1;
+  opacity: 0.85;
   background: #1c2740;
-  border-color: #3d7dff;
+  border-color: rgba(61, 125, 255, 0.6);
 }
 
 .modeBody {

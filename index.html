@@ -125,10 +125,26 @@
          see js/main.js's "Multiplayer lobby" section. -->
     <label id="nameRow">Name <input id="playerName" type="text" maxlength="20" placeholder="You" autocomplete="off" spellcheck="false"></label>
 
+    <!-- Issue: main menu redesign — the open rotating lobby (#12) is the
+         primary call to action, so it gets its own hero card with a single
+         big button, ahead of and visually louder than the Singleplayer/Host/
+         "join by code" tabs below, which are all secondary ways to play.
+         #quickJoinInfo/#quickJoinBtn are filled/enabled by
+         UI.renderQuickJoin() the moment the first /lobbies poll resolves
+         (js/main.js's refreshLobbyList) — disabled and generic until then so
+         there's nothing to click before there's something to join. -->
+    <div id="quickJoin">
+      <div class="lobbyLabel">Open Game</div>
+      <div id="quickJoinInfo">Looking for an open game…</div>
+      <button type="button" id="quickJoinBtn" class="primaryBtn" disabled>Join Open Game</button>
+    </div>
+
+    <div class="orDivider">or</div>
+
     <div id="modeTabs">
-      <button type="button" class="modeTab" data-mode="sp">Singleplayer</button>
+      <button type="button" class="modeTab active" data-mode="join">Join by code</button>
       <button type="button" class="modeTab" data-mode="host">Host</button>
-      <button type="button" class="modeTab active" data-mode="join">Join</button>
+      <button type="button" class="modeTab" data-mode="sp">Singleplayer</button>
     </div>
 
     <div id="spMode" class="modeBody hidden">
@@ -189,7 +205,7 @@
       <button id="joinBtn">Join Lobby</button>
 
       <div id="publicLobbyBrowser">
-        <div class="lobbyLabel">Public lobbies <button id="lobbyListRefreshBtn" class="linkBtn">Refresh</button></div>
+        <div class="lobbyLabel">Other public lobbies <button id="lobbyListRefreshBtn" class="linkBtn">Refresh</button></div>
         <ul id="publicLobbyList" class="lobbyRoster"></ul>
       </div>
 
