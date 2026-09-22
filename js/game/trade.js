@@ -33,7 +33,7 @@ Object.assign(Game, {
   //    hardcoding a multiplier of 1 for a system that doesn't exist.
 
   // Config.ts's tradeShipShortRangeDebuff() — trading with a Port under this
-  // many tiles away earns sharply less (see tradeShipGold's sigmoid), and
+  // many World tiles away (see tradeDist) earns sharply less (see tradeShipGold's sigmoid), and
   // tradingPorts' proximity/ally bonus weighting explicitly skips it too.
   TRADE_SHIP_SHORT_RANGE_DEBUFF: 300,
   // How often (seconds) each built Port re-checks whether to spawn a trade
@@ -42,11 +42,14 @@ Object.assign(Game, {
   // per-port offset that avoids every Port rolling on the same tick in their
   // variable-rate engine isn't needed here.
   PORT_TRADE_CHECK_INTERVAL: 1,
-  // Config.ts's tradeShipSpawnRate: baseSpawnRate's sigmoid midpoint (500
-  // trade ships on the whole map = 50% of the real per-roll odds) and decay
-  // rate, both lifted verbatim.
-  TRADE_SHIP_SPAWN_MIDPOINT: 400,
-  TRADE_SHIP_SPAWN_DECAY: Math.LN2 / 50,
+  // OpenFront's distance numbers (the 300-tile debuff, the sigmoid's 0.03
+  // slope, the 50-gold-per-tile term) are tuned in tiles of their World map,
+  // 2000 wide. MAP_SIZES are that same World downsampled, so a route that is
+  // 400 tiles there is 100 here on medium — deep in the debuff, paying ~5k
+  // instead of ~91k. Every trade distance is therefore converted to
+  // World-equivalent tiles first (see docs/economy-vs-openfront.md). Same
+  // relative-reach idea as fortRange; xlarge's factor is exactly 1.
+  TRADE_DIST_REF_WIDTH: 2000,
 
   manhattanDist(a, b) {
     const w = GameMap.width;
@@ -54,15 +57,33 @@ Object.assign(Game, {
     return Math.abs(ax - bx) + Math.abs(ay - by);
   },
 
+  // A tile distance on this map, in OpenFront World tiles. Ordered
+  // dist*ref/width (not dist*(ref/width)) so every MAP_SIZES width gives an
+  // exact result in binary floating point — ×8 / ×4 / ×2 / ×1 on an integer
+  // — which the lockstep sim needs.
+  tradeDist(dist) {
+    return dist * this.TRADE_DIST_REF_WIDTH / GameMap.width;
+  },
+
+  // Config.ts's tradeShipSaturation verbatim: a ~1.45x odds boost while the
+  // world fleet is small, a damping sigmoid past a 330-ship midpoint, and a
+  // 0.25 plateau (itself collapsing past ~800 ships) so heavy port
+  // investment keeps paying late. Fleet counts are left unscaled — they are
+  // whole-map totals, and our smaller lobbies simply sit in the boost region
+  // longer.
+  tradeShipSaturation(numTradeShips) {
+    const boost = 1 + 0.45 * this.det.exp(-numTradeShips / 120);
+    const damping = 1 - this.sigmoid(numTradeShips, Math.LN2 / 50, 330);
+    const plateau = 0.25 * (1 - this.sigmoid(numTradeShips, Math.LN2 / 100, 800));
+    return boost * Math.max(damping, plateau);
+  },
+
   // Config.ts's tradeShipSpawnRate verbatim: returned as a 1-in-N chance.
-  // baseSpawnRate falls toward 0 as the map's total trade-ship count climbs
-  // (throttling runaway spawning once trade is already busy), and the
-  // "pity timer" rejectionModifier raises the odds after each consecutive
+  // The "pity timer" rejectionModifier raises the odds after each consecutive
   // miss so a quiet Port doesn't go dry forever.
   tradeShipSpawnRate(rejections, numTradeShips) {
-    const baseSpawnRate = 1 - this.sigmoid(numTradeShips, this.TRADE_SHIP_SPAWN_DECAY, this.TRADE_SHIP_SPAWN_MIDPOINT);
     const rejectionModifier = 1 / (rejections + 1);
-    return Math.floor((100 * rejectionModifier) / baseSpawnRate);
+    return Math.max(1, Math.floor((100 * rejectionModifier) / this.tradeShipSaturation(numTradeShips)));
   },
 
   // Config.ts's tradeShipGold: a sigmoid climbing from a small base near 0
@@ -70,11 +91,12 @@ Object.assign(Game, {
   // top — concave at first, a sharp S through the mid-range, effectively
   // linear beyond it. `dist` is the real sea route length in tiles (the
   // trade ship's path.length - 1), same measure OpenFront's own
-  // tilesTraveled counts. goldMultiplierFor is not ported — see class
-  // comment.
+  // tilesTraveled counts, converted to World tiles by tradeDist.
+  // goldMultiplierFor is not ported — see class comment.
   tradeShipGold(dist) {
+    const d = this.tradeDist(dist);
     const debuff = this.TRADE_SHIP_SHORT_RANGE_DEBUFF;
-    return Math.floor(75000 / (1 + this.det.exp(-0.03 * (dist - debuff))) + 50 * dist);
+    return Math.floor(75000 / (1 + this.det.exp(-0.03 * (d - debuff))) + 50 * d);
   },
 
   // Config.ts's proximityBonusPortsNb: how many of the nearest candidate
@@ -111,7 +133,7 @@ Object.assign(Game, {
       const other = candidates[i];
       const expanded = new Array(other.level).fill(other);
       weighted.push(...expanded);
-      const tooClose = this.manhattanDist(port.tile, other.tile) < this.TRADE_SHIP_SHORT_RANGE_DEBUFF;
+      const tooClose = this.tradeDist(this.manhattanDist(port.tile, other.tile)) < this.TRADE_SHIP_SHORT_RANGE_DEBUFF;
       if (!tooClose && i < bonusCount) weighted.push(...expanded);
       if (!tooClose && this.areAllied(ownerId, GameMap.owner[other.tile])) weighted.push(...expanded);
     }

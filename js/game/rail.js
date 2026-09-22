@@ -361,10 +361,27 @@ Object.assign(Game, {
   TRAIN_GOLD_DIST_PENALTY: 5000,
   TRAIN_GOLD_FLOOR: 5000,
 
-  // Config.ts's trainSpawnRate: hyperbolic decay, midpoint at 10 factories.
-  // Returned as a 1-in-N chance, consumed by updateFactoryStations below.
-  trainSpawnRate(numFactories) {
-    return (numFactories + 10) * 15;
+  // OpenFront counts trains in Unit entities — engine, tail engine and 5
+  // cars — and its saturation curve is tuned in those units. Our train is
+  // one object, so it converts at this rate.
+  TRAIN_UNITS_PER_TRAIN: 7,
+
+  // Config.ts's trainSaturation verbatim: up to 1.5x spawns for the first
+  // trains (~1x around 5 trains), a damping sigmoid past a 560-unit
+  // midpoint, and a 0.25 plateau that collapses past ~900 units.
+  trainSaturation(numTrainUnits) {
+    const boost = 1 + 0.5 * this.det.exp(-numTrainUnits / 30);
+    const damping = 1 - this.sigmoid(numTrainUnits, Math.LN2 / 100, 560);
+    const plateau = 0.25 * (1 - this.sigmoid(numTrainUnits, Math.LN2 / 150, 900));
+    return boost * Math.max(damping, plateau);
+  },
+
+  // Config.ts's trainSpawnRate: hyperbolic decay, midpoint at 10 factories,
+  // divided by the world-wide saturation. Returned as a 1-in-N chance,
+  // consumed by updateFactoryStations below.
+  trainSpawnRate(numFactories, numTrains) {
+    const rate = (numFactories + 10) * 15;
+    return Math.max(1, Math.floor(rate / this.trainSaturation(numTrains * this.TRAIN_UNITS_PER_TRAIN)));
   },
 
   // PlayerImpl.canTrade, minus the embargo check (not ported — this game has
@@ -514,7 +531,7 @@ Object.assign(Game, {
       const dest = this.pickTrainDestination(b);
       if (!dest) continue;
 
-      const spawnRate = this.trainSpawnRate(this.factoryCount(p));
+      const spawnRate = this.trainSpawnRate(this.factoryCount(p), this.trains.length);
       let roll = false;
       for (let i = 0; i < b.level; i++) {
         if (this.rng() < 1 / spawnRate) { roll = true; break; }

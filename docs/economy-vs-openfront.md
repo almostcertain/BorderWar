@@ -86,6 +86,22 @@ of it. Not a bug; worth knowing when comparing.
    in `tradingPorts`. xlarge is unchanged; medium/large pay like OpenFront.
 2. Port the current `tradeShipSaturation` and `trainSaturation` curves.
 
-Both are sim changes (goldens re-recorded). Rail ranges (`trainStationMaxRange`
+Both are sim changes (goldens re-recorded).
+
+**Done in #13.** `Game.tradeDist` (`js/game/trade.js`) converts distances;
+`tradeShipSaturation` / `trainSaturation` are ported verbatim (a train counts
+as 7 OpenFront train units). Measured over 6,000 ticks in the golden
+scenarios:
+
+| Scenario | Trade gold | Train gold |
+|---|---|---|
+| medium-12345 | 0.71M → 1.38M | 3.88M → 4.16M |
+| large-67890 | no trade (no ports) | 1.41M → 1.71M |
+| late-medium-24680 (bots given 100M) | 69.7M → 93.2M | 37.8M → 16.0M |
+
+The late-game drop in train gold is OpenFront's saturation working as
+designed: rich bots flood the map with trains, and past ~80 trains the curve
+throttles spawns. With real lobbies' train counts it stays in the boost
+region. Rail ranges (`trainStationMaxRange`
 110) have the same unscaled-tiles pattern but it makes our networks *denser*,
 not poorer, so it isn't part of this ticket.

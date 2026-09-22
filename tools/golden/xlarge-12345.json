@@ -13,17 +13,17 @@
     "js/game/annex.js": "4aabae8ac71c5889e9fcc06a829d6f2fcb090b57aa3983f50ac00e110792cba3",
     "js/game/seapath.js": "d117bd5c5069972d0b182053202bb8834bb0d3f443651579eb16d5e111cd4e78",
     "js/game/naval.js": "283232bc82181aea36e1839b3184daccff620917b2ff95ee8f6077931e9e738a",
-    "js/game/rail.js": "cd8a7dcd9cd5b00aa86fe0221962e19f37b7615cba5259e9f36a39ffe477495a",
-    "js/game/trade.js": "e6ced7357cc896b630aedac24c8c37f4df7659cc3143023caa5f1b57bd262994",
+    "js/game/rail.js": "c342642119824bdb18c958f6291db5b544c2badd7e468bb5f78cbdc02c6c8686",
+    "js/game/trade.js": "c4008d6652942cf643902f4177ddc2003f3d819fd80bd6c2c776d3adf0928cc5",
     "js/game/warships.js": "103601237c947358bf7898ad18e31f09f664a43643e0007b0579bde3362c60c8",
     "js/game/nukes.js": "e69984a956dd53e61e9d9c5653088a2401243581cf4e91c5361113afc4c683f3",
     "js/game/sam.js": "2c3d56767ecd4f15581e9b59a7b03d69522ae403a8b0ec2e0a3ceae2f2adf565",
-    "js/net/protocol.js": "f8cbdf7c180d1f7916764272267c4e7e73e8fc240dba413fbd2ac3adb01b497b",
+    "js/net/protocol.js": "74280adcc6bcb48ab707887b7231b5555ff81bb4ad7c88598cccd14527a65bc0",
     "js/net/executor.js": "af36c6c393cc277c209633ba5002880493e5793e3aaa782bcd5434f7ecf64bd9",
     "js/net/hash.js": "4c765f63355a3b48a6a77277164529ec5f0e56aa910a8fe45ddb901c736971c8",
     "js/net/runner.js": "2a6e4f6edf6ac090a1b5ac3c8366b020b8162146b0a911bb5925d793208a7e08",
     "js/net/localserver.js": "3bd312f14f200fd4171e30780f5333753e53c5f48264a6df6d427f8cf7866d23",
-    "js/net/transport.js": "03ebfb08414242255f26bd567a2f690fc3cd9fed78d5198a323981d7c594d43a",
+    "js/net/transport.js": "dfebde4cf7fab402a687e2da149e4ec612641f8bc02e0fcd032915c490d79ef9",
     "js/ai.js": "a6eac8f7dea4a93a52ea0fe6b31d2ee0b9736f06a08289b2906b65cf7d233e80"
   },
   "scenario": {
@@ -198,7 +198,7 @@
   ],
   "digest": {
     "ownerFNV": 2092050478,
-    "stateSHA256": "93a400234ecb10d8d214fed493de20859562719bd17c0a1311fdeed48af6bde8"
+    "stateSHA256": "89a73dd248f0c123f367afedbc580da24f4183d2033981a1594becf41248e12c"
   },
   "simulationTicks": 1900,
   "coverage": {
