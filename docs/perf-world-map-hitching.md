@@ -99,14 +99,30 @@ After (same run, seed 12345, 6000 ticks):
 | p99 | 164 | 27 |
 | max | 617 | 114 |
 
+## Port trade routing (follow-up)
+
+`updatePortTrade` searched a fresh route every time a port spawned a trade
+ship. On The World, 23 of 30 trade searches repeated a port pair already
+searched, and single searches cost up to ~105 ms.
+
+Fix: `Game.portRoute(from, to)` caches port-to-port routes for the match.
+The route between two fixed tiles only reads water tiles and `shoreDist`,
+which never change, so the cache can't go stale. It stores up to 1024
+entries, evicting the oldest first so every client evicts the same ones. A cached B→A
+route also answers A→B (reversed). Genuine failures are cached. A null
+caused by the per-tick budget is not. The cache is only written inside
+`tick()`.
+
+Result (seed 12345, 6000 ticks): 4 real searches instead of 30; worst
+trade tick 105 → 64 ms (one first-time search); all served routes checked
+valid (adjacent water tiles, ending on the destination port).
+
 ## Remaining spikes
 
-- **Port trade routing** (`updatePortTrade` → `seaPath`, uncapped): a few
-  ticks at ~105 ms once ports are trading. Candidates: recommendation 5 (node
-  budget per tick) or caching port-to-port routes, which don't change unless
-  a port does.
-- **AI naval** occasionally ~70 ms: up to three capped searches in one
-  navalThink. Recommendations 4–6 address this.
+- **AI naval**, occasionally ~70 ms: up to three capped searches in one
+  navalThink. This is now the worst remaining tick. Recommendations 4–6 address it.
+- **First-time long trade routes**, ~60 ms, once per port pair per match.
+  Recommendation 6 (coarse-grid pathfinding) is what would shrink these.
 
 ## Not covered
 

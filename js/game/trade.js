@@ -180,13 +180,55 @@ Object.assign(Game, {
 
       for (let attempt = 0; attempt < 3; attempt++) {
         const dest = candidates[Math.floor(this.rng() * candidates.length)];
-        const path = this.seaPath([b.tile], dest.tile);
+        const path = this.portRoute(b.tile, dest.tile);
         if (path) {
           this.tradeShips.push({ owner, srcPort: b.tile, dstPort: dest.tile, path, pos: 0 });
           break;
         }
       }
     }
+  },
+
+  // How many port-to-port routes portRoute keeps. Oldest-first eviction
+  // (Map insertion order), so every client evicts the same entries.
+  PORT_ROUTE_CACHE_MAX: 1024,
+
+  // seaPath([fromTile], toTile) for two Port tiles, cached for the match.
+  // Between two fixed tiles the search only reads water tiles and shoreDist,
+  // neither of which ever changes, so the answer can't go stale. Measured on
+  // The World, repeat searches for the same pair were ~3/4 of trade routing
+  // and each could run 100ms. A cached B->A route also answers A->B: its
+  // water tiles run from beside B's port to beside A's, so reversing them and
+  // ending on B's tile gives a valid A->B route. Genuine failures are cached as `false`; a null because this
+  // tick's SEA_PATH_BUDGET_PER_TICK ran out is not, so the pair is tried
+  // again later. Only written inside tick() (see its _inTick comment).
+  portRoute(fromTile, toTile) {
+    const size = GameMap.owner.length;
+    const routes = this._portRoutes;
+    const cached = routes.get(fromTile * size + toTile);
+    if (cached !== undefined) return cached || null;
+    const reverse = routes.get(toTile * size + fromTile);
+    if (reverse) {
+      const path = reverse.slice(0, -1).reverse();
+      path.push(toTile);
+      this.cachePortRoute(fromTile * size + toTile, path);
+      return path;
+    }
+    if (reverse === false) return null;
+
+    const before = this._seaPathSearchesThisTick;
+    const path = this.seaPath([fromTile], toTile);
+    const refused = !path && this._inTick && this._seaPathSearchesThisTick === before &&
+      before >= this.SEA_PATH_BUDGET_PER_TICK;
+    if (!refused) this.cachePortRoute(fromTile * size + toTile, path || false);
+    return path;
+  },
+
+  cachePortRoute(key, path) {
+    if (!this._inTick) return;
+    const routes = this._portRoutes;
+    if (routes.size >= this.PORT_ROUTE_CACHE_MAX) routes.delete(routes.keys().next().value);
+    routes.set(key, path);
   },
 
   // Advances every trade ship along its sea route; arrival pays both ports'

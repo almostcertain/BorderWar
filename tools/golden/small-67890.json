@@ -3,8 +3,8 @@
     "js/noise.js": "3f30fe7114b099e39c7d8785f30a1435ae7b2d3c041aea2e71c708f223a41e8e",
     "js/map.js": "53b71c1b059db588c2d6b0027fd0b8b1079be41d2ce1260dea0c271a02d7971a",
     "js/fx.js": "3deb08ca132e6773feb5be6d20089f236352130f08ed2ac75b038232dc99935b",
-    "js/game/shared.js": "8735ad40029c02040e8c69380540fba2534ffa80848fc4bcd1aef5db234e7e92",
-    "js/game/core.js": "b96c919beb20f55d912cc82d6d172fae9520cab2fb765002a6a9a939969cde5d",
+    "js/game/shared.js": "2634ce8471768864982f8f359c609d619b14932133064ba27f36cec2da6d20db",
+    "js/game/core.js": "50cad1e6171ddc24f8fe92748b999df0e9f4df451ce827ea6cbb0bca387488e0",
     "js/game/structures.js": "0abfdd3265e562b6d4e50bbdd9793608933990263e08d39af1282c8c507a28be",
     "js/game/economy.js": "58814fc41c32a268c7bb049ba41f569310b20091f8a0bfe952833f683d818c60",
     "js/game/diplomacy.js": "5d02b3aa46e9b05347ad5786d8d4bff1d17458eacbd1d4b14fd19d378f9ffeae",
@@ -14,7 +14,7 @@
     "js/game/seapath.js": "6b9c6a8252b7f38c2d3aef340fbdc2482c27ce2c6fa5e564509d6f1466497673",
     "js/game/naval.js": "b3728afaa356f51a2d5c396d7be838f189194fbc8e57dc56dc00f47bb0149c0f",
     "js/game/rail.js": "5eca913f638222abb3826e6bd7159e2cb7b59be657bb825d961c2acc6c7d292c",
-    "js/game/trade.js": "9bd13237bb39f731d5e980271bf3bddbd239da6915476eb4ccaeaf492532d4c1",
+    "js/game/trade.js": "022b697cd630afa6072640027a3e5acf3f989adb1c1d0aba8d5ec4278b41a79e",
     "js/game/warships.js": "665f16c5435709711fa0c5ae9893cbd704f36e136de90b4716729e27c3037915",
     "js/game/nukes.js": "e69984a956dd53e61e9d9c5653088a2401243581cf4e91c5361113afc4c683f3",
     "js/game/sam.js": "2c3d56767ecd4f15581e9b59a7b03d69522ae403a8b0ec2e0a3ceae2f2adf565",
@@ -519,7 +519,7 @@
   ],
   "digest": {
     "ownerFNV": 849515988,
-    "stateSHA256": "f91572d2afa596c7057256a23adb43e27ac56fc97c0a74c63270dabe758e9c20"
+    "stateSHA256": "51ba8a38280381962227a4be2ab130a851adae043ad1dfe0b11dd2bf72e85e68"
   },
   "simulationTicks": 1240,
   "coverage": {

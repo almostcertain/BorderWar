@@ -339,6 +339,7 @@ const Game = {
     this.trains = [];
     this.nextTrainId = 1;
     this.tradeShips = [];
+    this._portRoutes = new Map();
     this.warships = [];
     this.nextWarshipId = 1;
     // Client-local presentation only, so it is cleared alongside the sim's own
