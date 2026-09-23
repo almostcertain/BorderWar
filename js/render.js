@@ -1422,15 +1422,36 @@ const Render = {
           ctx.setLineDash([]);
         }
 
-        const patX = (w.patrolTile % mw + 0.5 - this.cam.x) * s + cw / 2;
-        const patY = (((w.patrolTile / mw) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+        // Centered on the ship's live position, not patrolTile, so the ring
+        // follows it while under way instead of sitting at its destination
+        // (patrolTile is set the instant an order is issued — see
+        // moveWarships/buildWarship).
         ctx.beginPath();
-        ctx.arc(patX, patY, Game.WARSHIP_PATROL_RANGE * s, 0, Math.PI * 2);
+        ctx.arc(px, py, Game.WARSHIP_PATROL_RANGE * s, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(255,255,255,0.22)';
         ctx.lineWidth = Math.max(1, this.dpr);
         ctx.setLineDash([5 * this.dpr, 5 * this.dpr]);
         ctx.stroke();
         ctx.setLineDash([]);
+
+        // Destination marker: only while actually en route (still short of
+        // the last path tile), so an arrived/patrolling ship doesn't show a
+        // marker on top of itself.
+        if (w.pos < w.path.length - 1) {
+          const destTile = w.path[w.path.length - 1];
+          const dx = (destTile % mw + 0.5 - this.cam.x) * s + cw / 2;
+          const dy = (((destTile / mw) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+          const m = Math.max(4 * this.dpr, Math.min(9 * this.dpr, s * 0.3));
+          ctx.beginPath();
+          ctx.moveTo(dx, dy - m);
+          ctx.lineTo(dx + m, dy);
+          ctx.lineTo(dx, dy + m);
+          ctx.lineTo(dx - m, dy);
+          ctx.closePath();
+          ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+          ctx.lineWidth = Math.max(1.5, this.dpr * 1.5);
+          ctx.stroke();
+        }
       }
     }
 
