@@ -66,6 +66,11 @@ const Input = {
       UI.hideHoverPanel();
       return;
     }
+    // A boat's dot floats over open sea, well away from any owned tile, so
+    // it's checked first — otherwise hovering one would just fall through
+    // to "no owner here" and hide the panel instead of naming who sent it.
+    const boat = Render.findBoatNear(e.clientX, e.clientY);
+    if (boat) { UI.hoverTile = -1; UI.showHoverPanel(boat.attacker); return; }
     const tile = Render.screenToTile(e.clientX, e.clientY);
     if (tile < 0) { UI.hideHoverPanel(); return; }
     const owner = GameMap.owner[tile];

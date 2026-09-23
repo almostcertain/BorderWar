@@ -465,6 +465,30 @@ const Render = {
     return best;
   },
 
+  // Finds the boat (if any) whose current on-screen dot a hover falls near —
+  // same buffered hit-test idea as findStructureNear, sized off the same
+  // radius drawBoats uses for the dot itself rather than a single tile, so
+  // the whole visible dot is hoverable.
+  findBoatNear(sx, sy) {
+    if (!Game.boats.length) return null;
+    const s = this.cam.scale;
+    const w = GameMap.width;
+    const buffer = Math.max(5, Math.min(13, s * 1.05)) * 1.5;
+    let best = null, bestDist = Infinity;
+    for (const b of Game.boats) {
+      const idx = Math.min(b.path.length - 1, Math.floor(b.pos));
+      const frac = Math.min(1, b.pos - idx);
+      const a = b.path[idx], c = b.path[Math.min(idx + 1, b.path.length - 1)];
+      const ax = a % w, ay = (a / w) | 0, cx = c % w, cy = (c / w) | 0;
+      const tx = ax + (cx - ax) * frac, ty = ay + (cy - ay) * frac;
+      const bx = (tx + 0.5 - this.cam.x) * s + window.innerWidth / 2;
+      const by = (ty + 0.5 - this.cam.y) * s + window.innerHeight / 2;
+      const d = Math.hypot(bx - sx, by - sy);
+      if (d <= buffer && d < bestDist) { best = b; bestDist = d; }
+    }
+    return best;
+  },
+
   // Snaps the cursor to the nearest tile lying on any existing rail segment
   // when within 1.5 tile-widths of the line. Used for city placement so a
   // city placed near a rail lands on it rather than one tile off. Returns a
@@ -1241,9 +1265,8 @@ const Render = {
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
 
-      let colour = 'rgba(235,240,250,0.9)';
-      if (b.attacker === Game.me) colour = '#6db4ff';
-      else if (b.target === Game.me) colour = '#ff6b6b';
+      const owner = Game.players[b.attacker];
+      let colour = owner ? `rgb(${owner.color[0]}, ${owner.color[1]}, ${owner.color[2]})` : 'rgba(235,240,250,0.9)';
       if (b.retreating) colour = '#9aa4b2';
 
       // Trail: the actual sea route travelled so far, tile by tile, not a
