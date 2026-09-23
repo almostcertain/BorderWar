@@ -845,6 +845,10 @@ const Game = {
     if (!this.running) return;
     this.ticks++;
 
+    // See SEA_PATH_BUDGET_PER_TICK (naval.js): bounds how many full seaPath
+    // searches this tick's port/warship/AI updates below are allowed to run.
+    this._seaPathSearchesThisTick = 0;
+
     for (const p of this.players) {
       if (!p.alive) continue;
 

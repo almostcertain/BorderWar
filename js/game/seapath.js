@@ -101,6 +101,13 @@ Object.assign(Game, {
     for (const t of targetWater) targetComponents.add(wc[t]);
     if (!starts.some(s => targetComponents.has(wc[s]))) return null;
 
+    // Past the fast reject, this is a real weighted A* over potentially
+    // thousands of water tiles — budget how many of those run per tick (see
+    // SEA_PATH_BUDGET_PER_TICK) rather than let however many callers happen
+    // to land on the same tick all pay the full cost at once.
+    if (this._seaPathSearchesThisTick >= this.SEA_PATH_BUDGET_PER_TICK) return null;
+    this._seaPathSearchesThisTick++;
+
     const goalX = targetTile % w, goalY = (targetTile / w) | 0;
 
     // Cross-product tie-breaker needs one reference line — the start closest

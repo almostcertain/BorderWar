@@ -27,6 +27,21 @@ Object.assign(Game, {
   // walk the whole ocean — caps how many water tiles a single search visits.
   SEA_PATH_GUARD: 200000,
 
+  // Caps how many full (post-fast-reject) seaPath searches run in a single
+  // tick, reset in tick() below. Ports rolling for trade ships, bots'
+  // navalThink and warship repathing all funnel into seaPath independently,
+  // so nothing stops several of them landing on the same tick — harmless on
+  // the procedural maps' simple single-landmass water, but on real-coastline
+  // maps (many separate seas/straits/bays) each search runs far longer
+  // before it succeeds or exhausts SEA_PATH_GUARD, and a burst of them in
+  // one tick was measured as the source of this game's periodic hitches on
+  // The World. Callers already treat a null path as "try again later" (port
+  // trade rerolls next second, navalThink reconsiders in 15-25s, warship
+  // chase repaths on its own cooldown), so deferring the overflow to later
+  // ticks is free correctness-wise and spreads the cost across frames
+  // instead of stalling one of them.
+  SEA_PATH_BUDGET_PER_TICK: 4,
+
   // Config.boatMaxNumber().
   MAX_BOATS_PER_PLAYER: 3,
 
@@ -175,7 +190,14 @@ Object.assign(Game, {
 
     const landingTile = this.nearestOwnedCoast(targetTile);
     const targetOwner = GameMap.owner[landingTile];
+    // navalInvasionBlockReason just ran this same search to validate the
+    // route exists, but SEA_PATH_BUDGET_PER_TICK caps searches per tick, so
+    // a route found there can still come back null here if other repaths
+    // spent the rest of this tick's budget in between. Bail out rather than
+    // push a boat with a null path — every caller of Game.boats (render.js's
+    // drawBoats, stepBoats) assumes path is always an array.
     const path = this.nearestCoastPath(attackerId, landingTile);
+    if (!path) return false;
 
     // Marching on someone answers their proposal, same as launchAttack.
     if (targetOwner >= 0) this.dropRequestsBetween(attackerId, targetOwner);
