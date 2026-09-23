@@ -995,15 +995,25 @@ const AI = {
   // of plausible candidates.
   NAVAL_MAX_DETOUR: 2.5,
 
+  // Reserve fraction of maxTroops required before shipping any troops
+  // overseas. Doubled while someone is actively attacking p at home — a
+  // bot already fighting a land war has no business opening a second front
+  // across the water, and this is what actually keeps a beleaguered nation's
+  // defenders in place instead of bleeding troops onto boats mid-siege.
+  NAVAL_RESERVE: 0.35,
+  NAVAL_RESERVE_UNDER_ATTACK: 0.6,
+
   navalThink(p) {
     if (p.tiles.size === 0) return;
-    if (p.troops < Game.maxTroops(p) * 0.35) return;
-    if (Game.boats.filter(b => b.attacker === p.id).length >= Game.MAX_BOATS_PER_PLAYER) return;
 
     const homeCoast = this.coastalTiles(p);
     if (homeCoast.length === 0) return;
 
     const hostiles = this.hostiles(p, null);
+    const reserve = hostiles.size > 0 ? this.NAVAL_RESERVE_UNDER_ATTACK : this.NAVAL_RESERVE;
+    if (p.troops < Game.maxTroops(p) * reserve) return;
+    if (Game.boats.filter(b => b.attacker === p.id).length >= Game.MAX_BOATS_PER_PLAYER) return;
+
     const candidates = [];
     for (const lm of GameMap.landmasses) {
       let bestTile = -1, bestTileScore = -Infinity, bestTarget = -1;
@@ -1051,15 +1061,20 @@ const AI = {
     return score * risk * distFactor * this.retreatPenalty(p, targetId);
   },
 
-  // 1 at dist=0, fading to 0.5 at "comfortable raiding range" (scaled off the
-  // current map's own dimensions, so the bias means the same thing on a 250-
-  // wide small map as a 2000-wide xlarge one) and asymptoting toward 0 well
-  // beyond that — a soft discount, not a hard range cap, matching how real
-  // OpenFront's own overseas targeting stays nearest-biased without ever
-  // being strictly forbidden from a long crossing.
+  // 1 at dist=0, fading to 0.25 at "comfortable raiding range" (scaled off
+  // the current map's own dimensions, so the bias means the same thing on a
+  // 250-wide small map as a 2000-wide xlarge one) and asymptoting toward 0
+  // well beyond that — a soft discount, not a hard range cap, matching how
+  // real OpenFront's own overseas targeting stays nearest-biased without
+  // ever being strictly forbidden from a long crossing. Squared rather than
+  // linear: a linear falloff (0.5 at comfort range) still let a merely
+  // bigger or softer landmass clear across the map consistently outscore a
+  // decent one nearby, which read as "AI boats keep going to the far side of
+  // the map" — the squared curve keeps that possible but no longer typical.
   navalDistanceFactor(dist) {
     const comfort = (GameMap.width + GameMap.height) * 0.08;
-    return comfort / (comfort + dist);
+    const f = comfort / (comfort + dist);
+    return f * f;
   },
 
   // Manhattan distance from `tile` to the closest of `points` — cheap

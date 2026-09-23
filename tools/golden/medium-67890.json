@@ -18,14 +18,14 @@
     "js/game/warships.js": "eed18507e1e8385512f078c26d08e98362601c33b09c811dba591b2bbf8674a0",
     "js/game/nukes.js": "e69984a956dd53e61e9d9c5653088a2401243581cf4e91c5361113afc4c683f3",
     "js/game/sam.js": "2c3d56767ecd4f15581e9b59a7b03d69522ae403a8b0ec2e0a3ceae2f2adf565",
-    "js/net/protocol.js": "74280adcc6bcb48ab707887b7231b5555ff81bb4ad7c88598cccd14527a65bc0",
+    "js/net/protocol.js": "fe8f27b2b3f6b74edbbba2d1e15bbe07af3a39993f82b91ced2a82f22bbecf17",
     "js/net/executor.js": "af36c6c393cc277c209633ba5002880493e5793e3aaa782bcd5434f7ecf64bd9",
     "js/net/hash.js": "520e5a5f4853f159ced74006f46dfa12072144f529f723ac129ac2867496c88d",
     "js/net/runner.js": "2a6e4f6edf6ac090a1b5ac3c8366b020b8162146b0a911bb5925d793208a7e08",
     "js/net/localserver.js": "a322cddb5a4173f66212754d5bc0a65f2a228c142d4a924bfeeb219df5474159",
     "js/net/transport.js": "dfebde4cf7fab402a687e2da149e4ec612641f8bc02e0fcd032915c490d79ef9",
-    "js/net/worldmap.js": "e4238b89bbe56e487e1262b5de087c05a3b44785ce5c423a7954b4b0b0d5b06b",
-    "js/ai.js": "a6eac8f7dea4a93a52ea0fe6b31d2ee0b9736f06a08289b2906b65cf7d233e80"
+    "js/net/worldmap.js": "89d417233dc89ce447e60f1fe5ba3b9a881688de8d3b107fc08927d03cc60deb",
+    "js/ai.js": "a83c361be325234996497c09e700ec7074cb4e80353e1a9d511e656a5d8c7834"
   },
   "scenario": {
     "name": "medium-67890",
