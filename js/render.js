@@ -321,6 +321,14 @@ const Render = {
     this.tileCtx.putImageData(this.image, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
   },
 
+  // Recenters the view on a tile without touching zoom — used when the
+  // player taps a fronts-row chip to jump to that front. clampCamera() runs
+  // again on the very next frame regardless, so there's no need to clamp here.
+  jumpToTile(tx, ty) {
+    this.cam.x = tx;
+    this.cam.y = ty;
+  },
+
   clampCamera() {
     const viewW = this.canvas.width / (this.cam.scale * this.dpr);
     const viewH = this.canvas.height / (this.cam.scale * this.dpr);
@@ -463,6 +471,31 @@ const Render = {
       if (d <= buffer && d < bestDist) { best = b; bestDist = d; }
     }
     return best;
+  },
+
+  // Centroid of an attack's current frontier — a.border is the live set of
+  // contested tiles (see attacks.js), so this tracks the front as it moves
+  // rather than pointing at wherever the push originally started.
+  attackTile(a) {
+    const w = GameMap.width;
+    let sx = 0, sy = 0, n = 0;
+    for (const tile of a.border) {
+      sx += tile % w;
+      sy += (tile / w) | 0;
+      n++;
+    }
+    return n ? { x: sx / n + 0.5, y: sy / n + 0.5 } : null;
+  },
+
+  // Current tile-space position of a boat along its path, interpolated the
+  // same way findBoatNear and drawBoats place its dot.
+  boatTile(b) {
+    const w = GameMap.width;
+    const idx = Math.min(b.path.length - 1, Math.floor(b.pos));
+    const frac = Math.min(1, b.pos - idx);
+    const a = b.path[idx], c = b.path[Math.min(idx + 1, b.path.length - 1)];
+    const ax = a % w, ay = (a / w) | 0, cx = c % w, cy = (c / w) | 0;
+    return { x: ax + (cx - ax) * frac, y: ay + (cy - ay) * frac };
   },
 
   // Finds the boat (if any) whose current on-screen dot a hover falls near —

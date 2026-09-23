@@ -180,6 +180,7 @@ html, body {
   padding: 3px 6px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
 }
 
 /* Blue for a push or boat the player sent, red for one aimed at them —

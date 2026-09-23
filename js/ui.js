@@ -1059,6 +1059,20 @@ const UI = {
       }
       chip.className = 'frontChip ' + (it.mine ? 'mine' : 'theirs') + (it.retreating ? ' retreating' : '');
       chip._troopsEl.textContent = formatCountTight(it.troops);
+      // Stashed on the node (not closed over `it`, which is rebuilt fresh
+      // every call) so the listener below always reads this frame's kind/ref
+      // even though it was only attached once, back when the chip was made.
+      chip._kind = it.kind;
+      chip._ref = it.ref;
+      if (!chip._jumpBound) {
+        chip.addEventListener('click', () => {
+          const tile = chip._kind === 'attack'
+            ? Render.attackTile(chip._ref)
+            : Render.boatTile(chip._ref);
+          if (tile) Render.jumpToTile(tile.x, tile.y);
+        });
+        chip._jumpBound = true;
+      }
 
       // The X only ever needs adding or removing once, right at the moment
       // retreat is ordered — not rebuilt every frame like the text above.
@@ -1075,7 +1089,10 @@ const UI = {
         // it. An id whose attack has already ended by the time the turn lands
         // is dropped there, which is the ordinary case for a chip clicked as
         // its front resolves, not an error.
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (e) => {
+          // Otherwise this bubbles to the chip's own click listener and jumps
+          // the camera to the front in the same gesture that just cancelled it.
+          e.stopPropagation();
           if (it.kind === 'attack') Transport.sendIntent(Protocol.intent.cancelAttack(it.ref.id));
           else Transport.sendIntent(Protocol.intent.cancelBoat(it.ref.id));
         });
