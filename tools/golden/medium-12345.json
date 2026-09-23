@@ -9,7 +9,7 @@
     "js/game/economy.js": "58814fc41c32a268c7bb049ba41f569310b20091f8a0bfe952833f683d818c60",
     "js/game/diplomacy.js": "5d02b3aa46e9b05347ad5786d8d4bff1d17458eacbd1d4b14fd19d378f9ffeae",
     "js/game/attacks.js": "00246633d28e5fd7cf9e446fbbde7486a8b1a955d66ff9cade1c7e8cba827f08",
-    "js/game/combat.js": "641cc7e8108f2c93d609b59179a71b85aec7123228e461369470f69e6c0fef9e",
+    "js/game/combat.js": "c8b9c3981855775f32a20c537663d03ccee206da07588053de0a6c3d0883386b",
     "js/game/annex.js": "7a6f5af651ada1e613c8d1aad62f5942ff6db86a951fe64adfaf1e3957c50fa6",
     "js/game/seapath.js": "6b9c6a8252b7f38c2d3aef340fbdc2482c27ce2c6fa5e564509d6f1466497673",
     "js/game/naval.js": "b3728afaa356f51a2d5c396d7be838f189194fbc8e57dc56dc00f47bb0149c0f",
@@ -519,7 +519,7 @@
   ],
   "digest": {
     "ownerFNV": 1780317110,
-    "stateSHA256": "ace53c1dba6670e98676be4430fd4d6e41fa087b3bd1f7a6f4e5a1db8437b825"
+    "stateSHA256": "fb9239e55ea27507d6f333e73fd61a538dfc8d3475b93948a6a302e3b834c91f"
   },
   "simulationTicks": 4945,
   "coverage": {

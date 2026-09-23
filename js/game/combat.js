@@ -101,8 +101,34 @@ Object.assign(Game, {
   LARGE_ATTACKER_DEPTH: 0.7,
   LARGE_DEFENDER_DEPTH: 0.3,
 
+  // Hard-only: as the field thins toward a final showdown, ease off the
+  // attacker's anti-snowball brake so a dominant nation can actually close
+  // the game out instead of grinding down a hopeless straggler for minutes —
+  // real OpenFront has no equivalent because its matches are 8+ humans who
+  // self-regulate; ours can end up 2M pop vs. 50k with nobody left to check
+  // it, and the same brake that stops early snowballing has no job left to
+  // do at that point. Easy/Medium keep the flat brake throughout: closing
+  // out fast is a "play like a sharp human" trait, not a default AI one.
+  // Threshold picked to already be partway eased at "5 nations left" (this
+  // game's own worked example), fully off by the literal final 1v1.
+  LATE_GAME_NATION_THRESHOLD: 6,
+  LATE_GAME_MIN_NATIONS: 2,
+
   sigmoid(value, decayRate, midpoint) {
     return 1 / (1 + this.det.exp(-decayRate * (value - midpoint)));
+  },
+
+  // Effective LARGE_ATTACKER_DEPTH for this moment: unchanged outside Hard,
+  // and unchanged above LATE_GAME_NATION_THRESHOLD nations alive; linearly
+  // eases to 0 (no large-attacker penalty at all) as the alive count falls
+  // to LATE_GAME_MIN_NATIONS. nationCount/placements are both replicated sim
+  // state (see core.js), so this stays identical across clients.
+  lateGameAttackerDepth() {
+    if (Game.difficulty !== 'hard') return this.LARGE_ATTACKER_DEPTH;
+    const alive = Game.nationCount - Game.placements.size;
+    const span = this.LATE_GAME_NATION_THRESHOLD - this.LATE_GAME_MIN_NATIONS;
+    const t = Math.min(1, Math.max(0, (alive - this.LATE_GAME_MIN_NATIONS) / span));
+    return this.LARGE_ATTACKER_DEPTH * t;
   },
 
   // 1.0 for a nation well under LARGE_TERRITORY_MIDPOINT tiles, easing down
@@ -164,7 +190,7 @@ Object.assign(Game, {
     // (troopRatio past 150).
     const speedCost = (Math.min(7.5, Math.max(1, troopRatio)) * Math.min(50, Math.max(1, troopRatio / 20)))
       / this.SPEED_COST_DIVISOR;
-    const largeAtk = this.largeTerritoryBonus(attacker.tiles.size, this.LARGE_ATTACKER_DEPTH);
+    const largeAtk = this.largeTerritoryBonus(attacker.tiles.size, this.lateGameAttackerDepth());
     const largeDef = this.largeTerritoryBonus(defender.tiles.size, this.LARGE_DEFENDER_DEPTH);
     const traitorMod = this.isTraitor(defender) ? this.TRAITOR_SPEED_DEBUFF : 1;
     return (speedCost * tileSpeed * largeAtk * largeDef * traitorMod) / borderSize;
@@ -433,7 +459,7 @@ Object.assign(Game, {
 
     const strength = this.defenceStrength(defender, attacker.id);
     const ratio = Math.min(2, Math.max(0.6, strength / Math.max(1, attackTroops)));
-    const largeAtk = this.largeTerritoryBonus(attacker.tiles.size, this.LARGE_ATTACKER_DEPTH);
+    const largeAtk = this.largeTerritoryBonus(attacker.tiles.size, this.lateGameAttackerDepth());
     const largeDef = this.largeTerritoryBonus(defender.tiles.size, this.LARGE_DEFENDER_DEPTH);
     const traitorMod = this.isTraitor(defender) ? this.TRAITOR_DEFENSE_DEBUFF : 1;
     // Same POP_SCALE un-shrink as attackTickFraction's terra-nullius branch
