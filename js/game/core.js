@@ -258,25 +258,40 @@ const Game = {
     xlarge: { width: 2000, height: 1000 }   // OpenFront's World, full resolution
   },
 
-  // gameStartInfo is {gameID, seed, config:{mapSize,bots,tribes,difficulty?},
-  // players:[{clientID,username,playerId}]} — the exact shape LocalServer.start
-  // and server/gameserver.js's start() both produce (docs/multiplayer-
-  // architecture.md §4, §9 Phase 2). myPlayerId is a plain integer, the
-  // caller's job to compute (main.js resolves it from myClientID); this
-  // function never needs to know clientIDs or the network layer exist.
+  // gameStartInfo is {gameID, seed, config:{map?,mapSize,bots,tribes,
+  // difficulty?}, players:[{clientID,username,playerId}]} — the exact shape
+  // LocalServer.start and server/gameserver.js's start() both produce
+  // (docs/multiplayer-architecture.md §4, §9 Phase 2). myPlayerId is a plain
+  // integer, the caller's job to compute (main.js resolves it from
+  // myClientID); this function never needs to know clientIDs or the network
+  // layer exist.
   init(gameStartInfo, myPlayerId) {
     gameStartInfo = gameStartInfo || {};
     const config = gameStartInfo.config || {};
     const seed = gameStartInfo.seed >>> 0;
-    const sizeKey = config.mapSize;
     this.rng = mulberry32(seed);
-    const size = this.MAP_SIZES[sizeKey] || this.MAP_SIZES.medium;
-    this.sizeKey = sizeKey in this.MAP_SIZES ? sizeKey : 'medium';
     // Nation tier for the whole match (economy.js NATION_DIFFICULTY, ai.js
     // PROFILES). Set on every init so a previous match's tier can't leak in;
     // anything unrecognised — including a lobby that sends none — is Medium.
     this.difficulty = this.DIFFICULTIES.includes(config.difficulty) ? config.difficulty : this.DEFAULT_DIFFICULTY;
-    GameMap.generate(size.width, size.height, seed);
+
+    // `map: 'world'` selects OpenFront's real, baked "World" coastline
+    // instead of a procedural one; `mapSize` is meaningless for it (the real
+    // map has one fixed resolution, 2000x1000 — the same as MAP_SIZES.xlarge)
+    // and is ignored. Every other value (including none) is the existing
+    // procedural generator, keyed by mapSize as before.
+    if (config.map === 'world') {
+      if (!GameMap.worldData) {
+        throw new Error('Game.init: map "world" selected but GameMap.worldData was not preloaded (see js/net/worldmap.js)');
+      }
+      this.sizeKey = 'world';
+      GameMap.loadWorld(GameMap.worldData.bytes, GameMap.worldData.manifest);
+    } else {
+      const sizeKey = config.mapSize;
+      const size = this.MAP_SIZES[sizeKey] || this.MAP_SIZES.medium;
+      this.sizeKey = sizeKey in this.MAP_SIZES ? sizeKey : 'medium';
+      GameMap.generate(size.width, size.height, seed);
+    }
 
     // Player id space: 0..H-1 are humans, one per roster entry (real
     // usernames, not a hardcoded 'You'), H..H+botCount-1 are Nations, the

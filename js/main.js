@@ -43,6 +43,7 @@
   const TRIBES_FOR_SIZE = { small: 8, medium: 16, large: 32, xlarge: 50 };
 
   const sizeSelect = document.getElementById('mapSize');
+  const mapTypeSelect = document.getElementById('mapType');
   const botInput = document.getElementById('botCount');
   const tribeInput = document.getElementById('tribeCount');
   const difficultySelect = document.getElementById('difficulty');
@@ -58,6 +59,40 @@
   bindSizeDefaults(sizeSelect, botInput, tribeInput);
   bindSizeDefaults(document.getElementById('hostMapSize'),
     document.getElementById('hostBotCount'), document.getElementById('hostTribeCount'));
+
+  // The "Map Size" row only means anything for the procedural generator — the
+  // real World map has one fixed resolution (js/game/core.js's Game.init).
+  // Hiding it rather than disabling it, so a host who picked World can't be
+  // confused by a size control that would silently do nothing. World's own
+  // scale matches MAP_SIZES.xlarge (2000x1000), so it reuses that size's
+  // bot/tribe defaults when selected.
+  function bindMapType(mapType, sizeRow, sizeSelect, bots, tribes) {
+    mapType.addEventListener('change', () => {
+      const isWorld = mapType.value === 'world';
+      sizeRow.classList.toggle('hidden', isWorld);
+      if (isWorld) {
+        bots.value = BOTS_FOR_SIZE.xlarge;
+        tribes.value = TRIBES_FOR_SIZE.xlarge;
+        // Preload eagerly the moment World is actually chosen, rather than
+        // waiting for Start — see js/net/worldmap.js. Failure is surfaced
+        // when Start is actually pressed (the 'start' handler below); this
+        // fire-and-forget call just avoids an unhandled-rejection warning.
+        WorldMapLoader.ensure().catch(() => {});
+      } else {
+        bots.value = BOTS_FOR_SIZE[sizeSelect.value] || 9;
+        tribes.value = TRIBES_FOR_SIZE[sizeSelect.value] || 16;
+      }
+    });
+  }
+  bindMapType(mapTypeSelect, document.getElementById('mapSizeRow'), sizeSelect, botInput, tribeInput);
+  bindMapType(document.getElementById('hostMapType'), document.getElementById('hostMapSizeRow'),
+    document.getElementById('hostMapSize'), document.getElementById('hostBotCount'), document.getElementById('hostTribeCount'));
+
+  // World is the default selection in both panels (index.html) — start
+  // fetching it immediately rather than waiting for a change event that may
+  // never fire because the player never touches the dropdown. Failure is
+  // surfaced later, when Start is actually pressed.
+  WorldMapLoader.ensure().catch(() => {});
 
   // --- Multiplayer lobby (MP-2.3) --------------------------------------------
   //
@@ -327,19 +362,36 @@
       const myEntry = rosterEntries.find(function(p) { return p && p.clientID === msg.myClientID; });
       const myPlayerId = myEntry ? myEntry.playerId : 0;
 
-      Game.init(info, myPlayerId);
-      Render.onMapReady();
-      Render.centerOnMap();
-      UI.reset();
-      UI.enterSpawnSelect();
+      const beginMatch = function() {
+        Game.init(info, myPlayerId);
+        Render.onMapReady();
+        Render.centerOnMap();
+        UI.reset();
+        UI.enterSpawnSelect();
 
-      // The catch-up backlog. Empty at a fresh start; non-empty after a rejoin
-      // (§4), and the drain loop below is what works through it.
-      if (Array.isArray(msg.turns)) for (const t of msg.turns) Runner.addTurn(t);
+        // The catch-up backlog. Empty at a fresh start; non-empty after a
+        // rejoin (§4), and the drain loop below is what works through it.
+        if (Array.isArray(msg.turns)) for (const t of msg.turns) Runner.addTurn(t);
 
-      lastTurnAt = performance.now();
-      document.getElementById('overlay').classList.add('hidden');
-      document.getElementById('endOverlay').classList.add('hidden');
+        lastTurnAt = performance.now();
+        document.getElementById('overlay').classList.add('hidden');
+        document.getElementById('endOverlay').classList.add('hidden');
+      };
+
+      // World is normally already preloaded well before this point (fetched
+      // the moment it was selected, or eagerly at startup) — this await is a
+      // safety net for a fast host/slow joiner, not the common path. A failed
+      // fetch (bad path, offline, server not serving maps/) must not leave
+      // the player stuck on a menu that looks like Start did nothing.
+      if (info.config && info.config.map === 'world') {
+        WorldMapLoader.ensure().then(beginMatch).catch(function(err) {
+          console.error('Failed to load the World map', err);
+          UI.setLobbyError('Failed to load the World map: ' + err.message);
+          document.getElementById('overlay').classList.add('hidden');
+        });
+      } else {
+        beginMatch();
+      }
       return;
     }
 
@@ -390,6 +442,7 @@
       gameID: 'local',
       username: UI.getPlayerName() || 'You',
       seed: (Math.random() * 1e9) | 0,
+      map: mapTypeSelect.value === 'world' ? 'world' : 'procedural',
       mapSize: mapSize,
       bots: bots,
       tribes: tribes,

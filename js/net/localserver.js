@@ -188,6 +188,7 @@ const LocalServer = {
       gameID: typeof opts.gameID === 'string' ? opts.gameID : 'local',
       seed: opts.seed >>> 0,
       config: {
+        map: opts.map === 'world' ? 'world' : 'procedural',
         mapSize: opts.mapSize || 'medium',
         bots: opts.bots | 0,
         tribes: opts.tribes | 0,

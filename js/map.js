@@ -157,6 +157,56 @@ const GameMap = {
   // pathfinding) out of the map, not to gate spawning.
   MIN_LANDMASS_TILES: 70,
 
+  // Raw bytes + manifest for OpenFront's real "World" map, handed off by
+  // js/net/worldmap.js (ordinary client code — fetch() has no business in
+  // this file, see its own comment) once fetched. loadWorld reads this
+  // rather than taking a URL, so the file stays free of any network call.
+  worldData: null,
+
+  // Parses OpenFront's baked map.bin format (1 byte/tile, row-major):
+  // bit 7 = land, bit 6 = shoreline, bit 5 = ocean, bits 0-4 = magnitude
+  // (elevation on land, distance-to-land on water — see map-generator's
+  // packTerrain in the OpenFrontIO repo). Land/water and magnitude are all
+  // this needs; shoreline/ocean flags and the water magnitude are re-derived
+  // by computeShoreDist/computeWaterComponents below exactly as generate()
+  // does for a procedural map, so both paths feed Game.seaPath identical data.
+  loadWorld(bytes, manifest) {
+    const width = manifest.width, height = manifest.height;
+    const size = width * height;
+    if (bytes.length !== size) {
+      throw new Error(`GameMap.loadWorld: expected ${size} bytes for ${width}x${height}, got ${bytes.length}`);
+    }
+    this.width = width;
+    this.height = height;
+    this.elevation = new Float32Array(size);
+    this.owner = new Int16Array(size);
+    this.roughness = new Float32Array(size);
+    this._region = new Int32Array(size);
+    this._queue = new Int32Array(size);
+
+    for (let i = 0; i < size; i++) {
+      const b = bytes[i];
+      const land = (b & 0x80) !== 0;
+      const magnitude = (b & 0x1F) / 31;
+      this.owner[i] = land ? NEUTRAL : WATER;
+      // classifyTerrain slices tiers off `roughness`; feeding it real
+      // elevation here (rather than the noise field generate() builds) is
+      // exactly what makes mountain ranges land where they really do.
+      this.roughness[i] = magnitude;
+      // Water elevation matches pruneSmallLandmasses' own sentinel for
+      // demoted land, so anything reading elevation (rendering) sees the
+      // same "this is water" value regardless of which path built the map.
+      this.elevation[i] = land ? magnitude : 0.48;
+    }
+
+    this._labelRegions();
+    this.pruneSmallLandmasses(this.MIN_LANDMASS_TILES);
+    this.classifyTerrain();
+    this.computeShoreDist();
+    this.computeWaterComponents();
+    return this.landTiles;
+  },
+
   // Finds the sea level whose largest connected landmass lands closest to
   // `target` tiles. Plain bisection (the old approach) assumed the largest-
   // component size shrinks smoothly as the threshold rises; measuring it
@@ -277,6 +327,14 @@ const GameMap = {
     for (let i = 0; i < size; i++) {
       this.owner[i] = this.elevation[i] > t ? NEUTRAL : WATER;
     }
+    return this._labelRegions();
+  },
+
+  // The flood-fill/labeling half of largestLandmassAt, split out so loadWorld
+  // can reuse it against an `owner` array it already knows (from real map
+  // data) rather than one this would derive from an elevation threshold.
+  _labelRegions() {
+    const size = this.width * this.height;
     const region = this._region, queue = this._queue, nb = new Int32Array(4);
     region.fill(-1);
     // Every region's size, not just the winner's — pruneSmallLandmasses uses

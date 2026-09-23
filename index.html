@@ -149,6 +149,12 @@
 
     <div id="spMode" class="modeBody hidden">
       <label>Map
+        <select id="mapType">
+          <option value="world" selected>The World</option>
+          <option value="procedural">Procedural</option>
+        </select>
+      </label>
+      <label id="mapSizeRow" class="hidden">Map Size
         <select id="mapSize">
           <option value="small">Small</option>
           <option value="medium" selected>Medium</option>
@@ -170,6 +176,12 @@
 
     <div id="hostMode" class="modeBody hidden">
       <label>Map
+        <select id="hostMapType">
+          <option value="world" selected>The World</option>
+          <option value="procedural">Procedural</option>
+        </select>
+      </label>
+      <label id="hostMapSizeRow" class="hidden">Map Size
         <select id="hostMapSize">
           <option value="small">Small</option>
           <option value="medium" selected>Medium</option>
@@ -259,7 +271,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/nukes', 'game/sam', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'ai', 'render', 'input', 'ui', 'radial', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/nukes', 'game/sam', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

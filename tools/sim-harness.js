@@ -9,6 +9,11 @@ const methods = ['launchAttack', 'launchNavalInvasion', 'resolveLanding', 'annex
 const entities = ['tradeShips', 'samMissiles', 'shells', 'trains'];
 const scenarios = ['small', 'medium', 'large'].flatMap(size => [12345, 67890].map(seed => ({ name: `${size}-${seed}`, size, seed, bots: 8, tribes: 12, ticks: 6000 })));
 scenarios.push({ name: 'xlarge-12345', size: 'xlarge', seed: 12345, bots: 8, tribes: 12, ticks: 2000 });
+// OpenFront's real, baked "World" map (js/map.js's loadWorld) rather than a
+// procedural one — `size` is irrelevant here (see core.js's Game.init) but is
+// still recorded on the scenario so a scenario-configuration change is caught
+// the same way as any other.
+scenarios.push({ name: 'world-12345', map: 'world', seed: 12345, bots: 8, tribes: 12, ticks: 2000 });
 scenarios.push({ name: 'late-medium-24680', size: 'medium', seed: 24680, bots: 8, tribes: 12, ticks: 6000, gold: 100000000 });
 // Nation difficulty tiers (Medium is every scenario above). The late-game pair
 // carries the same bot treasury as late-medium so nuke behaviour shows up.
@@ -73,6 +78,14 @@ for (const cfg of scenarios) {
     const original = Game[name];
     if (typeof original !== 'function') throw new Error(`Missing method ${name}`);
     Game[name] = function (...args) { coverage[name]++; return original.apply(this, args); };
+  }
+  if (cfg.map === 'world') {
+    // No fetch() in this harness (nor in the sim it's checking, on purpose —
+    // see js/net/worldmap.js) — read the same static asset a browser would
+    // fetch directly off disk instead.
+    const worldManifest = JSON.parse(fs.readFileSync(path.join(root, 'maps/world/manifest.json'), 'utf8'));
+    const worldBytes = fs.readFileSync(path.join(root, 'maps/world/map.bin'));
+    GameMap.worldData = { manifest: worldManifest.map, bytes: new Uint8Array(worldBytes.buffer, worldBytes.byteOffset, worldBytes.length) };
   }
   Game.init(Hash._syntheticGameStartInfo(cfg), 0);
   const peaks = Object.fromEntries(entities.map(k => [k, Game[k].length]));

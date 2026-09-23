@@ -759,6 +759,9 @@ class GameServer {
       gameID: this.gameID,
       seed: seed,
       config: {
+        // Whitelisted like difficulty below: an unrecognized value (or none)
+        // is the existing procedural generator, never trusted through as-is.
+        map: config.map === 'world' ? 'world' : 'procedural',
         mapSize: config.mapSize || 'medium',
         bots: Number.isInteger(config.bots) ? config.bots : 0,
         tribes: Number.isInteger(config.tribes) ? config.tribes : 0,

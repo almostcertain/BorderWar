@@ -228,7 +228,7 @@ const Hash = {
     return {
       gameID: 'hash-harness',
       seed: cfg.seed,
-      config: { mapSize: cfg.size, bots: cfg.bots, tribes: cfg.tribes, difficulty: cfg.difficulty },
+      config: { map: cfg.map, mapSize: cfg.size, bots: cfg.bots, tribes: cfg.tribes, difficulty: cfg.difficulty },
       players: [{ clientID: 'harness', username: 'Harness', playerId: 0 }]
     };
   },

@@ -366,8 +366,10 @@ const Protocol = {
       dir: 'c2s',
       fields: { config: 'obj' },
       notes: 'MP-2.3: the lobby creator asks the server to leave LOBBY and begin '
-        + 'the match. `config` bundles {mapSize, bots, tribes} — the host\'s own '
-        + 'map/bot/tribe controls — because v1 has no live lobby-settings sync to '
+        + 'the match. `config` bundles {map, mapSize, bots, tribes} — the host\'s '
+        + 'own map/bot/tribe controls (`map` is \'world\' or \'procedural\'; '
+        + '`mapSize` only means anything for the latter) — because v1 has no live '
+        + 'lobby-settings sync to '
         + 'non-host clients (architecture doc §9: "joiners see a read-only '
         + 'roster"), so the simplest correct design is to carry the config here '
         + 'rather than a separate settings-sync message. The server (GameServer.'
