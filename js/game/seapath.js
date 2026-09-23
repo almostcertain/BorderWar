@@ -60,6 +60,7 @@ Object.assign(Game, {
         closed: new Uint8Array(size),
         gVal: new Int32Array(size),
         from: new Int32Array(size),
+        steps: new Int32Array(size),
         heapId: new Int32Array(cap),
         heapPri: new Int32Array(cap)
       };
@@ -72,7 +73,14 @@ Object.assign(Game, {
   // `targetTile`. Returns the path as a tile sequence (water tiles, ending
   // on targetTile itself) or null if `targetTile` isn't coastal at all or no
   // route is found within the guard.
-  seaPath(sourceTiles, targetTile) {
+  //
+  // `maxSteps` (optional) never extends a route past that many water tiles
+  // from its start. A caller that will reject a long route anyway (the AI's
+  // detour check) passes it so a target only reachable the long way round
+  // fails fast instead of exhausting SEA_PATH_GUARD — measured on The World
+  // at ~144ms per such failure, most of the AI's naval hitching. It also
+  // shrinks the node guard (SEA_PATH_NODES_PER_STEP).
+  seaPath(sourceTiles, targetTile, maxSteps = Infinity) {
     const owner = GameMap.owner, shoreDist = GameMap.shoreDist, w = GameMap.width;
     const nb = new Int32Array(4);
 
@@ -105,8 +113,11 @@ Object.assign(Game, {
     // thousands of water tiles — budget how many of those run per tick (see
     // SEA_PATH_BUDGET_PER_TICK) rather than let however many callers happen
     // to land on the same tick all pay the full cost at once.
-    if (this._seaPathSearchesThisTick >= this.SEA_PATH_BUDGET_PER_TICK) return null;
-    this._seaPathSearchesThisTick++;
+    // Only inside tick() — see its _inTick comment.
+    if (this._inTick) {
+      if (this._seaPathSearchesThisTick >= this.SEA_PATH_BUDGET_PER_TICK) return null;
+      this._seaPathSearchesThisTick++;
+    }
 
     const goalX = targetTile % w, goalY = (targetTile / w) | 0;
 
@@ -137,7 +148,7 @@ Object.assign(Game, {
     // (200k) tiles at BASE_COST 100 plus at most a 1000 shore penalty each is
     // ~2.2e8 against a 2.1e9 ceiling.
     const arena = this.seaArena(owner.length);
-    const hasG = arena.hasG, gVal = arena.gVal, from = arena.from, closed = arena.closed;
+    const hasG = arena.hasG, gVal = arena.gVal, from = arena.from, closed = arena.closed, steps = arena.steps;
     const heapId = arena.heapId, heapPri = arena.heapPri;
     // Only the flags need resetting; gVal/from are never read unless their
     // tile's flag says this search wrote them.
@@ -177,13 +188,13 @@ Object.assign(Game, {
 
     for (const s of starts) {
       if (hasG[s]) continue;
-      hasG[s] = 1; gVal[s] = 0; from[s] = -1;
+      hasG[s] = 1; gVal[s] = 0; from[s] = -1; steps[s] = 0;
       const sx = s % w, sy = (s / w) | 0;
       const h = weight * BASE_COST * (Math.abs(sx - goalX) + Math.abs(sy - goalY));
       heapPush(s, h);
     }
 
-    let found = -1, guard = this.SEA_PATH_GUARD;
+    let found = -1, guard = Math.min(this.SEA_PATH_GUARD, maxSteps * this.SEA_PATH_NODES_PER_STEP);
     while (heapLen > 0 && guard-- > 0) {
       const current = heapPop();
       if (closed[current]) continue;
@@ -191,13 +202,15 @@ Object.assign(Game, {
       if (targetWater.has(current)) { found = current; break; }
 
       const currentG = gVal[current];
+      const nextSteps = steps[current] + 1;
+      if (nextSteps > maxSteps) continue;
       const n = GameMap.neighbors(current, nb);
       for (let k = 0; k < n; k++) {
         const j = nb[k];
         if (owner[j] !== WATER || closed[j]) continue;
         const tentativeG = currentG + BASE_COST + this.shoreCostPenalty(shoreDist[j]);
         if (!hasG[j] || tentativeG < gVal[j]) {
-          hasG[j] = 1; gVal[j] = tentativeG; from[j] = current;
+          hasG[j] = 1; gVal[j] = tentativeG; from[j] = current; steps[j] = nextSteps;
           const jx = j % w, jy = (j / w) | 0;
           const h = weight * BASE_COST * (Math.abs(jx - goalX) + Math.abs(jy - goalY));
           heapPush(j, tentativeG + h + crossTieBreaker(jx, jy));

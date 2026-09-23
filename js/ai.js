@@ -1059,6 +1059,13 @@ const AI = {
     if (p.troops < Game.maxTroops(p) * reserve) return;
     if (Game.boats.filter(b => b.attacker === p.id).length >= Game.MAX_BOATS_PER_PLAYER) return;
 
+    // Landmasses p already holds ground on, gathered once — the per-sample
+    // Game.onSameLandmass check this replaces walked all of p.tiles for every
+    // coast sample of every landmass, which on The World added up to a
+    // third of navalThink's cost.
+    const heldLandmasses = new Set();
+    for (const t of p.tiles) heldLandmasses.add(GameMap.landmassId[t]);
+
     const candidates = [];
     for (const lm of GameMap.landmasses) {
       let bestTile = -1, bestTileScore = -Infinity, bestTarget = -1;
@@ -1069,7 +1076,7 @@ const AI = {
         // this as a land target (its own conquest wave will reach it over
         // time even before it's directly bordered), so routing a boat there
         // too would just waste one.
-        if (Game.onSameLandmass(p.id, tile)) continue;
+        if (heldLandmasses.has(GameMap.landmassId[tile])) continue;
         const dist = this.nearestDist(homeCoast, tile);
         const score = this.navalScore(p, owner, lm.size, dist, hostiles);
         if (score > bestTileScore) { bestTileScore = score; bestTile = tile; bestTarget = owner; }
@@ -1138,14 +1145,18 @@ const AI = {
     return best;
   },
 
-  // True only when we can positively confirm the real crossing is a bad
-  // detour — no route at all is left to launchNavalInvasion's own "No sea
-  // route" handling rather than treated as indirect here.
+  // True when the real crossing is a bad detour, or when no route within
+  // the detour limit exists at all. The search itself is capped at that
+  // limit, so a target only reachable the long way round fails fast rather
+  // than walking the whole ocean first. A route it does find is memoised
+  // for the tick (see Game.nearestCoastPath), so the launch that follows
+  // reuses it instead of searching again.
   isRouteTooIndirect(p, homeCoast, targetTile) {
     const straight = this.nearestDist(homeCoast, targetTile);
     if (straight < 8) return false; // too short for the ratio to mean anything
-    const path = Game.nearestCoastPath(p.id, targetTile);
-    return !!path && path.length > straight * this.NAVAL_MAX_DETOUR;
+    const limit = straight * this.NAVAL_MAX_DETOUR;
+    const path = Game.nearestCoastPath(p.id, targetTile, Math.floor(limit));
+    return !path || path.length > limit;
   },
 
   // 1+BONUS (3x) at kickoff, fading linearly down to a 1+FLOOR (1.5x) floor

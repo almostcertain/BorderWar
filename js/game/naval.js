@@ -27,6 +27,15 @@ Object.assign(Game, {
   // walk the whole ocean — caps how many water tiles a single search visits.
   SEA_PATH_GUARD: 200000,
 
+  // A step-capped search (seaPath's maxSteps) also gets its node guard cut
+  // to this many visits per allowed step. Measured on The World: most
+  // successful AI routes explore well under 16 nodes per step, while
+  // searches that fail (target only reachable the long way round) ran the
+  // full 200k guard at ~140ms each. Ending those at ~16×limit is the bulk of
+  // the naval hitch fix; the few very long crossings that needed more count
+  // as "too indirect" to the AI and it picks another target.
+  SEA_PATH_NODES_PER_STEP: 16,
+
   // Caps how many full (post-fast-reject) seaPath searches run in a single
   // tick, reset in tick() below. Ports rolling for trade ships, bots'
   // navalThink and warship repathing all funnel into seaPath independently,
@@ -143,12 +152,28 @@ Object.assign(Game, {
   // menu calls to decide whether to grey out the Boat option, so a full
   // territory scan here was a hitch on every check against a large empire,
   // not just an actual boat launch.
-  nearestCoastPath(attackerId, targetTile) {
+  //
+  // Found routes are memoised for the rest of the tick (cleared by tick()
+  // and by any setOwner), keyed by attacker and target: a single boat launch
+  // asks for the same route up to three times in a row (the AI's detour
+  // check, navalInvasionBlockReason, launchNavalInvasion itself), and on The
+  // World each search can cost 100ms+. Only successes are cached — a null
+  // from a step-capped or over-budget search says nothing about an uncapped
+  // one. `maxSteps` (optional) prunes the search to routes at most that many
+  // tiles long; see seaPath.
+  nearestCoastPath(attackerId, targetTile, maxSteps) {
+    const key = attackerId * GameMap.owner.length + targetTile;
+    if (this._inTick) {
+      const cached = this._coastPathMemo.get(key);
+      if (cached) return cached;
+    }
     const attacker = this.players[attackerId];
     const coastal = [];
     for (const t of attacker.borderTiles) if (GameMap.isCoastal(t)) coastal.push(t);
     if (coastal.length === 0) return null;
-    return this.seaPath(coastal, targetTile);
+    const path = this.seaPath(coastal, targetTile, maxSteps);
+    if (path && this._inTick) this._coastPathMemo.set(key, path);
+    return path;
   },
 
   // Why a boat cannot launch at `tile` right now, for the radial menu's Boat
