@@ -885,10 +885,9 @@ GameServer.abandonedTimeout = 2 * 60 * 1000;
 // Issue #12: rotating open lobbies. Static, like disconnectedTimeout/
 // abandonedTimeout above, so a test can shorten the countdown without
 // editing shipped source. autoLobbyMinPlayers matches issue #9's "at least
-// two human players"; autoLobbyCountdownMs (30s) mirrors this project's own
-// multiplayer spawn-phase duration (docs/multiplayer-architecture.md D1)
-// rather than inventing an unrelated number.
+// two human players"; autoLobbyCountdownMs (20s) is this feature's own
+// fill/start window.
 GameServer.autoLobbyMinPlayers = 2;
-GameServer.autoLobbyCountdownMs = 30 * 1000;
+GameServer.autoLobbyCountdownMs = 20 * 1000;
 
 module.exports = GameServer;

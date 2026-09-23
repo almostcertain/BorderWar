@@ -1401,6 +1401,7 @@ const UI = {
   // than disabled so the lobby screen (roster, code/status, leave button)
   // is the only thing on screen while connected.
   _hidePreLobbyChrome() {
+    document.getElementById('nameRow').classList.add('hidden');
     document.getElementById('quickJoin').classList.add('hidden');
     document.querySelector('.orDivider').classList.add('hidden');
     document.getElementById('modeTabs').classList.add('hidden');
@@ -1411,11 +1412,17 @@ const UI = {
   // and roster never linger.
   hideLobby() {
     this._lobbyKnownIDs = null;
+    if (this._autoLobbyCountdownIntervalID) {
+      clearInterval(this._autoLobbyCountdownIntervalID);
+      this._autoLobbyCountdownIntervalID = null;
+    }
+    this._autoLobbyCountdown = null;
     document.getElementById('hostLobby').classList.add('hidden');
     document.getElementById('hostCreateBtn').classList.remove('hidden');
     document.getElementById('joinLobby').classList.add('hidden');
     document.getElementById('joinBtn').classList.remove('hidden');
     document.getElementById('publicLobbyBrowser').classList.remove('hidden');
+    document.getElementById('nameRow').classList.remove('hidden');
     document.getElementById('quickJoin').classList.remove('hidden');
     document.querySelector('.orDivider').classList.remove('hidden');
     document.getElementById('modeTabs').classList.remove('hidden');
@@ -1485,6 +1492,22 @@ const UI = {
     else status = 'Connected to the lobby.';
     this.setLobbyStatus(role, status, true);
 
+    // The status text above is only recomputed when a `lobby_info` broadcast
+    // arrives (roster changes, or the countdown starting/stopping) — between
+    // those it would sit frozen at whatever second it last showed. Tick it
+    // locally once a second from the same lobby.autoStartAt so the number
+    // actually counts down; _tickAutoLobbyCountdown clears itself once the
+    // countdown is no longer running.
+    this._autoLobbyCountdown = (lobby && lobby.isAuto && typeof lobby.autoStartAt === 'number')
+      ? { role: role, autoStartAt: lobby.autoStartAt }
+      : null;
+    if (this._autoLobbyCountdown && !this._autoLobbyCountdownIntervalID) {
+      this._autoLobbyCountdownIntervalID = setInterval(() => this._tickAutoLobbyCountdown(), 1000);
+    } else if (!this._autoLobbyCountdown && this._autoLobbyCountdownIntervalID) {
+      clearInterval(this._autoLobbyCountdownIntervalID);
+      this._autoLobbyCountdownIntervalID = null;
+    }
+
     if (role === 'host') document.getElementById('hostStartBtn').classList.toggle('hidden', !isHost);
     // index.html's static join-panel caption assumes a human host; an auto
     // lobby (issue #12) has none, and joinStatus above already carries the
@@ -1494,6 +1517,17 @@ const UI = {
       document.getElementById('joinWaiting').textContent =
         (lobby && lobby.isAuto) ? '' : 'Waiting for the host to start…';
     }
+  },
+
+  // Runs once a second while an auto lobby's countdown is live (started by
+  // updateLobbyFromInfo above). Recomputes the same "Starting in Ns…" text
+  // from the stored autoStartAt without waiting for the next lobby_info
+  // broadcast — otherwise the number sits frozen between roster changes.
+  _tickAutoLobbyCountdown() {
+    const state = this._autoLobbyCountdown;
+    if (!state) return;
+    const secs = Math.max(0, Math.round((state.autoStartAt - Date.now()) / 1000));
+    this.setLobbyStatus(state.role, 'Starting in ' + secs + 's…', true);
   },
 
   renderLobbyRoster(ul, players, creatorClientId, myClientID, fresh) {
