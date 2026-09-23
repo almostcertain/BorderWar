@@ -57,6 +57,9 @@ Object.assign(Game, {
     // Marching on someone answers their proposal, as OpenFront's
     // AttackExecution.rejectIncomingAllianceRequests does.
     if (targetId >= 0) this.dropRequestsBetween(attackerId, targetId);
+    // ...and, like AttackExecution, closes the victim's markets to the
+    // attacker for a while. Every attack order, top-ups included.
+    this.embargoOnAttack(attackerId, targetId);
 
     // Every existing attack against this target *on the same landmass*
     // consolidates into one shared siege pool: all of them fold their troops

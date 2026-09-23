@@ -24,27 +24,33 @@ const AI = {
   //   nukes                  whether it builds Silos and fires warheads at all.
   //   nukeChance / hydrogenChance  1-in-n roll per economy cycle to fire, and
   //                          to make that warhead a Hydrogen Bomb.
+  //   embargoLiftAt          relation at which a nation lifts an embargo it
+  //                          placed on someone it came to hate. OpenFront:
+  //                          Neutral, but Hard holds out for Friendly.
   PROFILES: {
     easy: {
       thinkMult: 1.6, navalMult: 1.6,
       attackRatio: 0.4, neutralRatio: 0.3,
       confusion: 10,
       betrayHelpless: 20, betrayOpportunist: false,
-      nukes: false, nukeChance: 0, hydrogenChance: 4
+      nukes: false, nukeChance: 0, hydrogenChance: 4,
+      embargoLiftAt: 0
     },
     medium: {
       thinkMult: 1, navalMult: 1,
       attackRatio: 0.55, neutralRatio: 0.35,
       confusion: 20,
       betrayHelpless: 10, betrayOpportunist: true,
-      nukes: true, nukeChance: 8, hydrogenChance: 4
+      nukes: true, nukeChance: 8, hydrogenChance: 4,
+      embargoLiftAt: 0
     },
     hard: {
       thinkMult: 0.7, navalMult: 0.7,
       attackRatio: 0.65, neutralRatio: 0.45,
       confusion: 0,
       betrayHelpless: 5, betrayOpportunist: true,
-      nukes: true, nukeChance: 5, hydrogenChance: 3
+      nukes: true, nukeChance: 5, hydrogenChance: 3,
+      embargoLiftAt: 50
     }
   },
 
@@ -136,10 +142,49 @@ const AI = {
   range(lo, hi) { return lo + Math.floor(Game.rng() * (hi - lo)); },
 
   diplomacy(p) {
+    this.updateRelationsFromEmbargoes(p);
+    this.handleEmbargoes(p);
     this.handleRequests(p);
     this.handleExtensions(p);
     this.maybeBetray(p);
     this.maybeSendRequests(p);
+  },
+
+  // Below OpenFront's Hostile band (-50) a nation stops trading with you.
+  HOSTILE: -50,
+  EMBARGO_RELATION_HIT: -20,
+
+  // NationExecution.updateRelationsFromEmbargos: being embargoed by someone
+  // costs them 20 points of this nation's goodwill, once, refunded when the
+  // embargo lifts.
+  updateRelationsFromEmbargoes(p) {
+    for (const other of Game.players) {
+      if (other === p || other.isTribe) continue;
+      const embargoed = Game.hasEmbargoAgainst(other.id, p.id);
+      const applied = p.embargoMalusFrom.has(other.id);
+      if (embargoed && !applied) {
+        Game.adjustRelation(p, other.id, this.EMBARGO_RELATION_HIT);
+        p.embargoMalusFrom.add(other.id);
+      } else if (!embargoed && applied) {
+        Game.adjustRelation(p, other.id, -this.EMBARGO_RELATION_HIT);
+        p.embargoMalusFrom.delete(other.id);
+      }
+    }
+  },
+
+  // NationExecution.handleEmbargoesToHostileNations: a nation that hates you
+  // stops trading with you, and only starts again once relations recover to
+  // the profile's embargoLiftAt. Also lifts a temporary (attack) embargo
+  // early, as upstream's stopEmbargo does. No team-game branch — no teams.
+  handleEmbargoes(p) {
+    const liftAt = this.profile().embargoLiftAt;
+    for (const other of Game.players) {
+      if (other === p || !other.alive || other.isTribe) continue;
+      const rel = Game.relation(p, other.id);
+      const has = Game.hasEmbargoAgainst(p.id, other.id);
+      if (rel < this.HOSTILE && !has) Game.addEmbargo(p.id, other.id, false);
+      else if (rel >= liftAt && has) Game.stopEmbargo(p.id, other.id);
+    }
   },
 
   handleRequests(p) {

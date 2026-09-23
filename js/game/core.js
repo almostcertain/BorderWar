@@ -438,6 +438,13 @@ const Game = {
         // scale. Absent means Neutral. Only the bots read it, but the human
         // carries one too so nothing has to special-case player 0.
         relations: new Map(),
+        // Who this player refuses to trade with — see the Embargoes section
+        // of game/diplomacy.js.
+        embargoes: new Map(),
+        lastEmbargoAllAt: -Infinity,
+        // Nation AI bookkeeping: who has already cost us the one-off
+        // embargo relation hit (AI.updateRelationsFromEmbargoes).
+        embargoMalusFrom: new Set(),
         traitorUntil: 0,
         betrayals: 0,
         nextThink: 1 + this.rng() * 4,

@@ -6,9 +6,8 @@
 // same reason. Geometry follows theirs — menuSize 190 (so a 95 outer radius),
 // mainMenuInnerRadius 40, centerButtonSize 30, 300ms reopen cooldown.
 //
-// Four quadrants, of which only the north one is populated today. The other
-// three render as empty slots on purpose: donate, embargo and target are the
-// obvious next actions, and the menu should already look like it has room.
+// Four quadrants: trade toggle (north), Boat/Betray (east), Peace/Renew
+// (south). West is empty for now.
 const Radial = {
   el: null,
   menuEl: null,
@@ -91,8 +90,9 @@ const Radial = {
   // Positions are ported from their rootMenuElement's actual slot order for
   // a non-owned tile: [Info, Boat‖Betray, Renew‖Peace, Attack‖Donate]. We
   // have no Info panel or radial Attack (attack is a direct tap on the map
-  // here), so north and west stay empty — but Boat/Betray at east and
-  // Peace/Renew at south match their real layout, not a guess.
+  // here), so north carries the trade toggle OpenFront keeps in its Info
+  // panel and west stays empty — but Boat/Betray at east and Peace/Renew at
+  // south match their real layout, not a guess.
   // Note the split each slot now makes. `note`/`disabled` come from the
   // *BlockReason validators, run right here on the current state, so a wedge
   // that cannot be pressed says so the instant the menu opens — no round trip.
@@ -140,6 +140,10 @@ const Radial = {
       }
     }
 
+    // Trade toggle — OpenFront's "Stop trading" / "Start trading" button.
+    // Nations only; tribes never trade.
+    if (t >= 0 && !Game.players[t].isTribe) out[0] = this.tradeSlot(me, t);
+
     // Boat: a deliberate sea route to the exact tile the menu was opened on,
     // available against any target — including one already reachable by
     // land, as a shortcut, exactly like OpenFront's own Boat button. Only
@@ -155,6 +159,24 @@ const Radial = {
     }
 
     return out;
+  },
+
+  tradeSlot(me, t) {
+    const mine = Game.players[me].embargoes.get(t);
+    const theirs = Game.hasEmbargoAgainst(t, me);
+    if (mine) {
+      const left = Game.TEMPORARY_EMBARGO_DURATION - (Game.elapsed - mine.createdAt);
+      return {
+        icon: '💰', label: 'Trade', cls: 'good',
+        note: theirs ? 'They refuse too' : mine.temporary ? 'Auto · ' + Math.ceil(left) + 's' : 'Embargoed',
+        act: () => Transport.sendIntent(Protocol.intent.embargo(t, 'stop'))
+      };
+    }
+    return {
+      icon: '🚫', label: 'Stop trade', cls: 'danger',
+      note: theirs ? 'They refuse you' : null,
+      act: () => Transport.sendIntent(Protocol.intent.embargo(t, 'start'))
+    };
   },
 
   activate(i) {

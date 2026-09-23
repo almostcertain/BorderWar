@@ -1967,8 +1967,11 @@ const Render = {
       const troops = formatCountTight(p.troops);
       // Diplomacy is legible straight off the map: who you have a pact with,
       // and who has just broken one and is worth attacking while it lasts.
+      // 🚫: trade with you is blocked, by either side's embargo.
+      const noTrade = !p.isTribe && Game.me >= 0 && p.id !== Game.me && !Game.canTrade(Game.me, p.id);
       const name = (Game.areAllied(Game.me, p.id) ? '🤝 ' : '') +
-                   (Game.isTraitor(p) ? '🗡 ' : '') + p.name;
+                   (Game.isTraitor(p) ? '🗡 ' : '') +
+                   (noTrade ? '🚫 ' : '') + p.name;
       ctx.font = '600 ' + font.toFixed(1) + 'px system-ui, sans-serif';
       const widest = Math.max(ctx.measureText(name).width, ctx.measureText(troops).width);
       if (widest > boxW * 0.92) {

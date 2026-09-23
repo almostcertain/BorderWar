@@ -458,7 +458,8 @@ const UI = {
       (p.isBot ? '🤖 ' : '') +
       (p.isTribe ? 'Tribe' : '') +
       (Game.areAllied(Game.me, p.id) ? ' Allied' : '') +
-      (Game.isTraitor(p) ? ' 🗡 Traitor' : '');
+      (Game.isTraitor(p) ? ' 🗡 Traitor' : '') +
+      (!p.isTribe && p.id !== Game.me && Game.me >= 0 && !Game.canTrade(Game.me, p.id) ? ' 🚫 No trade' : '');
     this.updateBotFace(p);
     document.getElementById('hpTiles').textContent =
       p.tiles.size.toLocaleString() + ' (' + (p.tiles.size / GameMap.landTiles * 100).toFixed(1) + '%)';

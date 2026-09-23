@@ -149,6 +149,11 @@ const Protocol = {
       return typeof v === 'boolean' ? null : 'must be a boolean';
     },
 
+    // OpenFront's embargo "start" | "stop" action.
+    embargoAction(v) {
+      return v === 'start' || v === 'stop' ? null : 'must be "start" or "stop"';
+    },
+
     // Non-empty array of entity ids. Non-empty matters: a move_warship naming
     // no warships is a bug on the sending side, and silently applying nothing
     // on every client hides it.
@@ -200,8 +205,8 @@ const Protocol = {
 
   // --- Intents ---------------------------------------------------------------
   //
-  // The fifteen intents of §4. Every one already exists as a direct Game.*
-  // call from ui.js / radial.js; the mapping is 1:1, and `from` records the
+  // The fifteen intents of §4, plus embargo/embargo_all (ticket #14). Every
+  // one already exists as a direct Game.* call from ui.js / radial.js; the mapping is 1:1, and `from` records the
   // call site so MP-1.5's rewiring has a checklist.
   //
   // Wire names are OpenFront's own wherever OpenFront has the intent
@@ -214,7 +219,7 @@ const Protocol = {
   // named in the snake_case house style of the majority.
   //
   // Deliberately absent, per §4: targetPlayer, emoji, quick_chat, donate_gold,
-  // donate_troops, embargo, embargo_all, delete_unit, kick_player, toggle_pause,
+  // donate_troops, delete_unit, kick_player, toggle_pause,
   // update_game_config. None has a mechanic in this game. fastForward and the
   // debug gold/nuke buttons are singleplayer-only and are hard disabled in
   // multiplayer rather than converted to intents.
@@ -304,6 +309,16 @@ const Protocol = {
       fields: { recipient: 'playerId' },
       from: 'radial.js:107 Game.breakAlliance',
       openfront: 'BreakAllianceIntentSchema'
+    },
+    embargo: {
+      fields: { targetID: 'playerId', action: 'embargoAction' },
+      from: 'radial.js Game.setEmbargo',
+      openfront: 'EmbargoIntentSchema'
+    },
+    embargo_all: {
+      fields: { action: 'embargoAction' },
+      from: 'radial.js Game.setEmbargoAll',
+      openfront: 'EmbargoAllIntentSchema'
     },
     mark_disconnected: {
       // New — no current call site. Paired with the server's 30 s lastPing
@@ -453,6 +468,8 @@ const Protocol = {
     allianceAccept(requestor) { return { type: 'allianceAccept', requestor: requestor }; },
     allianceExtension(recipient) { return { type: 'allianceExtension', recipient: recipient }; },
     breakAlliance(recipient) { return { type: 'breakAlliance', recipient: recipient }; },
+    embargo(targetID, action) { return { type: 'embargo', targetID: targetID, action: action }; },
+    embargoAll(action) { return { type: 'embargo_all', action: action }; },
     markDisconnected(isDisconnected) { return { type: 'mark_disconnected', isDisconnected: isDisconnected }; }
   },
 

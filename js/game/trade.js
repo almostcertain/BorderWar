@@ -121,6 +121,7 @@ Object.assign(Game, {
       if (b.type !== 'port' || !b.built || b === port) continue;
       const oid = GameMap.owner[b.tile];
       if (oid < 0 || oid === ownerId) continue;
+      if (!this.canTrade(ownerId, oid)) continue;
       const op = this.players[oid];
       if (!op || !op.alive) continue;
       candidates.push(b);
@@ -200,6 +201,13 @@ Object.assign(Game, {
     for (let i = this.tradeShips.length - 1; i >= 0; i--) {
       const s = this.tradeShips[i];
       if (GameMap.owner[s.srcPort] === GameMap.owner[s.dstPort]) {
+        this.tradeShips.splice(i, 1);
+        continue;
+      }
+      // An embargo declared mid-crossing sinks the deal: the ship is
+      // scrapped, unpaid (TradeShipExecution's canTrade check). A captured
+      // ship sails for its captor's own Port and is exempt, as upstream.
+      if (!s.captured && !this.canTrade(s.owner, GameMap.owner[s.dstPort])) {
         this.tradeShips.splice(i, 1);
         continue;
       }

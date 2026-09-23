@@ -368,6 +368,7 @@ Object.assign(Game, {
     const targetTile = target.path[tIdx];
     if (this.manhattanDist(curTile, targetTile) <= this.WARSHIP_CAPTURE_DIST) {
       target.owner = w.owner;
+      target.captured = true;
       const route = this.nearestOwnedPortRoute(w.owner, targetTile);
       if (route) {
         target.dstPort = route.port.tile;

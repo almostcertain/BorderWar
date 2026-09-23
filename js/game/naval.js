@@ -238,6 +238,10 @@ Object.assign(Game, {
       return;
     }
 
+    // OpenFront lands a boat by starting an AttackExecution, which brings its
+    // temporary embargo with it — see embargoOnAttack.
+    this.embargoOnAttack(boat.attacker, boat.target);
+
     // A normal attack, seeded from the landing tile's own border — it's real
     // owned territory now (setOwner just ran), so no special-casing is needed
     // anywhere else; touchesPlayer already sees it.

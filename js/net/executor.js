@@ -334,6 +334,17 @@ const Executor = {
       return Game.breakAlliance(playerId, it.recipient);
     },
 
+    // radial.js Game.setEmbargo — OpenFront's EmbargoExecution. Legality
+    // (self, dead, tribe) is embargoBlockReason's.
+    embargo(playerId, it) {
+      return Game.setEmbargo(playerId, it.targetID, it.action);
+    },
+
+    // radial.js Game.setEmbargoAll — EmbargoAllExecution, cooldown included.
+    embargo_all(playerId, it) {
+      return Game.setEmbargoAll(playerId, it.action);
+    },
+
     // New in §4 — the one intent with no existing call site (Protocol lists its
     // `from` as null) and, correspondingly, the one with no Game.* method
     // behind it yet. It is an intent rather than client-local bookkeeping

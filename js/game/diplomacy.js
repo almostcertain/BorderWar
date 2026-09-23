@@ -133,6 +133,10 @@ Object.assign(Game, {
     // the rest of the troops home instead of attacking further (see
     // resolveLanding's areAllied branch).
     this.cancelAttacksBetween(a.id, b.id);
+    // AllianceRequestExecution: only the automatic (attack) embargoes lift.
+    // A deliberate one survives the handshake.
+    this.endTemporaryEmbargo(a.id, b.id);
+    this.endTemporaryEmbargo(b.id, a.id);
     return true;
   },
 
@@ -223,8 +227,133 @@ Object.assign(Game, {
     }
   },
 
+  // --- Embargoes, after OpenFront -------------------------------------------
+  // Ported from PlayerImpl (addEmbargo/stopEmbargo/endTemporaryEmbargo/
+  // canTrade), EmbargoExecution, EmbargoAllExecution and AttackExecution.
+  // p.embargoes maps the embargoed player's id to {createdAt, temporary}.
+  // Either side holding one stops ALL trade between the pair — trade ships,
+  // and trains through each other's stations. Manual embargoes last until
+  // lifted; the temporary one an attack triggers lapses after
+  // TEMPORARY_EMBARGO_DURATION, or the moment the two sides ally.
+  // OpenFront states these in ticks: temporaryEmbargoDuration 300*10 and
+  // embargoAllCooldown 10*10.
+  TEMPORARY_EMBARGO_DURATION: 300,
+  EMBARGO_ALL_COOLDOWN: 10,
+
+  hasEmbargoAgainst(fromId, toId) {
+    const p = this.players[fromId];
+    return !!p && p.embargoes.has(toId);
+  },
+
+  // PlayerImpl.canTrade. Self isn't "trade" — callers that pay out to their
+  // own stations check a === b first, as TrainStation.tradeAvailable does.
+  canTrade(a, b) {
+    if (a < 0 || b < 0 || a === b) return false;
+    return !this.hasEmbargoAgainst(a, b) && !this.hasEmbargoAgainst(b, a);
+  },
+
+  // A manual embargo is never downgraded to a temporary one; re-adding a
+  // temporary one restarts its clock (OpenFront overwrites createdAt).
+  addEmbargo(fromId, toId, temporary) {
+    const p = this.players[fromId];
+    const e = p.embargoes.get(toId);
+    if (e && !e.temporary) return;
+    p.embargoes.set(toId, { createdAt: this.elapsed, temporary });
+  },
+
+  stopEmbargo(fromId, toId) {
+    return this.players[fromId].embargoes.delete(toId);
+  },
+
+  endTemporaryEmbargo(fromId, toId) {
+    const e = this.players[fromId].embargoes.get(toId);
+    if (e && e.temporary) this.stopEmbargo(fromId, toId);
+  },
+
+  // AttackExecution.init: the victim stops trading with the attacker for
+  // five minutes. Tribes are skipped both ways — OpenFront's "Bot" players
+  // can't trade anyway.
+  embargoOnAttack(attackerId, targetId) {
+    if (targetId < 0 || attackerId === targetId) return;
+    if (this.players[attackerId].isTribe || this.players[targetId].isTribe) return;
+    this.addEmbargo(targetId, attackerId, true);
+  },
+
+  // Why the manual toggle is unavailable, for the radial menu. null when it
+  // is available. Tribes have no ports and never trade by rail, so an
+  // embargo against one would be a button that does nothing.
+  embargoBlockReason(fromId, toId) {
+    if (fromId === toId || fromId < 0 || toId < 0) return 'Invalid';
+    const from = this.players[fromId], to = this.players[toId];
+    if (!from || !to || !from.alive || !to.alive) return 'Invalid';
+    if (to.isTribe) return 'Tribes do not trade';
+    return null;
+  },
+
+  // EmbargoExecution. 'start' adds a permanent embargo (upgrading a
+  // temporary one); 'stop' lifts whatever is there, temporary included.
+  setEmbargo(fromId, toId, action) {
+    if (this.embargoBlockReason(fromId, toId)) return false;
+    if (action === 'start') {
+      const e = this.players[fromId].embargoes.get(toId);
+      if (e && !e.temporary) return false;
+      this.addEmbargo(fromId, toId, false);
+      return true;
+    }
+    return this.stopEmbargo(fromId, toId);
+  },
+
+  // Players EmbargoAllExecution acts on: every living non-tribe but you.
+  embargoAllTargets(fromId) {
+    const out = [];
+    for (const p of this.players) {
+      if (p.id === fromId || !p.alive || p.isTribe) continue;
+      out.push(p.id);
+    }
+    return out;
+  },
+
+  // PlayerImpl.canEmbargoAll, as a reason string. null when available.
+  embargoAllBlockReason(fromId) {
+    const p = this.players[fromId];
+    if (!p || !p.alive) return 'Invalid';
+    const wait = this.EMBARGO_ALL_COOLDOWN - (this.elapsed - p.lastEmbargoAllAt);
+    if (wait > 0) return 'Wait ' + Math.ceil(wait) + 's';
+    if (this.embargoAllTargets(fromId).length === 0) return 'No one to embargo';
+    return null;
+  },
+
+  // EmbargoAllExecution. Starting skips anyone already embargoed (so a
+  // temporary embargo stays temporary, as upstream); stopping lifts every
+  // embargo this player holds against a non-tribe.
+  setEmbargoAll(fromId, action) {
+    if (this.embargoAllBlockReason(fromId)) return false;
+    for (const id of this.embargoAllTargets(fromId)) {
+      if (action === 'start') {
+        if (!this.hasEmbargoAgainst(fromId, id)) this.addEmbargo(fromId, id, false);
+      } else {
+        this.stopEmbargo(fromId, id);
+      }
+    }
+    this.players[fromId].lastEmbargoAllAt = this.elapsed;
+    return true;
+  },
+
+  // PlayerExecution's per-tick sweep of lapsed temporary embargoes.
+  expireEmbargoes(p) {
+    for (const [id, e] of p.embargoes) {
+      if (e.temporary && this.elapsed - e.createdAt > this.TEMPORARY_EMBARGO_DURATION) {
+        p.embargoes.delete(id);
+      }
+    }
+  },
+
   updateDiplomacy() {
-    for (const p of this.players) if (p.alive) this.decayRelations(p);
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      this.decayRelations(p);
+      this.expireEmbargoes(p);
+    }
 
     for (let i = this.requests.length - 1; i >= 0; i--) {
       const r = this.requests[i];

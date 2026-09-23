@@ -11,8 +11,8 @@ Object.assign(Game, {
   //    like the real RailNetworkImpl.connectToNearbyStations/
   //    computeGhostRailPaths, which apply no owner filter at all to the
   //    physical network. Trade is likewise open with everyone by default
-  //    (tradeRel, mirroring TrainStation.tradeAvailable minus the embargo
-  //    check this game doesn't have) — a bot's factory will happily route a
+  //    (tradeAvailable, mirroring TrainStation.tradeAvailable) unless one
+  //    side has embargoed the other — a bot's factory will happily route a
   //    train to your city, paying BOTH of you, exactly like
   //    TradeStationStopHandler's two-way payout. Only the "team" tier is
   //    missing from trainGold's rate table, since there's no team system
@@ -384,10 +384,14 @@ Object.assign(Game, {
     return Math.max(1, Math.floor(rate / this.trainSaturation(numTrains * this.TRAIN_UNITS_PER_TRAIN)));
   },
 
-  // PlayerImpl.canTrade, minus the embargo check (not ported — this game has
-  // no embargo mechanic) — so trade is open with everyone by default,
-  // including active enemies, exactly like the real game's default state.
-  // Only alliance bumps the rate; there's no "team" tier here (no team
+  // TrainStation.tradeAvailable: a station trades with its own owner, and
+  // with anyone Game.canTrade allows — open by default, closed by an
+  // embargo from either side (see the Embargoes section in diplomacy.js).
+  tradeAvailable(stationOwnerId, trainOwnerId) {
+    return stationOwnerId === trainOwnerId || this.canTrade(stationOwnerId, trainOwnerId);
+  },
+
+  // The rate tier for a stop. Only alliance bumps the rate; there's no "team" tier here (no team
   // system), so it collapses OpenFront's four-way self/team/ally/other split
   // into three.
   tradeRel(a, b) {
@@ -424,14 +428,15 @@ Object.assign(Game, {
   // one reservoir-sampling BFS: walk the rail graph from `station` and
   // sample among reachable City OR Port stations (TradeStationStopHandler
   // covers both in the real source — see stepTrains) of ANY owner — own,
-  // allied, or enemy alike, matching tradeAvailable's default-open (no
-  // embargo ported) behavior. This is what makes a bot's factory route
+  // allied, or enemy alike, as long as tradeAvailable allows it (no
+  // embargo either way). This is what makes a bot's factory route
   // trains to a human player's cities/ports (and vice versa) whenever rails
   // happen to connect them, not just its own. Live ownership, not whoever
   // owned a station when the rail was laid, is why a captured factory can
   // immediately start trading with its new owner's other stations over
   // rails an old regime built.
   pickTrainDestination(station) {
+    const ownerId = GameMap.owner[station.tile];
     const visited = new Set([station.tile]);
     let frontier = [station.tile];
     let chosen = null, seen = 0;
@@ -445,7 +450,8 @@ Object.assign(Game, {
           visited.add(n);
           next.push(n);
           const nb = this.buildings.get(n);
-          if (nb && (nb.type === 'city' || nb.type === 'port')) {
+          if (nb && (nb.type === 'city' || nb.type === 'port') &&
+              this.tradeAvailable(GameMap.owner[n], ownerId)) {
             seen++;
             if (this.rng() * seen < 1) chosen = nb;
           }
@@ -550,6 +556,14 @@ Object.assign(Game, {
   stepTrains() {
     for (let i = this.trains.length - 1; i >= 0; i--) {
       const t = this.trains[i];
+      // TrainExecution.canTradeWithDestination: a train only rolls on toward
+      // a station that will still trade with it. An embargo declared while
+      // it's under way ends the trip at the last stop it reached.
+      if (t.nextStop < t.stops.length &&
+          !this.tradeAvailable(GameMap.owner[t.stops[t.nextStop].tile], t.owner)) {
+        this.trains.splice(i, 1);
+        continue;
+      }
       t.pos += this.TRAIN_SPEED * this.TICK_DT;
 
       while (t.nextStop < t.stops.length && t.pos >= t.stops[t.nextStop].dist) {
