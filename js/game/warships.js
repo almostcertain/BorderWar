@@ -34,6 +34,9 @@ Object.assign(Game, {
   // it fires. Slowed well below the "one shell in flight" pace (130/75≈1.73s)
   // so shells read as a travel-time projectile rather than a fast hit-scan;
   // a target can now have more than one shell in flight toward it at once.
+  // Tiles/sec a shell closes on its target's live position each tick (see
+  // stepShells) — not a fixed straight-line speed to a snapshot point, so a
+  // moving boat/warship can't dodge by having moved on since the shot fired.
   WARSHIP_SHELL_SPEED: 25,
   WARSHIP_CAPTURE_DIST: 5,                // huntDownTradeShip's manhattan capture distance
   // BOAT_SPEED's own comment: 10 ticks/sec, 1 tile/tick is the ported rate
@@ -334,13 +337,10 @@ Object.assign(Game, {
     if (this.elapsed - w.lastShellAt < this.WARSHIP_SHELL_COOLDOWN) return;
     w.lastShellAt = this.elapsed;
     const from = this.pathPos(w);
-    const to = this.pathPos(w.target);
-    const dist = this.det.hypot(to.x - from.x, to.y - from.y);
     this.shells.push({
       ownerId: w.owner,
-      from, to,
+      x: from.x, y: from.y,
       born: this.elapsed,
-      duration: Math.max(0.15, dist / this.WARSHIP_SHELL_SPEED),
       targetKind: w.targetKind,
       target: w.target,
       damage: w.targetKind === 'warship' ? this.warshipShellDamage() : null
@@ -460,28 +460,40 @@ Object.assign(Game, {
     this.warshipPatrol(w, curTile);
   },
 
-  // Advances every in-flight shell (see warshipShootAt) and resolves impact
-  // once its travel time elapses: a boat target is spliced from this.boats
-  // outright, a warship target takes the shell's precomputed damage (its own
-  // 0-hp sinking is handled by stepWarships below, same as before this
-  // deferral existed). Guarded with arr.includes/health>0 since the target
-  // may already be gone by the time this shell lands — sunk by a different
-  // shell, or (boat) already spent invading — in which case it's just a
-  // no-op fizzle. render.js's drawShells reads shell.from/to/born/duration
-  // directly to interpolate + blink the projectile; nothing here owns that.
+  // Advances every in-flight shell (see warshipShootAt) by re-homing on its
+  // target's live position every tick — a moving boat/warship can't simply
+  // outrun the fixed point it was fired at — and resolves impact the instant
+  // it closes to within one tick's travel of that position: a boat target is
+  // spliced from this.boats outright, a warship target takes the shell's
+  // precomputed damage (its own 0-hp sinking is handled by stepWarships
+  // below, same as before this deferral existed). If the target is already
+  // gone by this tick — sunk by a different shell, or (boat) already spent
+  // invading — the shell fizzles and is removed immediately rather than
+  // coasting on toward empty water. render.js's drawShells reads shell.x/y/
+  // born directly to draw + blink the projectile; nothing here owns that.
   stepShells() {
+    const step = this.WARSHIP_SHELL_SPEED * this.TICK_DT;
     for (let i = this.shells.length - 1; i >= 0; i--) {
       const s = this.shells[i];
-      if (this.elapsed - s.born < s.duration) continue;
-      if (s.targetKind === 'boat') {
-        const bi = this.boats.indexOf(s.target);
-        if (bi >= 0) this.boats.splice(bi, 1);
-      } else if (s.targetKind === 'warship') {
-        if (this.warships.includes(s.target) && s.target.health > 0) {
+      const arr = s.targetKind === 'boat' ? this.boats : this.warships;
+      const alive = arr.includes(s.target) && (s.targetKind !== 'warship' || s.target.health > 0);
+      if (!alive) { this.shells.splice(i, 1); continue; }
+
+      const tp = this.pathPos(s.target);
+      const dx = tp.x - s.x, dy = tp.y - s.y;
+      const dist = this.det.hypot(dx, dy);
+      if (dist <= step) {
+        if (s.targetKind === 'boat') {
+          const bi = this.boats.indexOf(s.target);
+          if (bi >= 0) this.boats.splice(bi, 1);
+        } else {
           s.target.health -= s.damage;
         }
+        this.shells.splice(i, 1);
+        continue;
       }
-      this.shells.splice(i, 1);
+      s.x += dx / dist * step;
+      s.y += dy / dist * step;
     }
   },
 

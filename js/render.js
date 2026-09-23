@@ -1483,15 +1483,17 @@ const Render = {
     }
   },
 
-  // A warship's shells in flight — see Game.warshipShootAt (spawns one, with
-  // fixed from/to tile-space points and a born/duration pair) and stepShells
-  // (resolves the hit once duration elapses, then removes it). Purely a
-  // straight-line lerp between the two logged points — the target may have
-  // moved on since the shell fired, same as real naval gunfire not
-  // course-correcting mid-flight. Rendered as a small blinking dot in the
-  // firing player's colour so a kill reads as "the shell got there", not
-  // instant, matching drawWarships' health-bar-only-when-damaged restraint
-  // by staying tiny and simple rather than a sprite/trail effect.
+  // A warship's shells in flight — see Game.warshipShootAt (spawns one at the
+  // firing warship's position) and stepShells (advances shell.x/y toward the
+  // target's live position every tick, resolving the hit — and removing the
+  // shell — the instant it closes within range, so it never lingers at or
+  // sails past a stale point once the target is hit or gone). Position is
+  // whatever stepShells last computed, same tick-granularity look as
+  // drawBoats/drawWarships rather than a smoothed lerp. Rendered as a small
+  // blinking dot in the firing player's colour so a kill reads as "the shell
+  // got there", not instant, matching drawWarships' health-bar-only-when-
+  // damaged restraint by staying tiny and simple rather than a sprite/trail
+  // effect.
   drawShells() {
     if (!Game.shells.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -1499,11 +1501,8 @@ const Render = {
     const r = Math.max(3 * this.dpr, Math.min(7 * this.dpr, s * 0.4));
 
     for (const sh of Game.shells) {
-      const t = Math.min(1, (Game.renderElapsed - sh.born) / sh.duration);
-      const tx = sh.from.x + (sh.to.x - sh.from.x) * t;
-      const ty = sh.from.y + (sh.to.y - sh.from.y) * t;
-      const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
-      const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
+      const px = (sh.x + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (sh.y + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -20 || py < -20 || px > cw + 20 || py > ch + 20) continue;
 
       const owner = Game.players[sh.ownerId];
