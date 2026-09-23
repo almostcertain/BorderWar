@@ -1,6 +1,9 @@
 // Enough distinct hues to fill a crowded Extra Large map without two nations
 // sharing a colour. Ordered so that the first handful stay far apart, which is
 // what a small game actually sees.
+// Appended entries only, never reordered — the first 32 are what the golden
+// tests' low bot/tribe counts land on via `% .length`, and inserting earlier
+// would shift those indices and desync every recorded golden.
 const PLAYER_COLORS = [
   [ 90, 160, 255], [235,  90,  90], [ 95, 205, 130], [245, 175,  70],
   [190, 120, 240], [ 80, 215, 215], [240, 130, 195], [175, 190,  95],
@@ -9,14 +12,26 @@ const PLAYER_COLORS = [
   [155,  95, 210], [ 60, 165, 185], [255, 175, 210], [125, 150,  70],
   [ 95, 110, 200], [190,  85,  45], [150, 225, 200], [235, 145, 175],
   [175, 205, 255], [200,  70,  95], [125, 235, 145], [205, 150,  60],
-  [225, 175, 255], [ 45, 130, 150], [255, 205, 130], [ 90, 125, 115]
+  [225, 175, 255], [ 45, 130, 150], [255, 205, 130], [ 90, 125, 115],
+  [235, 165, 205], [ 65, 145, 100], [215, 110, 190], [100, 180, 235],
+  [230, 200, 140], [ 85, 200, 165], [180, 140, 255], [210, 235, 120],
+  [150, 100, 70 ], [ 70, 210, 245], [245, 120, 130], [120, 160, 110],
+  [200, 175, 220], [255, 150, 60 ], [110, 130, 175], [190, 220, 190],
+  [160,  75, 130], [ 75, 175, 140], [235, 190,  90], [130, 115, 200],
+  [220, 145, 100], [ 90, 205, 205], [175,  95,  95], [140, 225, 105],
+  [205, 120, 225], [ 60, 140, 195], [255, 185, 165], [100, 145,  60],
+  [190, 165, 255], [225,  80, 155], [115, 200, 130], [170, 170,  80]
 ];
 
 const BOT_NAMES = [
   'Varra', 'Kessel', 'Dorne', 'Ashfall', 'Mirek', 'Solane', 'Torvik', 'Halcyon',
   'Brackwater', 'Ondar', 'Vesper', 'Karth', 'Selvane', 'Cadros', 'Umbra', 'Feltmark',
   'Nyral', 'Hastrel', 'Drakemoor', 'Iselle', 'Corvane', 'Ptarmis', 'Weldenreach', 'Oskaia',
-  'Tanvar', 'Ryndel', 'Jocelan', 'Almace', 'Verdholt', 'Sarnis', 'Kolveig', 'Enthara'
+  'Tanvar', 'Ryndel', 'Jocelan', 'Almace', 'Verdholt', 'Sarnis', 'Kolveig', 'Enthara',
+  'Brenmoor', 'Calyx', 'Dresh', 'Eldrin', 'Fenwick', 'Gorrath', 'Harrow', 'Ithria',
+  'Jareth', 'Kavros', 'Lorne', 'Mendrel', 'Norvash', 'Orlath', 'Pellyn', 'Quorin',
+  'Ravendell', 'Sylth', 'Thane', 'Uskar', 'Vardrel', 'Wrenmark', 'Xandor', 'Ylvane',
+  'Zerath', 'Ambrose', 'Brindal', 'Corwyth', 'Duskraven', 'Emberlyn', 'Fenrath', 'Grimshaw'
 ];
 
 // OpenFront calls this player type "Bots" internally and shows them in-game

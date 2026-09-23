@@ -137,6 +137,10 @@ const Game = {
   // eliminatePlayer computes placements off shared, Game.me-blind player
   // state so every client would agree on it anyway.
   COSMETIC_STATE: ['nukeBlasts', 'samFlashes', 'nationCount', 'placements'],
+  // Per-tick sea-route scratch (see tick() and nearestCoastPath). Empty and
+  // false between ticks.
+  _inTick: false,
+  _coastPathMemo: new Map(),
   alliances: [],
   requests: [],
   lastRequestAt: new Map(),
@@ -396,10 +400,11 @@ const Game = {
         // Nations. Name/color indexing is shifted by H so the first bot
         // (now at index H, whatever H is) is still BOT_NAMES[0] / the same
         // color the first bot always got, regardless of how many humans
-        // are ahead of it in the id space. PLAYER_COLORS/BOT_NAMES still
-        // only have 32 entries each and still wrap with `%` rather than
-        // growing — a pre-existing, accepted, purely cosmetic limitation
-        // once H + enough bots exceeds 32.
+        // are ahead of it in the id space. PLAYER_COLORS/BOT_NAMES have 64
+        // entries each — enough for the 60-bot UI ceiling plus a few humans
+        // — and still wrap with `%` rather than growing further, a
+        // pre-existing, accepted, purely cosmetic fallback if that's ever
+        // exceeded.
         name = BOT_NAMES[(p - H) % BOT_NAMES.length];
         color = PLAYER_COLORS[(p - H + 1) % PLAYER_COLORS.length];
         startTroops = this.nationDifficulty().startTroops;
@@ -672,6 +677,8 @@ const Game = {
     const old = GameMap.owner[i];
     if (old >= 0) this.players[old].tiles.delete(i);
     GameMap.owner[i] = newOwner;
+    // A cached sea route starts from its owner's coast as it stood when found.
+    if (this._coastPathMemo.size) this._coastPathMemo.clear();
     if (newOwner >= 0) {
       this.players[newOwner].tiles.add(i);
       // GameImpl's own conquer() unconditionally clears fallout the instant
@@ -847,7 +854,14 @@ const Game = {
 
     // See SEA_PATH_BUDGET_PER_TICK (naval.js): bounds how many full seaPath
     // searches this tick's port/warship/AI updates below are allowed to run.
+    // Both it and the coast-path memo (nearestCoastPath) only apply while
+    // _inTick is set: outside tick() — intents applied just before it, and
+    // client-local UI such as the radial menu's Boat check — searches run
+    // unbudgeted and uncached, so one client's UI can never spend budget or
+    // plant a cached path that another client's sim doesn't see.
     this._seaPathSearchesThisTick = 0;
+    this._coastPathMemo.clear();
+    this._inTick = true;
 
     for (const p of this.players) {
       if (!p.alive) continue;
@@ -969,6 +983,9 @@ const Game = {
 
     AI.update();
     TribeAI.update();
+
+    this._inTick = false;
+    this._coastPathMemo.clear();
   },
 
   // Dev-only: jumps the match forward by running tick() back-to-back instead

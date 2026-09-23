@@ -1285,8 +1285,8 @@ const UI = {
   getHostConfig() {
     const map = document.getElementById('hostMapType').value === 'world' ? 'world' : 'procedural';
     const mapSize = document.getElementById('hostMapSize').value;
-    const bots = Math.max(0, Math.min(31, parseInt(document.getElementById('hostBotCount').value, 10) || 0));
-    const tribes = Math.max(0, Math.min(80, parseInt(document.getElementById('hostTribeCount').value, 10) || 0));
+    const bots = Math.max(0, Math.min(60, parseInt(document.getElementById('hostBotCount').value, 10) || 0));
+    const tribes = Math.max(0, Math.min(150, parseInt(document.getElementById('hostTribeCount').value, 10) || 0));
     const difficulty = document.getElementById('hostDifficulty').value;
     return { map: map, mapSize: mapSize, bots: bots, tribes: tribes, difficulty: difficulty };
   },

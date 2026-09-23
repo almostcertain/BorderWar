@@ -32,9 +32,10 @@
   // config.bots() is a free host setting regardless of which map is loaded —
   // so there's no real number to port here. Rescaled from the old defaults to
   // match MAP_SIZES' now-real dimensions (small shrank; large and xlarge grew
-  // substantially), capped at 31 to stay within PLAYER_COLORS/BOT_NAMES' 32
-  // entries (31 bots + the human).
-  const BOTS_FOR_SIZE = { small: 5, medium: 10, large: 20, xlarge: 31 };
+  // substantially). The editable field's ceiling (js/ui.js's getHostConfig,
+  // and start() below) is 60, chosen to stay within PLAYER_COLORS/BOT_NAMES'
+  // 64 entries (60 bots + up to 4 humans) so no two nations share a colour.
+  const BOTS_FOR_SIZE = { small: 5, medium: 10, large: 35, xlarge: 55 };
 
   // Tribes are OpenFront's low-effort filler (openfront.wiki/Bots): weak and
   // half-capped individually, so a map can carry more of them than Nations
@@ -420,8 +421,8 @@
   }
 
   function start() {
-    const bots = Math.max(2, Math.min(31, parseInt(botInput.value, 10) || 9));
-    const tribes = Math.max(0, Math.min(80, parseInt(tribeInput.value, 10) || 0));
+    const bots = Math.max(2, Math.min(60, parseInt(botInput.value, 10) || 9));
+    const tribes = Math.max(0, Math.min(150, parseInt(tribeInput.value, 10) || 0));
     const mapSize = sizeSelect.value;
 
     // A new match is a new connection. Tearing the old one down first stops a
