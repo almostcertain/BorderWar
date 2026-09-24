@@ -189,38 +189,42 @@ Object.assign(Game, {
     }
   },
 
-  // How many port-to-port routes portRoute keeps. Oldest-first eviction
-  // (Map insertion order), so every client evicts the same entries.
-  PORT_ROUTE_CACHE_MAX: 1024,
+  // How many port PAIRS portRoute keeps (one entry per pair, either
+  // direction). Oldest-first eviction (Map insertion order), so every client
+  // evicts the same entries. 1024 directed entries thrashed on The World: 65
+  // ports is ~2,080 pairs, so routes were evicted and re-searched (1-25ms
+  // each) all match long — see docs/perf-frame-rate-profile.md. 4096 covers
+  // every pair up to ~90 ports; at ~1,200 tiles a route that's ~20MB when full.
+  PORT_ROUTE_CACHE_MAX: 4096,
 
   // seaPath([fromTile], toTile) for two Port tiles, cached for the match.
   // Between two fixed tiles the search only reads water tiles and shoreDist,
   // neither of which ever changes, so the answer can't go stale. Measured on
   // The World, repeat searches for the same pair were ~3/4 of trade routing
-  // and each could run 100ms. A cached B->A route also answers A->B: its
+  // and each could run 100ms. Each pair is stored once, in whichever
+  // direction it was first searched; every route ends on its destination
+  // tile, which tells the two apart. A B->A route also answers A->B: its
   // water tiles run from beside B's port to beside A's, so reversing them and
   // ending on B's tile gives a valid A->B route. Genuine failures are cached as `false`; a null because this
   // tick's SEA_PATH_BUDGET_PER_TICK ran out is not, so the pair is tried
   // again later. Only written inside tick() (see its _inTick comment).
   portRoute(fromTile, toTile) {
     const size = GameMap.owner.length;
-    const routes = this._portRoutes;
-    const cached = routes.get(fromTile * size + toTile);
-    if (cached !== undefined) return cached || null;
-    const reverse = routes.get(toTile * size + fromTile);
-    if (reverse) {
-      const path = reverse.slice(0, -1).reverse();
+    const key = Math.min(fromTile, toTile) * size + Math.max(fromTile, toTile);
+    const cached = this._portRoutes.get(key);
+    if (cached === false) return null;
+    if (cached) {
+      if (cached[cached.length - 1] === toTile) return cached;
+      const path = cached.slice(0, -1).reverse();
       path.push(toTile);
-      this.cachePortRoute(fromTile * size + toTile, path);
       return path;
     }
-    if (reverse === false) return null;
 
     const before = this._seaPathSearchesThisTick;
     const path = this.seaPath([fromTile], toTile);
     const refused = !path && this._inTick && this._seaPathSearchesThisTick === before &&
       before >= this.SEA_PATH_BUDGET_PER_TICK;
-    if (!refused) this.cachePortRoute(fromTile * size + toTile, path || false);
+    if (!refused) this.cachePortRoute(key, path || false);
     return path;
   },
 

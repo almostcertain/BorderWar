@@ -565,9 +565,10 @@ const Render = {
       if (b.type !== 'fort' || !b.built) continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+      const rr = Game.fortRange() * s;
+      if (px + rr < 0 || py + rr < 0 || px - rr > cw || py - rr > ch) continue;   // wholly off-screen
       const owner = GameMap.owner[b.tile];
       const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
-      const rr = Game.fortRange() * s;
       ctx.beginPath();
       ctx.arc(px, py, rr, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.07)`;
@@ -588,9 +589,10 @@ const Render = {
       if (b.type !== 'sam' || !b.built) continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+      const rr = Game.dynamicSamRange(b, Game.renderElapsed) * s;
+      if (px + rr < 0 || py + rr < 0 || px - rr > cw || py - rr > ch) continue;   // wholly off-screen
       const owner = GameMap.owner[b.tile];
       const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
-      const rr = Game.dynamicSamRange(b, Game.renderElapsed) * s;
       ctx.beginPath();
       ctx.arc(px, py, rr, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.05)`;
