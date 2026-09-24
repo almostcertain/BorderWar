@@ -36,21 +36,21 @@
   // and start() below) is BOT_CAP/TRIBE_CAP, sized so PLAYER_COLORS/BOT_NAMES
   // (js/game/shared.js) has at least one entry per bot plus up to 4 humans.
   const BOT_CAP = 100;
-  const TRIBE_CAP = 250;
+  const TRIBE_CAP = 400;
   const BOTS_FOR_SIZE = { small: 5, medium: 10, large: 35, xlarge: 55 };
 
   // Tribes are OpenFront's low-effort filler (openfront.wiki/Bots): weak and
   // half-capped individually, so a map can carry more of them than Nations
-  // without the early game turning into an unbeatable wall. Roughly double
+  // without the early game turning into an unbeatable wall. Roughly quadruple
   // the Nation count at each size, same free-editable-field treatment.
-  const TRIBES_FOR_SIZE = { small: 8, medium: 16, large: 32, xlarge: 50 };
+  const TRIBES_FOR_SIZE = { small: 16, medium: 32, large: 64, xlarge: 100 };
 
   // The real World map (js/game/core.js's Game.init, 2000x1000) is denser
   // with nations than any procedural size — OpenFront's actual World map
   // seeds far more Nations/Tribes than our procedural xlarge default. Given
   // its own bump above xlarge rather than reusing BOTS_FOR_SIZE.xlarge.
-  const WORLD_BOTS = 70;
-  const WORLD_TRIBES = 90;
+  const WORLD_BOTS = 82;
+  const WORLD_TRIBES = 400;
 
   const sizeSelect = document.getElementById('mapSize');
   const mapTypeSelect = document.getElementById('mapType');

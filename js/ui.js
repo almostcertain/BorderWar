@@ -1304,7 +1304,7 @@ const UI = {
     const map = document.getElementById('hostMapType').value === 'world' ? 'world' : 'procedural';
     const mapSize = document.getElementById('hostMapSize').value;
     const bots = Math.max(0, Math.min(100, parseInt(document.getElementById('hostBotCount').value, 10) || 0));
-    const tribes = Math.max(0, Math.min(250, parseInt(document.getElementById('hostTribeCount').value, 10) || 0));
+    const tribes = Math.max(0, Math.min(400, parseInt(document.getElementById('hostTribeCount').value, 10) || 0));
     const difficulty = document.getElementById('hostDifficulty').value;
     return { map: map, mapSize: mapSize, bots: bots, tribes: tribes, difficulty: difficulty };
   },
