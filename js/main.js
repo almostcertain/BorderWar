@@ -30,29 +30,38 @@
   //
   // OpenFront itself doesn't tie a bot/player count to map size at all —
   // config.bots() is a free host setting regardless of which map is loaded —
-  // so there's no real number to port here. Rescaled from the old defaults to
-  // match MAP_SIZES' now-real dimensions (small shrank; large and xlarge grew
-  // substantially). The editable field's ceiling (js/ui.js's getHostConfig,
-  // and start() below) is BOT_CAP/TRIBE_CAP, sized so PLAYER_COLORS/BOT_NAMES
-  // (js/game/shared.js) has at least one entry per bot plus up to 4 humans.
+  // so there's no real number to port here. The editable field's ceiling
+  // (js/ui.js's getHostConfig, and start() below) is BOT_CAP/TRIBE_CAP, sized
+  // so PLAYER_COLORS/BOT_NAMES (js/game/shared.js) has at least one entry per
+  // bot plus up to 4 humans.
   const BOT_CAP = 100;
   const TRIBE_CAP = 400;
 
   // The real World map (js/game/core.js's Game.init, 2000x1000) seeds far
-  // more Nations/Tribes than the old procedural xlarge defaults, following
-  // OpenFront's actual World map. xlarge is the same 2000x1000 grid, so it
-  // shares these numbers rather than keeping a separate, sparser default.
+  // more Nations/Tribes than the old procedural large defaults, following
+  // OpenFront's actual World map. Procedural large is the same 2000x1000
+  // grid, so it shares these numbers rather than keeping a separate, sparser
+  // default.
   const WORLD_BOTS = 82;
   const WORLD_TRIBES = 400;
 
-  const BOTS_FOR_SIZE = { small: 5, medium: 10, large: 35, xlarge: WORLD_BOTS };
+  // Nations/Tribes per tile, taken from World/large (2000x1000) — the density
+  // that feels right. Every other size's default is that same density applied
+  // to its own tile count, so halving width and height (quartering the tile
+  // count) quarters the counts too. Tribes stay roughly quadruple the Nation
+  // count at every size, as before — OpenFront's low-effort filler
+  // (openfront.wiki/Bots), weak and half-capped individually.
+  const LARGE_TILES = Game.MAP_SIZES.large.width * Game.MAP_SIZES.large.height;
+  const BOT_DENSITY = WORLD_BOTS / LARGE_TILES;
+  const TRIBE_DENSITY = WORLD_TRIBES / LARGE_TILES;
 
-  // Tribes are OpenFront's low-effort filler (openfront.wiki/Bots): weak and
-  // half-capped individually, so a map can carry more of them than Nations
-  // without the early game turning into an unbeatable wall. Roughly quadruple
-  // the Nation count at each size (xlarge follows World), same
-  // free-editable-field treatment.
-  const TRIBES_FOR_SIZE = { small: 16, medium: 32, large: 64, xlarge: WORLD_TRIBES };
+  const BOTS_FOR_SIZE = { large: WORLD_BOTS };
+  const TRIBES_FOR_SIZE = { large: WORLD_TRIBES };
+  for (const key of ['small', 'medium']) {
+    const tiles = Game.MAP_SIZES[key].width * Game.MAP_SIZES[key].height;
+    BOTS_FOR_SIZE[key] = Math.max(1, Math.round(tiles * BOT_DENSITY));
+    TRIBES_FOR_SIZE[key] = Math.max(1, Math.round(tiles * TRIBE_DENSITY));
+  }
 
   const sizeSelect = document.getElementById('mapSize');
   const mapTypeSelect = document.getElementById('mapType');

@@ -305,7 +305,7 @@ const Hash = {
     const bots = opts.bots != null ? opts.bots : 31;
     const tribes = opts.tribes != null ? opts.tribes : 50;
     const seed = opts.seed != null ? opts.seed : 123456789;
-    const size = opts.size || 'xlarge';
+    const size = opts.size || 'large';
     const turns = opts.turns != null ? opts.turns : 3000;
     const meA = opts.meA != null ? opts.meA : 0;
     const meB = opts.meB != null ? opts.meB : Math.min(bots, 1 + bots + tribes - 1);

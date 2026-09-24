@@ -241,25 +241,25 @@ const Game = {
   // default/flagship map, rank 1 in their own catalogue — ships in three
   // official resolutions in resources/maps/world/manifest.json: map16x
   // (500x250), map4x (1000x500) and the full map (2000x1000), each exactly
-  // double the last. medium/large/xlarge are those three verbatim. small
-  // continues their own halving scheme one step further (no official
-  // quarter-res asset exists) rather than reusing our old guessed numbers.
-  // All four land at a clean 2:1 aspect ratio as a result — the real map's
+  // double the last. small/medium/large are those three verbatim, one tier
+  // down from their old names (the old small, a quarter-res guess with no
+  // official OpenFront asset to match, is gone rather than kept as a fourth
+  // tier — three real, verbatim sizes beat three real ones plus a guess).
+  // All three land at a clean 2:1 aspect ratio as a result — the real map's
   // own ratio — replacing the arbitrary 1.6 this used to hold constant at.
   //
   // A full-commitment push still takes a few thousand tiles whatever the map,
   // so the same logic as before holds: on a small map one blow swallows a
-  // fifth of the world and the match is over in minutes, while on xlarge —
+  // fifth of the world and the match is over in minutes, while on large —
   // now genuinely their scale, not merely proportioned to look like it — the
   // same decisive push is a few percent of the board, keeping individual
   // attacks quick while wars run long. Generation at 2000x1000 (2M tiles)
   // measured ~700ms one-time cost; per-tick simulation cost is driven by
   // player/attack count, not tile count, so it stays flat regardless of size.
   MAP_SIZES: {
-    small:  { width:  250, height: 125 },
-    medium: { width:  500, height: 250 },   // OpenFront's World, map16x
-    large:  { width: 1000, height: 500 },   // OpenFront's World, map4x
-    xlarge: { width: 2000, height: 1000 }   // OpenFront's World, full resolution
+    small:  { width:  500, height: 250 },   // OpenFront's World, map16x
+    medium: { width: 1000, height: 500 },   // OpenFront's World, map4x
+    large:  { width: 2000, height: 1000 }   // OpenFront's World, full resolution
   },
 
   // gameStartInfo is {gameID, seed, config:{map?,mapSize,bots,tribes,
@@ -281,7 +281,7 @@ const Game = {
 
     // `map: 'world'` selects OpenFront's real, baked "World" coastline
     // instead of a procedural one; `mapSize` is meaningless for it (the real
-    // map has one fixed resolution, 2000x1000 — the same as MAP_SIZES.xlarge)
+    // map has one fixed resolution, 2000x1000 — the same as MAP_SIZES.large)
     // and is ignored. Every other value (including none) is the existing
     // procedural generator, keyed by mapSize as before.
     if (config.map === 'world') {

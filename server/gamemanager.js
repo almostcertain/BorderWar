@@ -31,15 +31,12 @@ const HEARTBEAT_INTERVAL_MS = 60 * 1000;
 // Issue #12: rotating open lobbies. One rotation entry per map size GameServer
 // cycles through, in order, wrapping — `maxNations` is the total Nation-slot
 // count for that entry (bots + humans never exceeds it; see GameServer._
-// startAutoLobby). xlarge is deliberately excluded: it's the perf-stress size
-// (see docs/multiplayer-architecture.md's xlarge testing note), not a fit for
-// a pick-up-and-play open lobby. Bot/tribe counts otherwise follow the same
-// defaults index.html ships for a manually-hosted medium game (9 bots, 16
-// tribes), scaled by map size.
+// startAutoLobby). large (2000x1000, formerly named xlarge) is deliberately
+// excluded: it's the perf-stress size (see docs/multiplayer-architecture.md's
+// xlarge testing note), not a fit for a pick-up-and-play open lobby.
 const AUTO_LOBBY_ROTATION = [
-  { mapSize: 'small', maxNations: 6, tribes: 10 },
-  { mapSize: 'medium', maxNations: 9, tribes: 16 },
-  { mapSize: 'large', maxNations: 14, tribes: 24 }
+  { mapSize: 'small', maxNations: 9, tribes: 16 },
+  { mapSize: 'medium', maxNations: 14, tribes: 24 }
 ];
 const AUTO_LOBBY_DIFFICULTY = 'medium';
 

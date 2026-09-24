@@ -3,7 +3,7 @@
 // reports tick-time percentiles, total time per sim phase / AI method, and
 // the worst ticks with what dominated them. Measurement only — never feeds
 // anything back into the sim.
-//   node tools/sim-profile.js [ticks=6000] [map=world|small|medium|large|xlarge] [seed=12345] [bots=8] [tribes=12]
+//   node tools/sim-profile.js [ticks=6000] [map=world|small|medium|large] [seed=12345] [bots=8] [tribes=12]
 const { fs, path, vm, root, loader } = require('./split-common');
 const TICKS=+process.argv[2]||6000, MAP=process.argv[3]||'world', SEED=+process.argv[4]||12345;
 const BOTS=+process.argv[5]||8, TRIBES=+process.argv[6]||12;

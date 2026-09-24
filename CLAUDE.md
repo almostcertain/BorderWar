@@ -38,7 +38,7 @@ Every client runs the same simulation from the same seed and inputs, so the sim 
 
 For anything visible in the game, start the `borderwar` preview (`.claude/launch.json`) and check the console for errors before calling it done. Never run dev servers via Bash.
 
-- Test performance work on the `xlarge` map. The Browser pane has no `requestAnimationFrame`, so don't trust unpaced frame times; use allocation/heap metrics instead.
+- Test performance work on the `large` map (2000x1000, formerly named xlarge). The Browser pane has no `requestAnimationFrame`, so don't trust unpaced frame times; use allocation/heap metrics instead.
 
 ## Where code goes
 
