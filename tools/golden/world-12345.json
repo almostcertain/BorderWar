@@ -1,7 +1,7 @@
 {
   "manifest": {
     "js/noise.js": "3f30fe7114b099e39c7d8785f30a1435ae7b2d3c041aea2e71c708f223a41e8e",
-    "js/map.js": "53b71c1b059db588c2d6b0027fd0b8b1079be41d2ce1260dea0c271a02d7971a",
+    "js/map.js": "3244b02f9b38d14474d99375a3bab4c40b15d6fcc1a4c57936b3ff4872b84b9d",
     "js/fx.js": "3deb08ca132e6773feb5be6d20089f236352130f08ed2ac75b038232dc99935b",
     "js/game/shared.js": "74a69abba301cabe4eb7642285a048fb4fda8d5ac40e5d86179d188a1cacba87",
     "js/game/core.js": "9b9cc923f4e280f82a412f1c73976f27cd985d0b2238218bbaa977b7d7b2b35f",

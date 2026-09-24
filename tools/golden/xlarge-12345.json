@@ -1,7 +1,7 @@
 {
   "manifest": {
     "js/noise.js": "3f30fe7114b099e39c7d8785f30a1435ae7b2d3c041aea2e71c708f223a41e8e",
-    "js/map.js": "53b71c1b059db588c2d6b0027fd0b8b1079be41d2ce1260dea0c271a02d7971a",
+    "js/map.js": "3244b02f9b38d14474d99375a3bab4c40b15d6fcc1a4c57936b3ff4872b84b9d",
     "js/fx.js": "3deb08ca132e6773feb5be6d20089f236352130f08ed2ac75b038232dc99935b",
     "js/game/shared.js": "74a69abba301cabe4eb7642285a048fb4fda8d5ac40e5d86179d188a1cacba87",
     "js/game/core.js": "9b9cc923f4e280f82a412f1c73976f27cd985d0b2238218bbaa977b7d7b2b35f",
@@ -38,178 +38,178 @@
   "checkpoints": [
     {
       "tick": 50,
-      "hash": 3159735223
+      "hash": 717150917
     },
     {
       "tick": 100,
-      "hash": 4212607359
+      "hash": 2119271152
     },
     {
       "tick": 150,
-      "hash": 2793469108
+      "hash": 2303439543
     },
     {
       "tick": 200,
-      "hash": 1184318298
+      "hash": 1934718186
     },
     {
       "tick": 250,
-      "hash": 3257054789
+      "hash": 2178985464
     },
     {
       "tick": 300,
-      "hash": 3889363946
+      "hash": 3879980331
     },
     {
       "tick": 350,
-      "hash": 1545293752
+      "hash": 2947733949
     },
     {
       "tick": 400,
-      "hash": 3871426373
+      "hash": 537901620
     },
     {
       "tick": 450,
-      "hash": 237098362
+      "hash": 1253618860
     },
     {
       "tick": 500,
-      "hash": 29582382
+      "hash": 2739419799
     },
     {
       "tick": 550,
-      "hash": 1932187180
+      "hash": 1023012527
     },
     {
       "tick": 600,
-      "hash": 1253385930
+      "hash": 4273611439
     },
     {
       "tick": 650,
-      "hash": 2125601580
+      "hash": 2754582137
     },
     {
       "tick": 700,
-      "hash": 3639020779
+      "hash": 1516485689
     },
     {
       "tick": 750,
-      "hash": 740470148
+      "hash": 3647598884
     },
     {
       "tick": 800,
-      "hash": 639346004
+      "hash": 3283633099
     },
     {
       "tick": 850,
-      "hash": 3765182125
+      "hash": 2767682752
     },
     {
       "tick": 900,
-      "hash": 2925807004
+      "hash": 2527417502
     },
     {
       "tick": 950,
-      "hash": 3064164020
+      "hash": 257379371
     },
     {
       "tick": 1000,
-      "hash": 2043246040
+      "hash": 617890824
     },
     {
       "tick": 1050,
-      "hash": 3660738671
+      "hash": 2758147289
     },
     {
       "tick": 1100,
-      "hash": 3815573841
+      "hash": 3461280968
     },
     {
       "tick": 1150,
-      "hash": 458818163
+      "hash": 1330948917
     },
     {
       "tick": 1200,
-      "hash": 1526943434
+      "hash": 2865417115
     },
     {
       "tick": 1250,
-      "hash": 2093463683
+      "hash": 2054936509
     },
     {
       "tick": 1300,
-      "hash": 3967779088
+      "hash": 3659712230
     },
     {
       "tick": 1350,
-      "hash": 1874552133
+      "hash": 1167277143
     },
     {
       "tick": 1400,
-      "hash": 4181847336
+      "hash": 3325851912
     },
     {
       "tick": 1450,
-      "hash": 2859742105
+      "hash": 3322824219
     },
     {
       "tick": 1500,
-      "hash": 1922693752
+      "hash": 1533821019
     },
     {
       "tick": 1550,
-      "hash": 4027967022
+      "hash": 1848501668
     },
     {
       "tick": 1600,
-      "hash": 4028664997
+      "hash": 1692531692
     },
     {
       "tick": 1650,
-      "hash": 1256534001
+      "hash": 353250081
     },
     {
       "tick": 1700,
-      "hash": 3547595040
+      "hash": 3461936054
     },
     {
       "tick": 1750,
-      "hash": 3471115870
+      "hash": 1556668137
     },
     {
       "tick": 1800,
-      "hash": 4148221687
+      "hash": 2171566325
     },
     {
       "tick": 1850,
-      "hash": 2207298786
+      "hash": 3093667688
     },
     {
       "tick": 1900,
-      "hash": 3430781524
+      "hash": 2273660559
     },
     {
       "tick": 1950,
-      "hash": 775104412
+      "hash": 3346700699
     },
     {
       "tick": 2000,
-      "hash": 860873476
+      "hash": 2765991985
     }
   ],
   "digest": {
-    "ownerFNV": 3753130343,
-    "stateSHA256": "f88bdec86773f75ee080203afa8f6b8569c9dfe46889ab78dedb1d4897da29aa"
+    "ownerFNV": 1767101264,
+    "stateSHA256": "8c8e5b2ade864ddeaa696a6143b5d1524579d429fb02a7d890e49157cb639e02"
   },
   "simulationTicks": 1900,
   "coverage": {
-    "launchAttack": 449,
-    "launchNavalInvasion": 9,
-    "resolveLanding": 4,
-    "annexRegion": 57,
-    "acceptAlliance": 5,
+    "launchAttack": 446,
+    "launchNavalInvasion": 13,
+    "resolveLanding": 8,
+    "annexRegion": 45,
+    "acceptAlliance": 4,
     "breakAlliance": 0,
-    "build": 19,
+    "build": 20,
     "upgrade": 0,
     "spawnTrain": 0,
     "buildWarship": 0,
@@ -218,7 +218,7 @@
     "detonateNuke": 0
   },
   "peaks": {
-    "tradeShips": 1,
+    "tradeShips": 3,
     "samMissiles": 0,
     "shells": 0,
     "trains": 0

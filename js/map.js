@@ -35,6 +35,15 @@ const GameMap = {
     const scale = 5 / width;
     const cx = width / 2, cy = height / 2;
 
+    // Half of all seeds grow one central continent, half grow two facing
+    // continents split by a guaranteed strait (see mapLayout). Both keep the
+    // islands pruneSmallLandmasses leaves around the coasts.
+    this.layout = this.mapLayout(seed);
+    const twin = this.layout === 'twin';
+    // twin: 0 = west half, 1 = east half, 2 = the strait between them.
+    const side = twin ? new Uint8Array(size) : null;
+    const strait = twin ? this.straitShape(width, height, seed, scale) : null;
+
     // Independent field driving terrain *tier* (plains vs highland vs
     // mountain) — deliberately decoupled from `elevation` below.
     // classifyTerrain used to slice tiers off elevation's own percentiles,
@@ -54,8 +63,25 @@ const GameMap = {
         let e = (Noise.fractal(x * scale, y * scale * 1.6, seed, 5) - 0.5) * 2.6 + 0.55;
 
         // Radial falloff so the map is an island cluster ringed by ocean.
-        const dx = (x - cx) / cx, dy = (y - cy) / cy;
-        const d = Math.sqrt(dx * dx + dy * dy);
+        // twin: one falloff per half, centred in it, so each half is shaped
+        // like a smaller copy of the single-continent map.
+        let d;
+        if (twin) {
+          const mid = strait.mid[y];
+          const west = x < mid;
+          side[i] = Math.abs(x - mid) < strait.halfWidth ? 2 : (west ? 0 : 1);
+          const hx = west ? width / 4 : width * 3 / 4;
+          const dx = (x - hx) / (width / 4), dy = (y - cy) / cy;
+          d = Math.sqrt(dx * dx + dy * dy);
+          // Slope the land down into the strait, so the noise draws a real
+          // coast there instead of the strait's hard edge clipping one.
+          // Eased (squared) so the slope has no hard start line of its own.
+          const k = Math.max(0, 1 - Math.abs(x - mid) / (strait.halfWidth * 8));
+          e -= k * k * 1.2;
+        } else {
+          const dx = (x - cx) / cx, dy = (y - cy) / cy;
+          d = Math.sqrt(dx * dx + dy * dy);
+        }
         e -= Math.max(0, d - 0.55) * 1.4;
 
         this.elevation[i] = e;
@@ -68,14 +94,61 @@ const GameMap = {
     // what makes this work: dropping the sea can spawn separate islands that
     // get pruned away, so only the connected mass is a meaningful target.
     const target = Math.round(size * (landFraction || this.LAND_FRACTION));
-    const best = this.findSeaLevel(target);
+    let best;
+    if (twin) {
+      // Each half searches its own sea level for half the land, so the two
+      // continents come out the same size instead of whichever half's noise
+      // ran wetter losing out. Then each half's elevation is shifted so one
+      // shared sea level reproduces both results, and the strait is sunk
+      // below anything the search can reach so the continents never fuse.
+      this._side = side;
+      const tW = this.findSeaLevel(Math.round(target / 2), 0);
+      const tE = this.findSeaLevel(Math.round(target / 2), 1);
+      this._side = null;
+      best = (tW + tE) / 2;
+      const shiftW = best - tW, shiftE = best - tE;
+      for (let i = 0; i < size; i++) {
+        const s = side[i];
+        this.elevation[i] = s === 2 ? -10 : this.elevation[i] + (s === 0 ? shiftW : shiftE);
+      }
+    } else {
+      best = this.findSeaLevel(target);
+    }
 
     this.largestLandmassAt(best);
     this.pruneSmallLandmasses(this.MIN_LANDMASS_TILES);
+    // Estuaries turn land into water, which can pinch off a sliver of coast,
+    // so landmasses are relabelled and re-pruned after carving.
+    if (this.carveRivers(seed)) {
+      this._labelRegions();
+      this.pruneSmallLandmasses(this.MIN_LANDMASS_TILES);
+    }
     this.classifyTerrain();
     this.computeShoreDist();
     this.computeWaterComponents();
     return this.landTiles;
+  },
+
+  // 'single' (one central continent) or 'twin' (two continents across a
+  // strait), an even split over seeds. Integer hash of the seed only, like
+  // rangeShape — this runs in the sim, so it must not touch Game.rng.
+  mapLayout(seed) {
+    let x = Math.imul((seed | 0) ^ 0x5BD1E995, 0x85EBCA6B);
+    x ^= x >>> 15; x = Math.imul(x, 0xC2B2AE35); x ^= x >>> 13;
+    return (x >>> 0) & 1 ? 'twin' : 'single';
+  },
+
+  // The strait between twin continents: a centre line that meanders a little
+  // down the middle of the map, per row, and a fixed half-width. Wide enough
+  // to always read as open sea and force a naval crossing, narrow enough not
+  // to eat into either continent's half.
+  straitShape(width, height, seed, scale) {
+    const mid = new Float32Array(height);
+    const sway = width * 0.04;
+    for (let y = 0; y < height; y++) {
+      mid[y] = width / 2 + (Noise.fractal(y * scale, 0.5, seed + 333, 3) - 0.5) * 2 * sway;
+    }
+    return { mid, halfWidth: Math.max(3, width * 0.015) };
   },
 
   // Per-seed character of the terrain: which way the ranges run, how tightly
@@ -238,11 +311,14 @@ const GameMap = {
   // taken, during widening, the coarse sweep, or the fine refinement,
   // updates one running best-so-far, so the result is never worse than the
   // best single point actually tried.
-  findSeaLevel(target) {
+  //
+  // `side` (twin layout only) restricts the search to one half of the map,
+  // see largestLandmassAt.
+  findSeaLevel(target, side) {
     let lo = 0.30, hi = 0.85;
     let bestT = lo, bestDiff = Infinity;
     const consider = t => {
-      const count = this.largestLandmassAt(t);
+      const count = this.largestLandmassAt(t, side);
       const diff = Math.abs(count - target);
       if (diff < bestDiff) { bestDiff = diff; bestT = t; }
       return count;
@@ -320,12 +396,223 @@ const GameMap = {
     }
   },
 
+  // Rivers: a few major ones per continent, found rather than drawn. A
+  // priority flood from the coast inland (lowest ground first, filling any
+  // closed hollow up to its rim) gives every land tile a downstream
+  // neighbour, so the whole landmass drains to the sea along the valleys the
+  // elevation noise already has. Counting how many tiles drain through each
+  // tile then shows where water collects: the biggest basins' trunks, down
+  // to a share of their mouth's flow, become the rivers.
+  //
+  // Rivers are ordinary water, the same as the sea they drain into: they
+  // block land attacks, carry boats and give their banks a coast. Each
+  // river is a tree rooted at the sea, so it never rings off a pocket of
+  // land by itself; where two happen to touch, the re-prune after carving
+  // tidies up. The last stretch widens into an estuary toward the mouth.
+  //
+  // Returns whether any land was turned to water. Integer and IEEE-exact
+  // throughout; ties break on tile index, so every client carves the same
+  // tiles.
+  RIVER_SLOPE_WEIGHT: 0.5,
+  RIVER_MEANDER: 0.15,
+  RIVER_SHARE: 0.04,     // a river reaches upstream until its flow drops below this share of its mouth's
+  ESTUARY_SHARE: 0.3,    // only the trunk (this share of mouth flow and up) widens into an estuary
+  carveRivers(seed) {
+    const w = this.width, h = this.height, size = w * h;
+    const owner = this.owner, elev = this.elevation, rough = this.roughness;
+    // Water runs off the terrain's ranges (roughness, the field mountains
+    // are cut from), so rivers rise in the hills and follow the valleys
+    // between ranges instead of cutting across them. A little of the
+    // continent-shaping elevation keeps the broad slope pointing seaward.
+    // On top of both, a gentle meander field: flat plains otherwise give
+    // the flood nothing to follow and channels come out ruler-straight.
+    const EW = this.RIVER_SLOPE_WEIGHT, MW = this.RIVER_MEANDER, ms = 12 / w;
+    const height = i => rough[i] + elev[i] * EW +
+      Noise.fractal((i % w) * ms, ((i / w) | 0) * ms, seed + 9000, 3) * MW;
+    const down = new Int32Array(size).fill(-1);
+    const acc = new Int32Array(size);
+    const order = new Int32Array(this.landTiles);
+    const nb = new Int32Array(4);
+
+    // Binary min-heap over (key, tile). Each land tile is pushed once.
+    const hk = new Float64Array(this.landTiles), ht = new Int32Array(this.landTiles);
+    let hn = 0, popKey = 0;
+    const less = (a, b) => hk[a] < hk[b] || (hk[a] === hk[b] && ht[a] < ht[b]);
+    const swap = (a, b) => {
+      const k = hk[a]; hk[a] = hk[b]; hk[b] = k;
+      const t = ht[a]; ht[a] = ht[b]; ht[b] = t;
+    };
+    const push = (key, t) => {
+      let c = hn++;
+      hk[c] = key; ht[c] = t;
+      while (c > 0) {
+        const p = (c - 1) >> 1;
+        if (!less(c, p)) break;
+        swap(c, p); c = p;
+      }
+    };
+    const pop = () => {
+      const t = ht[0], key = hk[0];
+      hn--;
+      if (hn > 0) {
+        hk[0] = hk[hn]; ht[0] = ht[hn];
+        let c = 0;
+        for (;;) {
+          const l = c * 2 + 1, r = l + 1;
+          let m = c;
+          if (l < hn && less(l, m)) m = l;
+          if (r < hn && less(r, m)) m = r;
+          if (m === c) break;
+          swap(c, m); c = m;
+        }
+      }
+      popKey = key;
+      return t;
+    };
+
+    const seen = new Uint8Array(size);
+    for (let i = 0; i < size; i++) {
+      if (owner[i] === WATER) continue;
+      const n = this.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        if (owner[nb[k]] === WATER) { seen[i] = 1; push(height(i), i); break; }
+      }
+    }
+    // Inside a filled hollow every tile would share its rim's height and
+    // drain in plain index order, in ruler-straight lines; the small step
+    // makes the fill spread outward from the rim like a flood instead.
+    // The step is jittered per tile (integer hash, identical everywhere) so
+    // the flood front, and the channels traced back through it, wander
+    // instead of running along grid rows.
+    const STEP = 1e-6;
+    const jitter = i => {
+      let x = Math.imul(i ^ 0x27D4EB2D, 0x85EBCA6B);
+      x ^= x >>> 15; x = Math.imul(x, 0xC2B2AE35); x ^= x >>> 13;
+      return 1 + ((x >>> 0) & 1023) / 256;
+    };
+    let count = 0;
+    while (hn > 0) {
+      const i = pop(), key = popKey;
+      order[count++] = i;
+      const n = this.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (owner[j] === WATER || seen[j]) continue;
+        seen[j] = 1;
+        down[j] = i;
+        push(Math.max(height(j), key + STEP * jitter(j)), j);
+      }
+    }
+
+    // Upstream tile count, children before parents (reverse flood order),
+    // and each tile's mouth, parents before children.
+    for (let k = count - 1; k >= 0; k--) {
+      const i = order[k];
+      acc[i] += 1;
+      if (down[i] >= 0) acc[down[i]] += acc[i];
+    }
+    const mouth = new Int32Array(size).fill(-1);
+    for (let k = 0; k < count; k++) {
+      const i = order[k];
+      mouth[i] = down[i] < 0 ? i : mouth[down[i]];
+    }
+
+    // Pick each landmass's biggest basins, spaced apart along the coast.
+    const mouths = [];
+    for (let k = 0; k < count; k++) if (down[order[k]] < 0) mouths.push(order[k]);
+    mouths.sort((a, b) => acc[b] - acc[a] || a - b);
+    const chosen = new Map();   // mouth tile -> its flow
+    const perLandmass = this.landmasses.map(lm => ({
+      want: lm.size < 4000 ? 0 : lm.size < 20000 ? 1 : 2 + Math.round(Math.sqrt(lm.size) / 250),
+      spacing: Math.sqrt(lm.size) * 0.2,
+      picked: []
+    }));
+    for (const m of mouths) {
+      const pl = perLandmass[this.landmassId[m]];
+      if (pl.picked.length >= pl.want) continue;
+      // Too small a basin to read as a major river on this landmass.
+      if (acc[m] < this.landmasses[this.landmassId[m]].size * 0.01) continue;
+      const mx = m % w, my = (m / w) | 0;
+      let ok = true;
+      for (const p of pl.picked) {
+        const dx = p % w - mx, dy = ((p / w) | 0) - my;
+        if (dx * dx + dy * dy < pl.spacing * pl.spacing) { ok = false; break; }
+      }
+      if (!ok) continue;
+      pl.picked.push(m);
+      chosen.set(m, acc[m]);
+    }
+
+    // Mark the rivers, and measure how far each river tile is from the sea
+    // along its own course (parents first, so the mouth is 0).
+    const river = new Uint8Array(size);
+    const dist = new Int32Array(size);
+    for (let k = 0; k < count; k++) {
+      const i = order[k];
+      const flow = chosen.get(mouth[i]);
+      if (flow === undefined || acc[i] < flow * this.RIVER_SHARE) continue;
+      river[i] = 1;
+      dist[i] = down[i] < 0 ? 0 : dist[down[i]] + 1;
+    }
+    // On the big maps a one-tile channel all but vanishes when zoomed out,
+    // so trunks are drawn two wide there. Widened tiles are flagged 2, not
+    // 1, so the estuary pass (which walks the channel itself) skips them.
+    if (w >= 1000) {
+      for (let k = 0; k < count; k++) {
+        const i = order[k];
+        if (!river[i] || acc[i] < chosen.get(mouth[i]) * this.ESTUARY_SHARE) continue;
+        const e = i % w < w - 1 ? i + 1 : -1, s = i + w < size ? i + w : -1;
+        const j = down[i] === e || down[i] === i - 1 ? s : e;
+        if (j >= 0 && owner[j] !== WATER && !river[j]) river[j] = 2;
+      }
+    }
+
+    // Estuaries: the trunk's last stretch widens, three wide for its seaward
+    // half (and five wide right at the mouth on the biggest maps).
+    const reach = Math.max(4, Math.round(w * 0.02));
+    const wide = w >= 1000 ? Math.round(reach * 0.25) : -1;
+    let carved = false;
+    for (let k = 0; k < count; k++) {
+      const i = order[k];
+      if (river[i] !== 1 || dist[i] > reach || acc[i] < chosen.get(mouth[i]) * this.ESTUARY_SHARE) continue;
+      const r = dist[i] <= wide ? 2 : dist[i] <= reach / 2 ? 1 : 0;
+      const x = i % w, y = (i / w) | 0;
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) + Math.abs(dy) > r) continue;
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const j = ny * w + nx;
+          if (owner[j] === WATER) continue;
+          owner[j] = WATER; elev[j] = 0.48;
+          carved = true;
+        }
+      }
+    }
+    // Then the rest of every channel.
+    for (let i = 0; i < size; i++) {
+      if (!river[i] || owner[i] === WATER) continue;
+      owner[i] = WATER; elev[i] = 0.48;
+      carved = true;
+    }
+    return carved;
+  },
+
   // Floods the map at sea level `t` and returns the size of its biggest
   // connected landmass, leaving `owner` and `_region` set for that threshold.
-  largestLandmassAt(t) {
+  // With `side` given, every tile outside that half of a twin map (`_side`)
+  // counts as water, so each continent can be sized on its own.
+  largestLandmassAt(t, side) {
     const size = this.width * this.height;
-    for (let i = 0; i < size; i++) {
-      this.owner[i] = this.elevation[i] > t ? NEUTRAL : WATER;
+    if (side === undefined) {
+      for (let i = 0; i < size; i++) {
+        this.owner[i] = this.elevation[i] > t ? NEUTRAL : WATER;
+      }
+    } else {
+      const s = this._side;
+      for (let i = 0; i < size; i++) {
+        this.owner[i] = s[i] === side && this.elevation[i] > t ? NEUTRAL : WATER;
+      }
     }
     return this._labelRegions();
   },
