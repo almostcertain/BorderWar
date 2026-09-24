@@ -158,6 +158,42 @@ Goldens: every checkpoint hash, the owner map and event coverage matched in
 all 13 scenarios. Only the final state SHA changed, because it hashes the
 leftover bytes of the 4-int `abuf` scratch buffer; re-recorded for that.
 
-Remaining spikes (~100–110 ms) are all `AI.navalThink` →
-`isRouteTooIndirect` → `seaPath`, i.e. recommendations 4–5 above (negative
-route cache, per-tick node budget) not yet done. Both change bot behaviour.
+## Naval follow-up and sweep refinements (2026-09-24)
+
+After the sweep fix, the remaining spikes (~100–110 ms) were all
+`AI.navalThink` → `isRouteTooIndirect` → `seaPath`. On xlarge/50, 210 of 359
+AI route searches failed, costing 91% of the AI's search time (p50 29 ms,
+up to 50 ms each). 138 of those failures were a bot re-asking about a
+landmass it had already failed on, and 66 ticks stacked two or more.
+
+- **No-route memory** (recommendation 4): `p.navalNoRoute` maps landmass id to
+  an expiry tick. A real failed search skips that landmass for
+  `AI.NAVAL_NO_ROUTE_TICKS` (600 = 60 s). Budget-skipped searches aren't
+  remembered.
+- **One failed search per navalThink**: the think ends after the first
+  failure; the next think tries the other candidates.
+- **`SEA_PATH_NODES_PER_STEP` 16 → 8**: this only affects the AI's
+  step-capped detour search. On xlarge, worst failed search 50 → 27 ms, and
+  successful routes were unchanged in number (137 vs 130 at 16; 4 lost ~10%).
+
+Two further sweep changes (both verified identical to the uncached logic on
+every call over 22k checks, large and xlarge):
+
+- An annexation only invalidates the cached mainland size of the two players
+  involved, not everyone's.
+- The mainland-size rejection uses the cached component size, so a mainland
+  that is going to be rejected isn't re-walked first. `largestLandPiece` uses
+  a typed-array stamp instead of a Set.
+
+Results, 6000 ticks, xlarge, 50 bots + 40 tribes:
+
+| | start of day | after sweep fix | now |
+|---|---|---|---|
+| p95 / p99 / max (ms) | 75 / 184 / 311 | 27 / 64 / 162 | 24 / 37 / 73 |
+| ticks > 50 ms | 335 | 101 | 7 |
+
+Seed 67890 gives max 66 ms, 6 over 50 ms. The World (8 bots): max 80 → 48 ms.
+The remaining worst ticks are sweeps that actually annex a large pocket,
+where most of the cost is the `setOwner` work itself.
+
+Goldens re-recorded: bot naval behaviour intentionally changed.

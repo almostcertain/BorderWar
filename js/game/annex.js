@@ -6,6 +6,7 @@
 // Kept out of Game so it is never part of the hashed sim state; the stamps
 // are only ever compared, so their values never leak into results.
 let annexStamp = null, annexRun = 0;
+let pieceStamp = null, pieceRun = 0;   // largestLandPiece's visited marks
 
 // One annexation sweep's memory of which enemy components have already been
 // walked. Whether a same-owner component is enclosed depends only on the
@@ -13,19 +14,21 @@ let annexStamp = null, annexRun = 0;
 // reuse the first walk's verdict instead of flooding the whole component
 // again — on a 50-nation Extra Large map that repeat flooding of big
 // landlocked mainlands was a 200+ ms hitch every sweep. Any annexation
-// invalidates it (reset), since that rewrites ownership.
+// invalidates its verdicts (reset), since that rewrites ownership; a
+// cached mainland size only goes stale for the two players involved.
 function AnnexSweep() {
   if (!annexStamp || annexStamp.length !== GameMap.owner.length) {
     annexStamp = new Int32Array(GameMap.owner.length);
     annexRun = 0;
   }
+  this.largest = new Map();      // targetId -> largestLandPiece
   this.reset();
 }
-AnnexSweep.prototype.reset = function () {
+AnnexSweep.prototype.reset = function (changedIds) {
   if (annexRun > 0x7ffffff0) { annexStamp.fill(0); annexRun = 0; }
   this.base = annexRun;          // stamps <= base are stale
-  this.accepted = new Map();     // run -> wallCounts of an enclosed component
-  this.largest = new Map();      // targetId -> largestLandPiece
+  this.accepted = new Map();     // run -> { wallCounts, size } of an enclosed component
+  if (changedIds) for (const id of changedIds) this.largest.delete(id);
 };
 // Verdict for the component containing `tile`: the run id it was stamped
 // with, walking it first if nothing this sweep has reached it yet.
@@ -34,7 +37,7 @@ AnnexSweep.prototype.componentOf = function (tile) {
   if (s > this.base) return s;
   const run = ++annexRun;
   const found = Game.enclosedRegion(tile, null, run, annexStamp, this.base);
-  if (found) this.accepted.set(run, found.wallCounts);
+  if (found) this.accepted.set(run, { wallCounts: found.wallCounts, size: found.tiles.length });
   return run;
 };
 
@@ -239,16 +242,15 @@ Object.assign(Game, {
         const comp = sweep.componentOf(j);
         if (judged.has(comp)) continue;
         judged.add(comp);
-        const wallCounts = sweep.accepted.get(comp);
-        if (!wallCounts) continue;
-        if (requireDominant && this.dominantWaller(wallCounts) !== me.id) continue;
-        const found = this.enclosedRegion(j, new Map(), 1);
-        if (wallCounts.size > 1) {
+        const verdict = sweep.accepted.get(comp);
+        if (!verdict) continue;
+        if (requireDominant && this.dominantWaller(verdict.wallCounts) !== me.id) continue;
+        if (verdict.wallCounts.size > 1) {
           let biggest = sweep.largest.get(targetId);
           if (biggest === undefined) { biggest = this.largestLandPiece(targetId); sweep.largest.set(targetId, biggest); }
-          if (found.tiles.length >= biggest) continue;
+          if (verdict.size >= biggest) continue;
         }
-        regions.push(found.tiles);
+        regions.push(this.enclosedRegion(j, new Map(), 1).tiles);
       }
     }
     return regions;
@@ -256,13 +258,17 @@ Object.assign(Game, {
 
   // Size of the largest 4-connected piece of `playerId`'s land — its mainland.
   // Walks on abuf, which enclosedPocketsOf's own loop (nbuf) is not using.
+  // Visited marks are a reused typed array rather than a Set — this runs on
+  // whole mainlands, and a Set of 100k+ tiles was most of its cost.
   largestLandPiece(playerId) {
     const tiles = this.players[playerId].tiles;
-    const seen = new Set(), nb = this.abuf;
+    if (!pieceStamp || pieceStamp.length !== GameMap.owner.length) { pieceStamp = new Int32Array(GameMap.owner.length); pieceRun = 0; }
+    if (pieceRun > 0x7ffffff0) { pieceStamp.fill(0); pieceRun = 0; }
+    const run = ++pieceRun, seen = pieceStamp, nb = this.abuf;
     let best = 0;
     for (const start of tiles) {
-      if (seen.has(start)) continue;
-      seen.add(start);
+      if (seen[start] === run) continue;
+      seen[start] = run;
       const stack = [start];
       let size = 0;
       while (stack.length) {
@@ -271,7 +277,7 @@ Object.assign(Game, {
         const n = GameMap.neighbors(t, nb);
         for (let k = 0; k < n; k++) {
           const j = nb[k];
-          if (GameMap.owner[j] === playerId && !seen.has(j)) { seen.add(j); stack.push(j); }
+          if (GameMap.owner[j] === playerId && seen[j] !== run) { seen[j] = run; stack.push(j); }
         }
       }
       if (size > best) best = size;
@@ -328,7 +334,7 @@ Object.assign(Game, {
         }
       }
       for (const targetId of targets) {
-        if (this.annexEnclosedPockets(targetId, p.id, true, sweep) > 0) sweep.reset();
+        if (this.annexEnclosedPockets(targetId, p.id, true, sweep) > 0) sweep.reset([targetId, p.id]);
       }
     }
   },

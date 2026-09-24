@@ -33,8 +33,10 @@ Object.assign(Game, {
   // searches that fail (target only reachable the long way round) ran the
   // full 200k guard at ~140ms each. Ending those at ~16×limit is the bulk of
   // the naval hitch fix; the few very long crossings that needed more count
-  // as "too indirect" to the AI and it picks another target.
-  SEA_PATH_NODES_PER_STEP: 16,
+  // as "too indirect" to the AI and it picks another target. Halved from 16
+  // for xlarge with 50 nations, where failures still cost ~50 ms each; 8
+  // keeps the same number of successful AI routes (4 lost ~10%).
+  SEA_PATH_NODES_PER_STEP: 8,
 
   // Caps how many full (post-fast-reject) seaPath searches run in a single
   // tick, reset in tick() below. Ports rolling for trade ships, bots'

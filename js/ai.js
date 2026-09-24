@@ -1040,6 +1040,14 @@ const AI = {
   // of plausible candidates.
   NAVAL_MAX_DETOUR: 2.5,
 
+  // How long (ticks) a bot leaves a landmass alone after failing to find a
+  // sea route to it. Failed searches are the expensive ones — they run the
+  // whole node guard, ~50 ms each on Extra Large — and before this about
+  // half of them were a bot re-asking for a route it had just failed to
+  // find. Only real failures count; a search skipped by the per-tick
+  // budget says nothing about the route.
+  NAVAL_NO_ROUTE_TICKS: 600,
+
   // Reserve fraction of maxTroops required before shipping any troops
   // overseas. Doubled while someone is actively attacking p at home — a
   // bot already fighting a land war has no business opening a second front
@@ -1089,9 +1097,26 @@ const AI = {
     // OpenFront's boatAttackAmount default — a flat 20% of current troops,
     // used consistently for both neutral and enemy targets (its AI's own
     // attackWithRandomBoat/sendBoatAttack both compute troops/5 verbatim).
+    //
+    // At most one failed route search per think: several in a row stacked
+    // into 100+ ms ticks on Extra Large. The failure is remembered
+    // (navalNoRoute), so the next think moves on to the other candidates.
     const troops = Math.floor(p.troops / 5);
-    for (const c of candidates.slice(0, this.NAVAL_CANDIDATES)) {
-      if (this.isRouteTooIndirect(p, homeCoast, c.tile)) continue;
+    for (const [lm, until] of p.navalNoRoute) if (until <= Game.ticks) p.navalNoRoute.delete(lm);
+    let tried = 0;
+    for (const c of candidates) {
+      if (tried >= this.NAVAL_CANDIDATES) break;
+      const lm = GameMap.landmassId[c.tile];
+      if (p.navalNoRoute.has(lm)) continue;
+      tried++;
+      const searchesBefore = Game._seaPathSearchesThisTick;
+      if (this.isRouteTooIndirect(p, homeCoast, c.tile)) {
+        if (Game._seaPathSearchesThisTick > searchesBefore) {
+          p.navalNoRoute.set(lm, Game.ticks + this.NAVAL_NO_ROUTE_TICKS);
+          return;
+        }
+        continue;
+      }
       if (Game.launchNavalInvasion(p.id, c.tile, troops)) return;
     }
   },

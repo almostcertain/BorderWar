@@ -459,7 +459,10 @@ const Game = {
         tribeTraits: isTribe ? TribeAI.rollTraits() : null,
         // Naval targeting runs a BFS instead of a map scan, so it thinks on a
         // deliberately coarser cadence than nextThink's land decisions.
-        nextNavalThink: 5 + this.rng() * 10
+        nextNavalThink: 5 + this.rng() * 10,
+        // Landmass id -> tick until which navalThink skips it, after a sea
+        // route there failed (AI.NAVAL_NO_ROUTE_TICKS).
+        navalNoRoute: new Map()
       });
     }
 
