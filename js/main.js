@@ -33,8 +33,10 @@
   // so there's no real number to port here. Rescaled from the old defaults to
   // match MAP_SIZES' now-real dimensions (small shrank; large and xlarge grew
   // substantially). The editable field's ceiling (js/ui.js's getHostConfig,
-  // and start() below) is 60, chosen to stay within PLAYER_COLORS/BOT_NAMES'
-  // 64 entries (60 bots + up to 4 humans) so no two nations share a colour.
+  // and start() below) is BOT_CAP/TRIBE_CAP, sized so PLAYER_COLORS/BOT_NAMES
+  // (js/game/shared.js) has at least one entry per bot plus up to 4 humans.
+  const BOT_CAP = 100;
+  const TRIBE_CAP = 250;
   const BOTS_FOR_SIZE = { small: 5, medium: 10, large: 35, xlarge: 55 };
 
   // Tribes are OpenFront's low-effort filler (openfront.wiki/Bots): weak and
@@ -42,6 +44,13 @@
   // without the early game turning into an unbeatable wall. Roughly double
   // the Nation count at each size, same free-editable-field treatment.
   const TRIBES_FOR_SIZE = { small: 8, medium: 16, large: 32, xlarge: 50 };
+
+  // The real World map (js/game/core.js's Game.init, 2000x1000) is denser
+  // with nations than any procedural size — OpenFront's actual World map
+  // seeds far more Nations/Tribes than our procedural xlarge default. Given
+  // its own bump above xlarge rather than reusing BOTS_FOR_SIZE.xlarge.
+  const WORLD_BOTS = 70;
+  const WORLD_TRIBES = 90;
 
   const sizeSelect = document.getElementById('mapSize');
   const mapTypeSelect = document.getElementById('mapType');
@@ -64,26 +73,33 @@
   // The "Map Size" row only means anything for the procedural generator — the
   // real World map has one fixed resolution (js/game/core.js's Game.init).
   // Hiding it rather than disabling it, so a host who picked World can't be
-  // confused by a size control that would silently do nothing. World's own
-  // scale matches MAP_SIZES.xlarge (2000x1000), so it reuses that size's
-  // bot/tribe defaults when selected.
+  // confused by a size control that would silently do nothing.
+  function applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes) {
+    const isWorld = mapType.value === 'world';
+    sizeRow.classList.toggle('hidden', isWorld);
+    if (isWorld) {
+      bots.value = WORLD_BOTS;
+      tribes.value = WORLD_TRIBES;
+    } else {
+      bots.value = BOTS_FOR_SIZE[sizeSelect.value] || 9;
+      tribes.value = TRIBES_FOR_SIZE[sizeSelect.value] || 16;
+    }
+  }
   function bindMapType(mapType, sizeRow, sizeSelect, bots, tribes) {
     mapType.addEventListener('change', () => {
-      const isWorld = mapType.value === 'world';
-      sizeRow.classList.toggle('hidden', isWorld);
-      if (isWorld) {
-        bots.value = BOTS_FOR_SIZE.xlarge;
-        tribes.value = TRIBES_FOR_SIZE.xlarge;
+      applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes);
+      if (mapType.value === 'world') {
         // Preload eagerly the moment World is actually chosen, rather than
         // waiting for Start — see js/net/worldmap.js. Failure is surfaced
         // when Start is actually pressed (the 'start' handler below); this
         // fire-and-forget call just avoids an unhandled-rejection warning.
         WorldMapLoader.ensure().catch(() => {});
-      } else {
-        bots.value = BOTS_FOR_SIZE[sizeSelect.value] || 9;
-        tribes.value = TRIBES_FOR_SIZE[sizeSelect.value] || 16;
       }
     });
+    // World is selected by default in index.html, so without this the fields
+    // would sit at their static HTML values (9/16) instead of World's actual
+    // defaults until the player touches the dropdown themselves.
+    applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes);
   }
   bindMapType(mapTypeSelect, document.getElementById('mapSizeRow'), sizeSelect, botInput, tribeInput);
   bindMapType(document.getElementById('hostMapType'), document.getElementById('hostMapSizeRow'),
@@ -421,8 +437,8 @@
   }
 
   function start() {
-    const bots = Math.max(2, Math.min(60, parseInt(botInput.value, 10) || 9));
-    const tribes = Math.max(0, Math.min(150, parseInt(tribeInput.value, 10) || 0));
+    const bots = Math.max(2, Math.min(BOT_CAP, parseInt(botInput.value, 10) || 9));
+    const tribes = Math.max(0, Math.min(TRIBE_CAP, parseInt(tribeInput.value, 10) || 0));
     const mapSize = sizeSelect.value;
 
     // A new match is a new connection. Tearing the old one down first stops a

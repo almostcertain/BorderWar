@@ -1297,13 +1297,14 @@ const UI = {
 
   // Read the host panel's map/bot/tribe controls into the shape `start_game`
   // carries (protocol.js's {map, mapSize, bots, tribes}). Clamped the same way
-  // main.js's singleplayer start() clamps its own controls, so a host cannot
-  // send the server a config outside what the sim actually supports.
+  // main.js's singleplayer start() clamps its own controls (BOT_CAP/TRIBE_CAP
+  // there), so a host cannot send the server a config outside what the sim
+  // actually supports.
   getHostConfig() {
     const map = document.getElementById('hostMapType').value === 'world' ? 'world' : 'procedural';
     const mapSize = document.getElementById('hostMapSize').value;
-    const bots = Math.max(0, Math.min(60, parseInt(document.getElementById('hostBotCount').value, 10) || 0));
-    const tribes = Math.max(0, Math.min(150, parseInt(document.getElementById('hostTribeCount').value, 10) || 0));
+    const bots = Math.max(0, Math.min(100, parseInt(document.getElementById('hostBotCount').value, 10) || 0));
+    const tribes = Math.max(0, Math.min(250, parseInt(document.getElementById('hostTribeCount').value, 10) || 0));
     const difficulty = document.getElementById('hostDifficulty').value;
     return { map: map, mapSize: mapSize, bots: bots, tribes: tribes, difficulty: difficulty };
   },
