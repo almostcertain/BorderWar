@@ -7,9 +7,9 @@
 // mainMenuInnerRadius 40, centerButtonSize 30, 300ms reopen cooldown.
 //
 // Four quadrants: trade toggle (north), Boat/Betray (east), Peace/Renew
-// (south). West is empty for now. In a team game the centre button on a
-// friendly nation opens a second ring, Donate, with Troops and Gold; its
-// centre goes back. Everywhere else the centre just closes the menu.
+// (south), Target (west, non-allied players only). In a team game the centre
+// button on a friendly nation opens a second ring, Donate, with Troops and
+// Gold; its centre goes back. Everywhere else the centre just closes the menu.
 const Radial = {
   el: null,
   menuEl: null,
@@ -111,8 +111,9 @@ const Radial = {
   // a non-owned tile: [Info, Boat‖Betray, Renew‖Peace, Attack‖Donate]. We
   // have no Info panel or radial Attack (attack is a direct tap on the map
   // here), so north carries the trade toggle OpenFront keeps in its Info
-  // panel and west stays empty — but Boat/Betray at east and Peace/Renew at
-  // south match their real layout, not a guess.
+  // panel and west carries Target (also an Info-panel action upstream) — but
+  // Boat/Betray at east and Peace/Renew at south match their real layout, not
+  // a guess.
   // Note the split each slot now makes. `note`/`disabled` come from the
   // *BlockReason validators, run right here on the current state, so a wedge
   // that cannot be pressed says so the instant the menu opens — no round trip.
@@ -159,6 +160,18 @@ const Radial = {
           act: () => Transport.sendIntent(Protocol.intent.allianceRequest(t))
         };
       }
+    }
+
+    // Target (ticket #30): mark a non-allied player for your allies to focus
+    // — OpenFront's Target button. West was the free quadrant.
+    if (t >= 0 && !Game.areAllied(me, t)) {
+      const reason = Game.targetBlockReason(me, t);
+      const marked = Game.activeTargets(Game.players[me]).includes(t);
+      out[3] = {
+        icon: '🎯', label: marked ? 'Marked' : 'Target', cls: 'danger',
+        note: marked ? null : reason, disabled: marked || !!reason,
+        act: () => Transport.sendIntent(Protocol.intent.targetPlayer(t))
+      };
     }
 
     // Trade toggle — OpenFront's "Stop trading" / "Start trading" button.

@@ -321,6 +321,24 @@ const UI = {
     if (best) this.selectedWarships.add(best);
   },
 
+  // Ticket #30: say so when an ally marks a target (our own mark needs no
+  // announcement — we just clicked it). Read-only over Player.targets; a mark
+  // is identified by who placed it and when, so each one flashes once.
+  seenMarks: new Set(),
+
+  announceTargets(me) {
+    for (const allyId of me.allies) {
+      const ally = Game.players[allyId];
+      for (const t of ally.targets) {
+        const key = allyId + ':' + t.at;
+        if (this.seenMarks.has(key)) continue;
+        this.seenMarks.add(key);
+        if (Game.elapsed - t.at >= Game.TARGET_DURATION) continue;
+        this.flash('🎯 ' + ally.name + ' marked ' + Game.players[t.id].name + ' as a target');
+      }
+    }
+  },
+
   flash(text) {
     this.flashText = text;
     this.flashUntil = performance.now() + 1600;
@@ -875,6 +893,7 @@ const UI = {
     // could not know it had worked, so the handoff from banner to HUD happens
     // here, off the simulation's own state, rather than on the click.
     if (this.spawnBannerOpen) this.exitSpawnSelect();
+    this.announceTargets(me);
 
     const max = Game.maxTroops(me);
     const growth = Game.growthPerSecond(me);

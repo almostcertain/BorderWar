@@ -218,7 +218,7 @@ const Protocol = {
   // with no OpenFront equivalent: it is this game's own mechanic, and it is
   // named in the snake_case house style of the majority.
   //
-  // Deliberately absent, per §4: targetPlayer, emoji, quick_chat, delete_unit,
+  // Deliberately absent, per §4: emoji, quick_chat, delete_unit,
   // kick_player, toggle_pause, update_game_config. None has a mechanic in
   // this game. fastForward and the debug gold/nuke buttons are
   // singleplayer-only and are hard disabled in multiplayer rather than
@@ -340,6 +340,12 @@ const Protocol = {
       fields: { recipient: 'playerId', troops: 'troops' },
       from: 'radial.js Game.donateTroops',
       openfront: 'DonateTroopIntentSchema (same nullable-amount note)'
+    },
+    targetPlayer: {
+      // Ticket #30. Upstream's camelCase name, kept like allianceRequest's.
+      fields: { target: 'playerId' },
+      from: 'radial.js Game.targetPlayer',
+      openfront: 'TargetPlayerIntentSchema'
     },
     mark_disconnected: {
       // New — no current call site. Paired with the server's 30 s lastPing
@@ -491,6 +497,7 @@ const Protocol = {
     breakAlliance(recipient) { return { type: 'breakAlliance', recipient: recipient }; },
     embargo(targetID, action) { return { type: 'embargo', targetID: targetID, action: action }; },
     embargoAll(action) { return { type: 'embargo_all', action: action }; },
+    targetPlayer(target) { return { type: 'targetPlayer', target: target }; },
     donateGold(recipient, gold) { return { type: 'donate_gold', recipient: recipient, gold: gold }; },
     donateTroops(recipient, troops) { return { type: 'donate_troops', recipient: recipient, troops: troops }; },
     markDisconnected(isDisconnected) { return { type: 'mark_disconnected', isDisconnected: isDisconnected }; }

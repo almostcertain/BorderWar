@@ -2082,6 +2082,8 @@ const Render = {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
+    const meP = Game.players[Game.me];
+    const marked = meP ? Game.transitiveTargets(meP) : null;
     for (const L of this.labels) {
       const p = Game.players[L.id];
       L.font = 0;                        // 0 = no name drawn; drawDiploBadges reads it
@@ -2108,7 +2110,9 @@ const Render = {
       // 🚫: trade with you is blocked, by either side's embargo.
       const noTrade = !p.isTribe && Game.me >= 0 && p.id !== Game.me && !Game.canTrade(Game.me, p.id);
       // 👥: a teammate (issue #31) — permanent, unlike an alliance.
-      const name = (Game.onSameTeam(Game.me, p.id) ? '👥 ' : Game.areAllied(Game.me, p.id) ? '🤝 ' : '') +
+      // 🎯: marked as a target by us or an ally (ticket #30).
+      const name = (marked && marked.has(p.id) ? '🎯 ' : '') +
+                   (Game.onSameTeam(Game.me, p.id) ? '👥 ' : Game.areAllied(Game.me, p.id) ? '🤝 ' : '') +
                    (Game.isTraitor(p) ? '🗡 ' : '') +
                    (noTrade ? '🚫 ' : '') + p.name;
       ctx.font = '600 ' + font.toFixed(1) + 'px system-ui, sans-serif';

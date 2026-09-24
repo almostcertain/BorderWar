@@ -472,6 +472,67 @@ Object.assign(Game, {
     return true;
   },
 
+  // --- Target marking, after OpenFront (ticket #30) --------------------------
+  // Ported from TargetPlayerExecution and PlayerImpl's canTarget/target/
+  // targets/transitiveTargets. Marking an enemy tells your allies who to
+  // focus: allied nations pile onto it (AI.assistAllies), and you and your
+  // allies see 🎯 on its name. The target learns of it the hard way — its
+  // relation toward you drops by 40.
+  //
+  // OpenFront's targetDuration() is 10*10 ticks and targetCooldown() 15*10,
+  // at 10 ticks/sec; Game.elapsed is in seconds, so they port as 10 and 15.
+  // The cooldown is on marking anyone at all, not per target — canTarget
+  // walks every entry. TargetPlayerExecution is inactive during the spawn
+  // phase, so marking is refused until the match starts.
+  TARGET_DURATION: 10,
+  TARGET_COOLDOWN: 15,
+  TARGET_RELATION_HIT: -40,
+
+  targetBlockReason(fromId, toId) {
+    if (fromId === toId || fromId < 0 || toId < 0) return 'Invalid';
+    const from = this.players[fromId], to = this.players[toId];
+    if (!from || !to || !from.alive || !to.alive) return 'Invalid';
+    if (this.spawning) return 'Not started';
+    if (this.areAllied(fromId, toId)) return 'Allied';
+    for (const t of from.targets) {
+      const wait = this.TARGET_COOLDOWN - (this.elapsed - t.at);
+      if (wait > 0) return 'Wait ' + Math.ceil(wait) + 's';
+    }
+    return null;
+  },
+
+  canTarget(fromId, toId) { return this.targetBlockReason(fromId, toId) === null; },
+
+  targetPlayer(fromId, toId) {
+    if (!this.canTarget(fromId, toId)) return false;
+    const from = this.players[fromId];
+    // OpenFront keeps every mark forever and filters on read; entries past
+    // the cooldown can never matter again (it outlasts the duration), so
+    // drop them here to keep the list at one entry.
+    from.targets = from.targets.filter(t => this.elapsed - t.at < this.TARGET_COOLDOWN);
+    from.targets.push({ at: this.elapsed, id: toId });
+    this.adjustRelation(this.players[toId], fromId, this.TARGET_RELATION_HIT);
+    return true;
+  },
+
+  // Live marks: player ids p marked within TARGET_DURATION, still alive.
+  activeTargets(p) {
+    const out = [];
+    for (const t of p.targets) {
+      if (this.elapsed - t.at < this.TARGET_DURATION && this.players[t.id].alive) out.push(t.id);
+    }
+    return out;
+  },
+
+  // Everything p or any of p's allies has marked — what p sees as 🎯.
+  transitiveTargets(p) {
+    const out = new Set(this.activeTargets(p));
+    for (const allyId of p.allies) {
+      for (const id of this.activeTargets(this.players[allyId])) out.add(id);
+    }
+    return out;
+  },
+
   updateDiplomacy() {
     for (const p of this.players) {
       if (!p.alive) continue;

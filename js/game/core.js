@@ -462,6 +462,9 @@ const Game = {
         // it), so one cooldown table covers both here too — see
         // game/diplomacy.js's DONATE_COOLDOWN.
         lastDonationAt: new Map(),
+        // Enemies this player has marked, as { at: Game.elapsed, id } —
+        // see the Target marking section of game/diplomacy.js.
+        targets: [],
         traitorUntil: 0,
         betrayals: 0,
         // When and by whom a fresh front (land or boat) last opened on this

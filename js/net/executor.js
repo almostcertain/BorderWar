@@ -366,6 +366,12 @@ const Executor = {
       return Game.donateTroops(playerId, it.recipient, it.troops);
     },
 
+    // radial.js Game.targetPlayer — TargetPlayerExecution. canTarget (ally
+    // gate, spawn phase, cooldown) runs inside Game.targetPlayer.
+    targetPlayer(playerId, it) {
+      return Game.targetPlayer(playerId, it.target);
+    },
+
     // New in §4 — the one intent with no existing call site (Protocol lists its
     // `from` as null) and, correspondingly, the one with no Game.* method
     // behind it yet. It is an intent rather than client-local bookkeeping

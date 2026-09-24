@@ -1223,6 +1223,8 @@ const AI = {
       if (Game.launchAttack(p.id, NEUTRAL, Math.floor(p.troops * ratio))) return;
     }
 
+    if (this.assistAllies(p, targets, myAttacks)) return;
+
     // Never stack a second attack on the same Tribe — or a second Tribe
     // skirmish at all — while one is still resolving.
     if (myAttacks.some(a => Game.players[a.target] && Game.players[a.target].isTribe)) return;
@@ -1267,6 +1269,38 @@ const AI = {
     const ratio = atWar ? this.TRIBE_SKIRMISH_RATIO
       : (best === NEUTRAL ? prof.neutralRatio : (Game.players[best].isTribe ? this.TRIBE_ATTACK_RATIO : prof.attackRatio));
     Game.launchAttack(p.id, best, Math.floor(p.troops * ratio));
+  },
+
+  // AiAttackBehavior.assistAllies (ticket #30): an ally has marked a target
+  // (Game.targetPlayer), so go hit it. Upstream only answers an ally it
+  // still feels Friendly toward, and each answer costs 20 of that goodwill,
+  // so an ally can't spam marks forever. A teammate skips the relation gate
+  // (a design call — teammates are permanent here, and team relations would
+  // otherwise decay out of Friendly within ~2 minutes of the match start).
+  //
+  // Deliberately ahead of the scoring loop, and ignoring both provocation()
+  // and freshFrontLocked(): piling onto one enemy is the whole point of a
+  // mark. Upstream's sendAttack would boat to a target that doesn't border
+  // us; this only answers a mark on a land neighbour.
+  ASSIST_RELATION_COST: -20,
+
+  assistAllies(p, targets, myAttacks) {
+    for (const allyId of p.allies) {
+      const ally = Game.players[allyId];
+      if (!ally.alive || ally.targets.length === 0) continue;
+      const marks = Game.activeTargets(ally);
+      if (marks.length === 0) continue;
+      const teammate = Game.onSameTeam(p.id, allyId);
+      if (!teammate && Game.relation(p, allyId) < this.FRIENDLY) continue;
+      for (const id of marks) {
+        if (id === p.id || p.allies.has(id) || !targets.has(id)) continue;
+        if (myAttacks.some(a => a.target === id)) continue;
+        if (!Game.launchAttack(p.id, id, Math.floor(p.troops * this.profile().attackRatio))) continue;
+        if (!teammate) Game.adjustRelation(p, allyId, this.ASSIST_RELATION_COST);
+        return true;
+      }
+    }
+    return false;
   },
 
   // Naval counterpart to think(): same weak-neighbour / neutral-bonus /
