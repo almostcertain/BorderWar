@@ -1,6 +1,43 @@
 // js/game/annex.js — Enclosed regions & annexation.
 // Extends the Game singleton declared in game/core.js. Move-only split of the
 // former js/game.js; see docs/game-split-plan.md.
+
+// Scratch for the periodic sweep's shared walk cache (see AnnexSweep below).
+// Kept out of Game so it is never part of the hashed sim state; the stamps
+// are only ever compared, so their values never leak into results.
+let annexStamp = null, annexRun = 0;
+
+// One annexation sweep's memory of which enemy components have already been
+// walked. Whether a same-owner component is enclosed depends only on the
+// ownership map, so while no tile changes hands every bordering player can
+// reuse the first walk's verdict instead of flooding the whole component
+// again — on a 50-nation Extra Large map that repeat flooding of big
+// landlocked mainlands was a 200+ ms hitch every sweep. Any annexation
+// invalidates it (reset), since that rewrites ownership.
+function AnnexSweep() {
+  if (!annexStamp || annexStamp.length !== GameMap.owner.length) {
+    annexStamp = new Int32Array(GameMap.owner.length);
+    annexRun = 0;
+  }
+  this.reset();
+}
+AnnexSweep.prototype.reset = function () {
+  if (annexRun > 0x7ffffff0) { annexStamp.fill(0); annexRun = 0; }
+  this.base = annexRun;          // stamps <= base are stale
+  this.accepted = new Map();     // run -> wallCounts of an enclosed component
+  this.largest = new Map();      // targetId -> largestLandPiece
+};
+// Verdict for the component containing `tile`: the run id it was stamped
+// with, walking it first if nothing this sweep has reached it yet.
+AnnexSweep.prototype.componentOf = function (tile) {
+  const s = annexStamp[tile];
+  if (s > this.base) return s;
+  const run = ++annexRun;
+  const found = Game.enclosedRegion(tile, null, run, annexStamp, this.base);
+  if (found) this.accepted.set(run, found.wallCounts);
+  return run;
+};
+
 Object.assign(Game, {
   // True when `tile` has a 4-neighbour already owned by `playerId`, i.e. taking
   // it would keep that player's territory contiguous.
@@ -65,11 +102,14 @@ Object.assign(Game, {
   // this pocket has already been walked from another contact point and
   // rejected there — an accepted pocket is a whole connected component, so it
   // can never be touching this one — and this walk fails with it.
-  enclosedRegion(startTile, seen, run) {
+  //
+  // `stamp`/`base` (sweep use only) swap `seen` for a typed array of run ids,
+  // where anything <= base counts as unvisited. Same rules otherwise.
+  enclosedRegion(startTile, seen, run, stamp, base) {
     const target = GameMap.owner[startTile];
     if (target < 0) return null;
 
-    seen.set(startTile, run);
+    if (stamp) stamp[startTile] = run; else seen.set(startTile, run);
     const region = [startTile];
     const stack = [startTile];
     const wallCounts = new Map();
@@ -83,10 +123,17 @@ Object.assign(Game, {
         const j = nb[k];
         const o = GameMap.owner[j];
         if (o === target) {
-          const walk = seen.get(j);
-          if (walk === run) continue;
-          if (walk !== undefined) return null; // already walked, already rejected
-          seen.set(j, run);
+          if (stamp) {
+            const walk = stamp[j];
+            if (walk === run) continue;
+            if (walk > base) return null; // already walked, already rejected
+            stamp[j] = run;
+          } else {
+            const walk = seen.get(j);
+            if (walk === run) continue;
+            if (walk !== undefined) return null; // already walked, already rejected
+            seen.set(j, run);
+          }
           region.push(j);
           stack.push(j);
           continue;
@@ -149,9 +196,16 @@ Object.assign(Game, {
   // read as nations being annexed far too easily. The single-wall rule is
   // applied here rather than behind requireDominant so the hover cue, the
   // tap, the bots and the sweep all agree.
-  enclosedPocketsOf(targetId, byPlayerId, requireDominant) {
+  //
+  // `sweep` (checkAnnexations only) is an AnnexSweep shared across every
+  // player's scan in one sweep: components are judged from its cache, and
+  // only a pocket that actually passes is re-walked from this player's own
+  // contact tile, so the tiles come back in exactly the order the uncached
+  // walk would produce.
+  enclosedPocketsOf(targetId, byPlayerId, requireDominant, sweep) {
     const me = this.players[byPlayerId];
     if (targetId < 0 || targetId === byPlayerId || !me) return [];
+    if (sweep) return this.sweepPocketsOf(targetId, me, requireDominant, sweep);
     const seen = new Map(), nb = this.nbuf, regions = [];
     let run = 0, biggest = -1;
     for (const i of me.borderTiles) {
@@ -168,6 +222,32 @@ Object.assign(Game, {
           if (found.tiles.length >= biggest) continue;
         }
         if (requireDominant && this.dominantWaller(found.wallCounts) !== byPlayerId) continue;
+        regions.push(found.tiles);
+      }
+    }
+    return regions;
+  },
+
+  // enclosedPocketsOf's cached path; same decisions, same result order.
+  sweepPocketsOf(targetId, me, requireDominant, sweep) {
+    const nb = this.nbuf, regions = [], judged = new Set();
+    for (const i of me.borderTiles) {
+      const n = GameMap.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (GameMap.owner[j] !== targetId) continue;
+        const comp = sweep.componentOf(j);
+        if (judged.has(comp)) continue;
+        judged.add(comp);
+        const wallCounts = sweep.accepted.get(comp);
+        if (!wallCounts) continue;
+        if (requireDominant && this.dominantWaller(wallCounts) !== me.id) continue;
+        const found = this.enclosedRegion(j, new Map(), 1);
+        if (wallCounts.size > 1) {
+          let biggest = sweep.largest.get(targetId);
+          if (biggest === undefined) { biggest = this.largestLandPiece(targetId); sweep.largest.set(targetId, biggest); }
+          if (found.tiles.length >= biggest) continue;
+        }
         regions.push(found.tiles);
       }
     }
@@ -202,8 +282,8 @@ Object.assign(Game, {
   // Hands every one of those pockets over at once. All of them are found
   // before any of them changes hands, since annexRegion/setOwner rewrite the
   // very tile sets enclosedPocketsOf scans. Returns the tiles taken.
-  annexEnclosedPockets(targetId, byPlayerId, requireDominant) {
-    const regions = this.enclosedPocketsOf(targetId, byPlayerId, requireDominant);
+  annexEnclosedPockets(targetId, byPlayerId, requireDominant, sweep) {
+    const regions = this.enclosedPocketsOf(targetId, byPlayerId, requireDominant, sweep);
     let taken = 0;
     for (const r of regions) { taken += r.length; this.annexRegion(r, byPlayerId); }
     return taken;
@@ -235,7 +315,7 @@ Object.assign(Game, {
   // shared with ai.js, which this file must not depend on.
   ANNEX_SWEEP_TICKS: 20,
   checkAnnexations() {
-    const nb = this.nbuf;
+    const nb = this.nbuf, sweep = new AnnexSweep();
     for (const p of this.players) {
       if (!p.alive || p.tiles.size === 0) continue;
       const targets = new Set();
@@ -247,7 +327,9 @@ Object.assign(Game, {
           targets.add(o);
         }
       }
-      for (const targetId of targets) this.annexEnclosedPockets(targetId, p.id, true);
+      for (const targetId of targets) {
+        if (this.annexEnclosedPockets(targetId, p.id, true, sweep) > 0) sweep.reset();
+      }
     }
   },
 

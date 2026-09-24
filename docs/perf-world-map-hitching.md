@@ -129,3 +129,35 @@ valid (adjacent water tiles, ending on the destination port).
 Rendering was not profiled here. The sim spikes above are large enough to
 explain the reported hitching on their own; re-check render cost on the World
 map after they are fixed.
+
+# Xlarge, 50 nations — annexation sweep (2026-09-24)
+
+`node tools/sim-profile.js 6000 xlarge 12345 50 40` (profiler now takes bot
+and tribe counts).
+
+Every 20 ticks `checkAnnexations` asks, for every player and every enemy it
+borders, "is this enemy's ground enclosed?" — a flood fill of the enemy's
+component. A landlocked mainland ringed by several nations passes the
+enclosed test (then fails the mainland rule), so it was flooded in full once
+per bordering player, every sweep: 200–260 ms per sweep.
+
+Fix: one `AnnexSweep` cache per sweep (`js/game/annex.js`). The verdict for a
+component depends only on ownership, so the first walk's result is reused by
+every other bordering player until an annexation actually happens (which
+resets the cache). Passing pockets are still re-walked from the player's own
+contact tile so tile order, and therefore the sim, is unchanged.
+
+| | before | after |
+|---|---|---|
+| `checkAnnexations` total (6000 ticks) | 36,058 ms | 7,882 ms |
+| worst sweep | 256 ms | ~50 ms |
+| tick p95 / p99 / max | 75 / 184 / 311 ms | 27 / 64 / 162 ms |
+| ticks > 50 ms | 335 | 101 |
+
+Goldens: every checkpoint hash, the owner map and event coverage matched in
+all 13 scenarios. Only the final state SHA changed, because it hashes the
+leftover bytes of the 4-int `abuf` scratch buffer; re-recorded for that.
+
+Remaining spikes (~100–110 ms) are all `AI.navalThink` →
+`isRouteTooIndirect` → `seaPath`, i.e. recommendations 4–5 above (negative
+route cache, per-tick node budget) not yet done. Both change bot behaviour.
