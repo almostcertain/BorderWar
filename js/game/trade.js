@@ -206,7 +206,7 @@ Object.assign(Game, {
   // tile, which tells the two apart. A B->A route also answers A->B: its
   // water tiles run from beside B's port to beside A's, so reversing them and
   // ending on B's tile gives a valid A->B route. Genuine failures are cached as `false`; a null because this
-  // tick's SEA_PATH_BUDGET_PER_TICK ran out is not, so the pair is tried
+  // tick's SEA_PATH_NODE_BUDGET_PER_TICK ran out is not, so the pair is tried
   // again later. Only written inside tick() (see its _inTick comment).
   portRoute(fromTile, toTile) {
     const size = GameMap.owner.length;
@@ -222,8 +222,7 @@ Object.assign(Game, {
 
     const before = this._seaPathSearchesThisTick;
     const path = this.seaPath([fromTile], toTile);
-    const refused = !path && this._inTick && this._seaPathSearchesThisTick === before &&
-      before >= this.SEA_PATH_BUDGET_PER_TICK;
+    const refused = !path && this._seaPathSearchesThisTick === before && this.seaPathBudgetSpent();
     if (!refused) this.cachePortRoute(key, path || false);
     return path;
   },

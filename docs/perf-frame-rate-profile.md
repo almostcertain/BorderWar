@@ -93,7 +93,7 @@ remain.
   new storage is behaviour-identical to the old across all 12 golden
   scenarios (checked with the route cache excluded from the digest). The
   goldens were re-recorded because the bigger cap means fewer re-searches,
-  which changes when `SEA_PATH_BUDGET_PER_TICK` runs out.
+  which changes when the per-tick sea-path budget runs out.
   Replaying the same stream of route requests through a shadow copy of
   the old cache (The World, ~80 ports): 852 vs 1,223 searches
   (−30%) mid-game, 651 vs 1,224 (−47%) later, as the cache fills.
@@ -106,6 +106,44 @@ first-time trade searches 20, `checkAnnexations` 13, `stepAttack` 11.
 Next levers: the per-tick node budget (option 2), then coarse-grid
 pathfinding (option 4) for first-time routes, plus a separate look at
 annexation.
+
+## Applied (option 2): per-tick node budget
+
+`SEA_PATH_BUDGET_PER_TICK` (4 searches) is replaced by
+`SEA_PATH_NODE_BUDGET_PER_TICK` (40,000 water tiles explored), with each
+search also charged `SEA_PATH_SEARCH_COST` (500) for its fixed arena
+reset. A search only starts while the tick is under budget; once started
+it runs to its own guard. So worst case = budget + one full search.
+
+Why not abort mid-search: it wastes the work already done, and a route
+bigger than the budget would only ever finish when it happened to be first
+in a tick. Callers that come earlier in tick order (warship chases every
+tick) would starve it.
+
+Search sizes measured on The World (4,579 searches over 3,000 ticks, about
+0.15 µs per tile explored):
+
+| Caller | p50 tiles | p99 tiles | max |
+|---|---|---|---|
+| trade `portRoute` | 10.6k | 175k | 200k (guard) |
+| AI `nearestCoastPath` | 4.5k | 34k | 38k |
+| captured-ship `nearestOwnedPortRoute` | 272 | 22.6k | 25k |
+| warship chase | 31 | 4.8k | 31k |
+
+A/B on the same seed, ticks 300–7,000 (matches diverge after the change,
+so whole-tick numbers are indicative only):
+
+| Sea-path time per tick | Old (4 searches) | New (40k tiles) |
+|---|---|---|
+| max | 41.1 ms | 31.4 ms |
+| p99 | 16.3 ms | 12.4 ms |
+| ticks over 10 ms | 178 | 113 |
+| total | 7.5 s | 5.9 s |
+
+Whole-tick max stayed ~80 ms in both runs. Those spikes come from other
+phases (annexation, land attacks), not sea pathing. The remaining
+sea-path ceiling is one full-guard search (~30 ms), which only coarse-grid
+pathfinding (option 4) or resumable searches would lower.
 
 ## Not measured
 

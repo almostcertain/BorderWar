@@ -877,14 +877,15 @@ const Game = {
     if (!this.running) return;
     this.ticks++;
 
-    // See SEA_PATH_BUDGET_PER_TICK (naval.js): bounds how many full seaPath
-    // searches this tick's port/warship/AI updates below are allowed to run.
+    // See SEA_PATH_NODE_BUDGET_PER_TICK (naval.js): bounds how much seaPath
+    // work this tick's port/warship/AI updates below are allowed to start.
     // Both it and the coast-path memo (nearestCoastPath) only apply while
     // _inTick is set: outside tick() — intents applied just before it, and
     // client-local UI such as the radial menu's Boat check — searches run
     // unbudgeted and uncached, so one client's UI can never spend budget or
     // plant a cached path that another client's sim doesn't see.
     this._seaPathSearchesThisTick = 0;
+    this._seaPathNodesThisTick = 0;
     this._coastPathMemo.clear();
     this._inTick = true;
 

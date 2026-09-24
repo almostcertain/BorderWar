@@ -68,6 +68,13 @@ Object.assign(Game, {
     return a;
   },
 
+  // True once this tick's seaPath work has reached
+  // SEA_PATH_NODE_BUDGET_PER_TICK, so no new search will start until the
+  // next tick. Always false outside tick().
+  seaPathBudgetSpent() {
+    return this._inTick && this._seaPathNodesThisTick >= this.SEA_PATH_NODE_BUDGET_PER_TICK;
+  },
+
   // Weighted A* over WATER tiles, seeded from every water tile adjacent to
   // `sourceTiles`, stopping the instant it pops a water tile adjacent to
   // `targetTile`. Returns the path as a tile sequence (water tiles, ending
@@ -110,13 +117,14 @@ Object.assign(Game, {
     if (!starts.some(s => targetComponents.has(wc[s]))) return null;
 
     // Past the fast reject, this is a real weighted A* over potentially
-    // thousands of water tiles — budget how many of those run per tick (see
-    // SEA_PATH_BUDGET_PER_TICK) rather than let however many callers happen
-    // to land on the same tick all pay the full cost at once.
+    // thousands of water tiles — budget how much of that runs per tick (see
+    // SEA_PATH_NODE_BUDGET_PER_TICK) rather than let however many callers
+    // happen to land on the same tick all pay the full cost at once.
     // Only inside tick() — see its _inTick comment.
     if (this._inTick) {
-      if (this._seaPathSearchesThisTick >= this.SEA_PATH_BUDGET_PER_TICK) return null;
+      if (this.seaPathBudgetSpent()) return null;
       this._seaPathSearchesThisTick++;
+      this._seaPathNodesThisTick += this.SEA_PATH_SEARCH_COST;
     }
 
     const goalX = targetTile % w, goalY = (targetTile / w) | 0;
@@ -195,6 +203,7 @@ Object.assign(Game, {
     }
 
     let found = -1, guard = Math.min(this.SEA_PATH_GUARD, maxSteps * this.SEA_PATH_NODES_PER_STEP);
+    const guardStart = guard;
     while (heapLen > 0 && guard-- > 0) {
       const current = heapPop();
       if (closed[current]) continue;
@@ -217,6 +226,7 @@ Object.assign(Game, {
         }
       }
     }
+    if (this._inTick) this._seaPathNodesThisTick += guardStart - Math.max(0, guard);
     if (found < 0) return null;
 
     const waterPath = [];

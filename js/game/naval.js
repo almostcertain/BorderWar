@@ -38,8 +38,8 @@ Object.assign(Game, {
   // keeps the same number of successful AI routes (4 lost ~10%).
   SEA_PATH_NODES_PER_STEP: 8,
 
-  // Caps how many full (post-fast-reject) seaPath searches run in a single
-  // tick, reset in tick() below. Ports rolling for trade ships, bots'
+  // Caps how much full (post-fast-reject) seaPath work starts in a single
+  // tick, in water tiles explored, reset in tick(). Ports rolling for trade ships, bots'
   // navalThink and warship repathing all funnel into seaPath independently,
   // so nothing stops several of them landing on the same tick — harmless on
   // the procedural maps' simple single-landmass water, but on real-coastline
@@ -51,7 +51,19 @@ Object.assign(Game, {
   // chase repaths on its own cooldown), so deferring the overflow to later
   // ticks is free correctness-wise and spreads the cost across frames
   // instead of stalling one of them.
-  SEA_PATH_BUDGET_PER_TICK: 4,
+  //
+  // Counted in explored tiles, not searches: a warship chase explores ~30
+  // tiles and a first-time trade route ~10k (up to the 200k guard), so a
+  // search count let four long routes stack into one ~120ms tick while
+  // refusing cheap ones. A search only STARTS while the tick is under
+  // budget, and once started it runs to its own guard — aborting midway
+  // would waste the work and could starve long routes forever. Worst case
+  // is therefore the budget plus one full search (~6 + ~30 ms measured on
+  // The World at ~0.15µs/tile). Each search also pays SEA_PATH_SEARCH_COST
+  // up front for its fixed setup (clearing the map-sized arena flags).
+  // See docs/perf-frame-rate-profile.md.
+  SEA_PATH_NODE_BUDGET_PER_TICK: 40000,
+  SEA_PATH_SEARCH_COST: 500,
 
   // Config.boatMaxNumber().
   MAX_BOATS_PER_PLAYER: 3,
@@ -218,7 +230,7 @@ Object.assign(Game, {
     const landingTile = this.nearestOwnedCoast(targetTile);
     const targetOwner = GameMap.owner[landingTile];
     // navalInvasionBlockReason just ran this same search to validate the
-    // route exists, but SEA_PATH_BUDGET_PER_TICK caps searches per tick, so
+    // route exists, but SEA_PATH_NODE_BUDGET_PER_TICK caps search work per tick, so
     // a route found there can still come back null here if other repaths
     // spent the rest of this tick's budget in between. Bail out rather than
     // push a boat with a null path — every caller of Game.boats (render.js's
