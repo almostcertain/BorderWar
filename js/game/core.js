@@ -448,6 +448,10 @@ const Game = {
         embargoMalusFrom: new Set(),
         traitorUntil: 0,
         betrayals: 0,
+        // When and by whom a fresh front (land or boat) last opened on this
+        // player — AI.freshFrontLocked stops other nations piling on at once.
+        frontOpenedAt: -Infinity,
+        frontOpenedBy: -1,
         nextThink: 1 + this.rng() * 4,
         // TribeExecution's per-tribe rolls (see TribeAI.rollTraits), drawn here
         // from the seeded rng so every client rolls the same values.

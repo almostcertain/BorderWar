@@ -1123,6 +1123,20 @@ const AI = {
     for (const id of watch.keys()) if (!live.has(id)) watch.delete(id);
   },
 
+  // Two nations used to open on the same victim within a tick or two of each
+  // other: nothing coordinated their picks, and the first attack draining the
+  // victim's troops made it an even better target for the next bot to think.
+  // For FRESH_FRONT_LOCKOUT seconds after anyone opens a fresh front on t,
+  // no other nation may open one too, giving t a moment to react. Exempt: a
+  // target already hostile to p (hitting back isn't piling on) and traitors.
+  FRESH_FRONT_LOCKOUT: 3,
+
+  freshFrontLocked(p, t, hostiles) {
+    if (t.isTribe || t.frontOpenedBy === p.id) return false;
+    if (Game.elapsed - t.frontOpenedAt >= this.FRESH_FRONT_LOCKOUT) return false;
+    return !hostiles.has(t.id) && !Game.isTraitor(t);
+  },
+
   // 1 normally; RETREAT_PENALTY inside RETREAT_COOLDOWN of a retreat from
   // targetId. Shared by think()'s land scoring and navalScore().
   retreatPenalty(p, targetId) {
@@ -1162,6 +1176,7 @@ const AI = {
         score = contact * 1.4;
       } else {
         const t = Game.players[targetId];
+        if (this.freshFrontLocked(p, t, hostiles)) continue;
         const myDensity = p.troops / Math.max(1, p.tiles.size);
         const theirDensity = t.troops / Math.max(1, t.tiles.size);
         // Prefer weak, softly-defended neighbours; avoid suiciding into a bigger army.
@@ -1327,6 +1342,7 @@ const AI = {
     if (targetId === NEUTRAL) return opportunity * 1.4 * distFactor;
     const t = Game.players[targetId];
     if (!t || !t.alive) return -Infinity;
+    if (this.freshFrontLocked(p, t, hostiles)) return -Infinity;
     const myDensity = p.troops / Math.max(1, p.tiles.size);
     const theirDensity = t.troops / Math.max(1, t.tiles.size);
     let score = opportunity * (myDensity / Math.max(0.5, theirDensity)) * 0.9;

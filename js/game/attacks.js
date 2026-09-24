@@ -104,8 +104,20 @@ Object.assign(Game, {
     this.attacks.push(a);
     // Only a brand-new front counts: topping up an existing one (above) is the
     // same war, already paid for.
-    if (targetId >= 0) this.provokeByAttack(attacker, this.players[targetId]);
+    if (targetId >= 0) {
+      this.provokeByAttack(attacker, this.players[targetId]);
+      this.noteFreshFront(attacker, this.players[targetId]);
+    }
     return true;
+  },
+
+  // Stamps a brand-new nation-vs-nation front (land here, boats in
+  // launchNavalInvasion) on its target, for AI.freshFrontLocked. Tribes on
+  // either side don't count — their pushes are a nuisance, not a war.
+  noteFreshFront(attacker, target) {
+    if (attacker.isTribe || target.isTribe) return;
+    target.frontOpenedAt = this.elapsed;
+    target.frontOpenedBy = attacker.id;
   },
 
   // Two nations pushing into each other are one battle, not two independent

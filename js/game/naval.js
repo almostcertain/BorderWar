@@ -236,6 +236,7 @@ Object.assign(Game, {
     // still attacks the nation it was sent against even if the landing tile
     // itself changes hands again before it arrives.
     this.boats.push({ id: this.nextBoatId++, attacker: attackerId, target: targetOwner, troops, path, pos: 0, landingTile });
+    if (targetOwner >= 0) this.noteFreshFront(attacker, this.players[targetOwner]);
     return true;
   },
 
