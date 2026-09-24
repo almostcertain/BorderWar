@@ -196,11 +196,7 @@ Object.assign(Game, {
       src: r.silo.tile, dst: clickTile,
       from, to,
       born: this.elapsed,
-      duration: Math.max(0.3, dist / this.NUKE_SPEED[nukeType]),
-      // SAMTargetingSystem's targetedBySam flag, ported for stepSAMs (see
-      // "SAM Launcher & Interceptors") — set the instant a SAM commits a
-      // charge to this nuke, so a second SAM never also claims it.
-      targetedBySAM: false
+      duration: Math.max(0.3, dist / this.NUKE_SPEED[nukeType])
     });
     this.maybeBreakNukeAlliances(playerId, nukeType, clickTile);
     return true;
@@ -238,8 +234,7 @@ Object.assign(Game, {
       src: srcTile, dst: dstTile,
       from, to,
       born: this.elapsed,
-      duration: Math.max(0.3, dist / this.NUKE_SPEED[nukeType]),
-      targetedBySAM: false
+      duration: Math.max(0.3, dist / this.NUKE_SPEED[nukeType])
     });
     this.maybeBreakNukeAlliances(ownerId, nukeType, dstTile);
     return true;
@@ -392,7 +387,7 @@ Object.assign(Game, {
 
   // Advances every in-flight nuke (straight-line, see launchNuke) and
   // detonates it once its travel duration elapses. A nuke intercepted by a
-  // SAM this same tick never reaches here at all — stepSamMissiles (called
+  // SAM this same tick never reaches here at all — stepSAMs (called
   // first, see Game.tick) already spliced it out of this.nukes — so this
   // still needs no interception check of its own; every nuke still in the
   // array by the time this runs is one that got through. Also prunes spent

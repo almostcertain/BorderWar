@@ -84,6 +84,7 @@
 <div id="radial" class="hidden"><div id="radialMenu"></div></div>
 
 <div id="hud">
+  <div id="nukeAlert" class="hidden"></div>
   <div id="diploBanner" class="hidden">
     <span id="diploText"></span>
     <button id="diploYes">Accept</button>
@@ -232,8 +233,12 @@
   </div>
 </div>
 
+<!-- #22: a popup card over the live map, not a full-screen cover, so the final
+     map state stays visible and pannable. The wrapper itself ignores pointer
+     events; only the card takes clicks. -->
 <div id="endOverlay" class="hidden">
   <div class="panel">
+    <button id="endMinBtn" title="Hide">&minus;</button>
     <h1 id="endTitle">Defeated</h1>
     <p id="endText"></p>
     <button id="restartBtn">Play Again</button>

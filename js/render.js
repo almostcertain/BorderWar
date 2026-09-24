@@ -399,7 +399,6 @@ const Render = {
     this.drawTradeShips();
     this.drawWarships();
     this.drawShells();
-    this.drawSamMissiles();
     this.drawNukes();
     this.drawNukeBlasts();
     this.drawSamFlashes();
@@ -717,7 +716,7 @@ const Render = {
           ctx.fill();
         } else if (b.type === 'sam') {
           // A dish (arc) on a short mast, distinct from the Silo's solid
-          // rocket silhouette — this fires interceptors, it doesn't launch.
+          // rocket silhouette — this shoots nukes down, it doesn't launch.
           ctx.lineWidth = Math.max(1.5, r * 0.16);
           ctx.strokeStyle = '#ffffff';
           ctx.lineCap = 'round';
@@ -1596,6 +1595,13 @@ const Render = {
     const cw = this.canvas.width, ch = this.canvas.height;
 
     for (const n of Game.nukes) {
+      // Ticket #25: a nuke heading for the player's land also marks where
+      // it will hit — a pulsing red ring at its outer blast radius plus a
+      // solid one at the guaranteed-destroyed inner radius. Drawn before the
+      // warhead's own off-screen skip below, so the target still shows when
+      // the missile itself is out of view.
+      if (UI.nukeThreatensMe(n)) this.drawNukeTarget(n, s, cw, ch);
+
       const t = Math.min(1, (Game.renderElapsed - n.born) / n.duration);
       const arc = Math.sin(Math.PI * t);
       // Arc height scales with the trip's own length (in tile-space) so a
@@ -1651,6 +1657,37 @@ const Render = {
     }
   },
 
+  // Target marker for an incoming nuke — see drawNukes. Render-only; the
+  // pulse runs off the wall clock, which is fine outside the sim.
+  drawNukeTarget(n, s, cw, ch) {
+    const mag = Game.NUKE_MAGNITUDES[n.nukeType];
+    if (!mag) return;
+    const ctx = this.ctx;
+    const cx = (n.to.x + 0.5 - this.cam.x) * s + cw / 2;
+    const cy = (n.to.y + 0.5 - this.cam.y) * s + ch / 2;
+    const outer = mag.outer * s, inner = mag.inner * s;
+    if (cx + outer < 0 || cy + outer < 0 || cx - outer > cw || cy - outer > ch) return;
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 180);
+
+    ctx.save();
+    ctx.lineWidth = 2 * this.dpr;
+    ctx.strokeStyle = '#ff4040';
+    ctx.globalAlpha = 0.35 + 0.45 * pulse;
+    ctx.setLineDash([8 * this.dpr, 6 * this.dpr]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, outer, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.12 + 0.1 * pulse;
+    ctx.fillStyle = '#ff2020';
+    ctx.beginPath();
+    ctx.arc(cx, cy, inner, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.9;
+    ctx.stroke();
+    ctx.restore();
+  },
+
   // The shockwave left by a detonation — see Game.detonateNuke's push to
   // nukeBlasts and Game.stepNukes' own aging/pruning. An expanding ring from
   // inner to outer radius over NUKE_BLAST_FX_DURATION, fading out, plus a
@@ -1686,48 +1723,8 @@ const Render = {
     }
   },
 
-  // A SAM's in-flight interceptor — see Game.stepSAMs (spawns one, on a
-  // precomputed straight-line course toward the intercept point) and
-  // stepSamMissiles (resolves it). Same fixed from/to/born/duration lerp and
-  // blink treatment as drawShells, just cooler-toned (icy blue-white rather
-  // than warm tracer-orange) so the two projectile types read as visually
-  // distinct at a glance — one is offense landing damage, this one is
-  // defense hunting a nuke.
-  drawSamMissiles() {
-    if (!Game.samMissiles.length) return;
-    const ctx = this.ctx, s = this.cam.scale * this.dpr;
-    const cw = this.canvas.width, ch = this.canvas.height;
-    const r = Math.max(3 * this.dpr, Math.min(7 * this.dpr, s * 0.4));
-
-    for (const m of Game.samMissiles) {
-      // Clamped on both ends, not just the upper one Game.dynamicSamRange's
-      // own comment already explains: Game.fastForward() can spawn one of
-      // these with `born` set from an `elapsed` far ahead of renderElapsed
-      // (which only advances inside main.js's normal frame loop), leaving t
-      // negative until the next real frame catches up.
-      const t = Math.max(0, Math.min(1, (Game.renderElapsed - m.born) / m.duration));
-      const tx = m.from.x + (m.to.x - m.from.x) * t;
-      const ty = m.from.y + (m.to.y - m.from.y) * t;
-      const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
-      const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
-      if (px < -20 || py < -20 || px > cw + 20 || py > ch + 20) continue;
-
-      const blink = 0.5 + 0.5 * Math.sin(Game.renderElapsed * 34 + m.born * 17);
-
-      ctx.beginPath();
-      ctx.arc(px, py, r * (1.2 + blink * 0.4), 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(150, 220, 255, ${0.3 + blink * 0.35})`;
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(px, py, r * 0.5, 0, Math.PI * 2);
-      ctx.fillStyle = blink > 0.5 ? '#ffffff' : '#bfe9ff';
-      ctx.fill();
-    }
-  },
-
-  // An intercept kill — see Game.stepSamMissiles' push to samFlashes and its
-  // own aging/pruning. A quick expanding ring, deliberately smaller and much
+  // An intercept kill — see Game.stepSAMs' push to samFlashes and its own
+  // aging/pruning. A quick expanding ring, deliberately smaller and much
   // faster than drawNukeBlasts' own shockwave — this is confirming a nuke
   // got shot down before it could go off, not the detonation itself.
   drawSamFlashes() {
@@ -1738,9 +1735,10 @@ const Render = {
     for (const f of Game.samFlashes) {
       // Lower-bound clamp is load-bearing, not just tidy: an unclamped
       // negative t here fed straight into `maxR * t` below as a ctx.arc
-      // radius — see drawSamMissiles' own comment on why t can go negative
-      // (Game.fastForward), and Game.dynamicSamRange's comment for the first
-      // place this exact crash shape was caught.
+      // radius — Game.fastForward() can spawn one with `born` set from an
+      // `elapsed` far ahead of renderElapsed (which only advances inside
+      // main.js's frame loop); see Game.dynamicSamRange's comment for the
+      // first place this exact crash shape was caught.
       const t = Math.max(0, Math.min(1, (Game.renderElapsed - f.born) / Game.SAM_FLASH_FX_DURATION));
       const px = (f.x + 0.5 - this.cam.x) * s + cw / 2;
       const py = (f.y + 0.5 - this.cam.y) * s + ch / 2;

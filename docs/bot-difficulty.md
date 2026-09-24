@@ -24,6 +24,16 @@ Difficulty applies to Nations (`isBot`) only. Tribes and humans ignore it.
 | Betrays an ally under 1/n of its army | 1/20, no opportunist stabs | 1/10 | 1/5 |
 | Nukes | never (no Silos built) | 1 in 8 per cycle | 1 in 5 per cycle |
 | Hydrogen bomb, when worthy | - | 1 in 4 | 1 in 3 |
+| Nuke back at a nation overrunning it (#20) | never | 1 in 2 per cycle | every cycle |
+
+Retaliation (`AI.maybeRetaliate`) fires when a Nation lost at least 0.5% of
+its land (5 tiles minimum) since its last economy cycle while a non-Tribe
+nation is attacking it, and it has a ready Silo and an Atom Bomb's gold. It
+runs before the cycle's spending, targets the attacker with the most troops
+committed, and aims just behind that attacker's side of the front
+(`AI.retaliationTarget`), scoring aim points so the blast stays off its own
+land and off any ally's land or structures. With no clean aim point it holds
+fire.
 
 ## Rules for changing this
 

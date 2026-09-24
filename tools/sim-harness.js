@@ -6,7 +6,7 @@ if (!['record', 'compare'].includes(mode)) throw new Error('Usage: node tools/si
 const perturb = process.argv.includes('--perturb');
 if (perturb && mode !== 'compare') throw new Error('--perturb is compare-only');
 const methods = ['launchAttack', 'launchNavalInvasion', 'resolveLanding', 'annexRegion', 'acceptAlliance', 'breakAlliance', 'build', 'upgrade', 'spawnTrain', 'buildWarship', 'warshipShootAt', 'launchNuke', 'detonateNuke'];
-const entities = ['tradeShips', 'samMissiles', 'shells', 'trains'];
+const entities = ['tradeShips', 'shells', 'trains'];
 const scenarios = ['small', 'medium'].flatMap(size => [12345, 67890].map(seed => ({ name: `${size}-${seed}`, size, seed, bots: 8, tribes: 12, ticks: 6000 })));
 scenarios.push({ name: 'large-12345', size: 'large', seed: 12345, bots: 8, tribes: 12, ticks: 2000 });
 // OpenFront's real, baked "World" map (js/map.js's loadWorld) rather than a

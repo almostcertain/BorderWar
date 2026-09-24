@@ -341,6 +341,8 @@ const UI = {
     this.spawnBannerOpen = false;
     this.spawnSent = false;
     this._frontChipByRef = null;
+    this._nukeRowByRef = null;
+    this._nukeThreat = null;
     // MP-3.5: whether this client has already reacted to Game.winnerId — see
     // checkEndGame. A fresh match's Game.init() puts winnerId back to null,
     // but reset() runs on that same restart, so this has to be cleared here
@@ -351,6 +353,8 @@ const UI = {
     document.getElementById('frontsRow').classList.add('hidden');
     document.getElementById('frontsRow').innerHTML = '';
     document.getElementById('diploBanner').classList.add('hidden');
+    document.getElementById('nukeAlert').classList.add('hidden');
+    document.getElementById('nukeAlert').innerHTML = '';
     document.getElementById('traitorChip').textContent = '';
     // MP-4.1: a fresh match starts with nothing queued — no reason for a
     // stale "catching up" readout from whatever this client was doing before
@@ -776,7 +780,8 @@ const UI = {
     // that fighting the same enemy across two separate islands stays two
     // separate fronts — see Game.launchAttack's landmassId comment. A boat is
     // a deliberate action from here — right-click or hold the tile for the
-    // radial menu.
+    // radial menu — except a short hop, which the quick-boat check below
+    // sends straight away.
     //
     // Both intents go out on the same tap and in this order, which is the
     // order they will be applied in: a turn's intents are an ordered list and
@@ -787,7 +792,53 @@ const UI = {
     // The troop count is absolute, not the ratio: the slider is client-local
     // view state and its value travels inside the intent (§4).
     const me = Game.players[Game.me];
-    Transport.sendIntent(Protocol.intent.attack(target, Math.floor(me.troops * this.ratio), tile));
+    const troops = Math.floor(me.troops * this.ratio);
+
+    // Quick boat (ticket #27): a tap on a target we don't touch by land on
+    // that landmass, but that sits a short sail from our coast, sends the
+    // same `boat` intent the radial's Boat wedge does instead of a land attack
+    // that would find no frontier and do nothing. Anything farther than
+    // QUICK_BOAT_MAX_STEPS still needs the radial, so a long crossing is
+    // always a deliberate choice. Checked only here, on the click itself —
+    // never on hover.
+    if (!this.touchesByLand(tile, target)) {
+      const hop = this.quickBoatCheck(tile, troops);
+      if (hop === 'go') { Transport.sendIntent(Protocol.intent.boat(tile, troops)); return; }
+      if (hop) { this.flash(hop); return; }
+    }
+    Transport.sendIntent(Protocol.intent.attack(target, troops, tile));
+  },
+
+  // How far (in sea-route tiles, from our nearest coast to the landing tile)
+  // a plain tap will send a boat on its own. Boats sail 10 tiles/sec
+  // (Game.BOAT_SPEED), so 60 is a ~6s crossing: a strait or a nearby island,
+  // not an ocean. The capped search also keeps the click cheap — seaPath's
+  // node guard scales with this (SEA_PATH_NODES_PER_STEP × steps).
+  QUICK_BOAT_MAX_STEPS: 60,
+
+  // Does any of our border tiles on `tile`'s landmass neighbour `target`?
+  // Same scan Game.refreshFrontier does for a landmass-scoped attack, so this
+  // is exactly "would the land attack have a frontier". Read-only, and
+  // perimeter-sized.
+  touchesByLand(tile, target) {
+    const lm = GameMap.landmassId[tile];
+    const nb = new Int32Array(4);
+    for (const i of Game.players[Game.me].borderTiles) {
+      if (GameMap.landmassId[i] !== lm) continue;
+      const n = GameMap.neighbors(i, nb);
+      for (let k = 0; k < n; k++) if (GameMap.owner[nb[k]] === target) return true;
+    }
+    return false;
+  },
+
+  // null = not a short hop (fall back to the land attack); 'go' = send the
+  // boat; any other string = a short hop that can't launch right now, and why.
+  // Advisory only — the Executor re-validates the boat intent a turn later.
+  quickBoatCheck(tile, troops) {
+    const landing = Game.nearestOwnedCoast(tile);
+    if (landing < 0) return null;
+    if (!Game.nearestCoastPath(Game.me, landing, this.QUICK_BOAT_MAX_STEPS)) return null;
+    return Game.navalInvasionBlockReason(Game.me, tile, troops) || 'go';
   },
 
   update() {
@@ -873,6 +924,7 @@ const UI = {
     traitorEl.textContent = Game.isTraitor(me)
       ? '🗡 TRAITOR ' + Math.ceil(me.traitorUntil - Game.elapsed) + 's' : '';
 
+    this.updateNukeAlert();
     this.updateBanner();
     this.updateBuildBar(me);
     this.updateFronts();
@@ -1118,6 +1170,71 @@ const UI = {
     this._frontChipByRef = nextByRef;
   },
 
+  // Ticket #25: incoming-nuke warning. Read-only over Game.nukes — nothing
+  // here writes sim state. A nuke has no id, but it stays the same object from
+  // launch until stepNukes (landed) or stepSAMs (shot down) splices it
+  // out, so the object itself is the key: one row per nuke, never duplicated,
+  // and the row disappears the frame the nuke leaves Game.nukes.
+  updateNukeAlert() {
+    const el = document.getElementById('nukeAlert');
+    const prev = this._nukeRowByRef || new Map();
+    const next = new Map();
+
+    for (const n of Game.nukes) {
+      if (!this.nukeThreatensMe(n)) continue;
+      let row = prev.get(n);
+      if (!row) {
+        row = document.createElement('div');
+        row.className = 'nukeAlertRow';
+        const owner = Game.players[n.ownerId];
+        const what = n.nukeType === 'hydrogenbomb' ? '💥 Hydrogen Bomb' : '☢ Nuke';
+        row.innerHTML =
+          `<span class="nukeAlertText">${what} incoming from ${escapeHtml(owner ? owner.name : 'unknown')}!</span>` +
+          `<span class="nukeAlertTime"></span>`;
+        row._timeEl = row.querySelector('.nukeAlertTime');
+        row.addEventListener('click', () => Render.jumpToTile(n.to.x, n.to.y));
+      }
+      const left = Math.max(0, n.duration - (Game.elapsed - n.born));
+      row._timeEl.textContent = Math.ceil(left) + 's';
+      next.set(n, row);
+    }
+
+    for (const [ref, row] of prev) if (!next.has(ref)) row.remove();
+    for (const row of next.values()) if (row.parentNode !== el) el.appendChild(row);
+    el.classList.toggle('hidden', next.size === 0);
+    this._nukeRowByRef = next.size ? next : null;
+  },
+
+  // Whether a nuke will hit land this client's player owns: its target tile is
+  // theirs, or any of their tiles sits inside its outer blast radius. Worked
+  // out once per nuke, when it's first seen, and cached against the object —
+  // a full-radius scan every frame would be wasteful, and the warning
+  // shouldn't flicker as borders shift under the missile. Also read by
+  // Render.drawNukes for the target marker. Your own nukes never warn.
+  nukeThreatensMe(n) {
+    if (Game.me < 0 || n.ownerId === Game.me) return false;
+    if (!this._nukeThreat) this._nukeThreat = new WeakMap();
+    let hit = this._nukeThreat.get(n);
+    if (hit === undefined) {
+      hit = GameMap.owner[n.dst] === Game.me;
+      const mag = Game.NUKE_MAGNITUDES[n.nukeType];
+      if (!hit && mag) {
+        const r = mag.outer, r2 = r * r, w = GameMap.width, h = GameMap.height;
+        const x0 = Math.max(0, n.to.x - r), x1 = Math.min(w - 1, n.to.x + r);
+        const y0 = Math.max(0, n.to.y - r), y1 = Math.min(h - 1, n.to.y + r);
+        for (let y = y0; y <= y1 && !hit; y++) {
+          const dy = y - n.to.y, row = y * w;
+          for (let x = x0; x <= x1; x++) {
+            const dx = x - n.to.x;
+            if (dx * dx + dy * dy <= r2 && GameMap.owner[row + x] === Game.me) { hit = true; break; }
+          }
+        }
+      }
+      this._nukeThreat.set(n, hit);
+    }
+    return hit;
+  },
+
   // One offer at a time: a peace deal someone has put to you, or an ally asking
   // to renew before the clock runs out. Ignoring either is a valid answer —
   // both simply lapse, and neither costs you anything.
@@ -1246,7 +1363,19 @@ const UI = {
   showEnd(title, text) {
     document.getElementById('endTitle').textContent = title;
     document.getElementById('endText').textContent = text;
-    document.getElementById('endOverlay').classList.remove('hidden');
+    // #22: a popup over the live map. Each new result (e.g. Victory/Game Over
+    // after an earlier Defeated) re-expands it; the minimize button collapses
+    // it to just the title so the whole map is inspectable.
+    const overlay = document.getElementById('endOverlay');
+    const minBtn = document.getElementById('endMinBtn');
+    const setMin = (min) => {
+      overlay.classList.toggle('minimized', min);
+      minBtn.innerHTML = min ? '&#43;' : '&minus;';
+      minBtn.title = min ? 'Show' : 'Hide';
+    };
+    minBtn.onclick = () => setMin(!overlay.classList.contains('minimized'));
+    setMin(false);
+    overlay.classList.remove('hidden');
   },
 
   // --- Lobby (MP-2.3) ---------------------------------------------------------

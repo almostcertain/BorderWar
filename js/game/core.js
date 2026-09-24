@@ -106,12 +106,8 @@ const Game = {
   // pure presentation: the target only actually takes damage/sinks once its
   // shell arrives, not the instant the warship fires.
   shells: [],
-  // In-flight SAM interceptor missiles — see stepSAMs (spawns one, on a
-  // precomputed straight-line intercept course) and stepSamMissiles
-  // (advances/resolves them). Same fire-and-forget shape as `shells` above.
-  samMissiles: [],
   // Short-lived intercept-confirmation rings — pure presentation, spawned by
-  // stepSamMissiles on a successful kill and aged/culled there, same idea as
+  // stepSAMs on a successful kill and aged/culled there, same idea as
   // nukeBlasts below but small and quick since it's marking a kill, not a
   // detonation.
   samFlashes: [],
@@ -346,7 +342,6 @@ const Game = {
     // per-match state but deliberately does not live on it — see js/fx.js.
     Fx.reset();
     this.shells = [];
-    this.samMissiles = [];
     this.samFlashes = [];
     this.nukes = [];
     this.nukeBlasts = [];
@@ -915,7 +910,6 @@ const Game = {
     // tick has to be removed from this.nukes before stepNukes' own duration
     // check gets a chance to detonate the same object.
     this.stepSAMs();
-    this.stepSamMissiles();
     this.stepNukes();
 
     for (const p of this.players) {

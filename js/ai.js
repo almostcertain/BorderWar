@@ -24,6 +24,9 @@ const AI = {
   //   nukes                  whether it builds Silos and fires warheads at all.
   //   nukeChance / hydrogenChance  1-in-n roll per economy cycle to fire, and
   //                          to make that warhead a Hydrogen Bomb.
+  //   retaliateChance        1-in-n roll per economy cycle to nuke a nation
+  //                          that is actively eating our land (maybeRetaliate);
+  //                          0 = never.
   //   embargoLiftAt          relation at which a nation lifts an embargo it
   //                          placed on someone it came to hate. OpenFront:
   //                          Neutral, but Hard holds out for Friendly.
@@ -33,7 +36,7 @@ const AI = {
       attackRatio: 0.4, neutralRatio: 0.3,
       confusion: 10,
       betrayHelpless: 20, betrayOpportunist: false,
-      nukes: false, nukeChance: 0, hydrogenChance: 4,
+      nukes: false, nukeChance: 0, hydrogenChance: 4, retaliateChance: 0,
       embargoLiftAt: 0
     },
     medium: {
@@ -41,7 +44,7 @@ const AI = {
       attackRatio: 0.55, neutralRatio: 0.35,
       confusion: 20,
       betrayHelpless: 10, betrayOpportunist: true,
-      nukes: true, nukeChance: 8, hydrogenChance: 4,
+      nukes: true, nukeChance: 8, hydrogenChance: 4, retaliateChance: 2,
       embargoLiftAt: 0
     },
     hard: {
@@ -49,7 +52,7 @@ const AI = {
       attackRatio: 0.65, neutralRatio: 0.45,
       confusion: 0,
       betrayHelpless: 5, betrayOpportunist: true,
-      nukes: true, nukeChance: 5, hydrogenChance: 3,
+      nukes: true, nukeChance: 5, hydrogenChance: 3, retaliateChance: 1,
       embargoLiftAt: 50
     }
   },
@@ -414,6 +417,10 @@ const AI = {
   },
 
   economy(p) {
+    // Before any spending: a bot being overrun fires with this cycle's full
+    // treasury rather than whatever the build loop leaves over.
+    this.maybeRetaliate(p);
+
     // The one thing this bot is banking toward, and the treasury floor every
     // OTHER purchase below has to respect — see savingsGoal's comment. The
     // goal type itself is exempt (its reserve IS its price), so the branch
@@ -603,6 +610,138 @@ const AI = {
       if (Game.elapsed - b.lastLaunchAt >= Game.SILO_COOLDOWN) return true;
     }
     return false;
+  },
+
+  // Last-ditch retaliation (ticket #20). maybeNuke above is opportunistic: a
+  // 1-in-8 roll aimed at whoever we share the LONGEST border with, at their
+  // deepest hardware. A bot being pushed down by one attacker therefore often
+  // sat on a ready Silo and a full treasury — the roll failed, or it fired at
+  // a bigger but quiet neighbour, or it hit a City far behind the lines that
+  // did nothing to slow the push. Measured headless before this: in a
+  // scripted "player pushes a bot" run, one nuke at the pushing player in
+  // ~6 minutes.
+  //
+  // Triggers when the bot lost at least RETALIATE_LOSS_FRAC of its land
+  // (RETALIATE_MIN_LOSS tiles minimum) since its previous economy cycle while
+  // a non-Tribe nation has a live attack on it. The target is whichever
+  // attacker has the most troops committed against us — same rule think()
+  // uses for its land counter-attack. The warhead goes onto the attacker's
+  // own land just behind the front (retaliationTarget): that kills their
+  // troops and attack columns per tile destroyed, and leaves a fallout belt
+  // that is slow and costly to cross, which is what actually blunts a push.
+  RETALIATE_LOSS_FRAC: 0.005,
+  RETALIATE_MIN_LOSS: 5,
+
+  maybeRetaliate(p) {
+    // Sampled every cycle, before any early return, so the loss is always
+    // measured against the previous cycle.
+    const prev = p.aiTilesSeen;
+    p.aiTilesSeen = p.tiles.size;
+    const prof = this.profile();
+    if (!prof.retaliateChance || prev === undefined) return false;
+    if (prev - p.tiles.size < Math.max(this.RETALIATE_MIN_LOSS, prev * this.RETALIATE_LOSS_FRAC)) return false;
+    if (p.gold < Game.unitCost(p, 'atombomb')) return false;
+
+    let hitter = -1, biggest = 0;
+    for (const a of Game.attacks) {
+      if (a.target !== p.id || a.retreating || a.attacker < 0 || a.troops <= biggest) continue;
+      const t = Game.players[a.attacker];
+      if (!t || !t.alive || t.isTribe || Game.areAllied(p.id, a.attacker)) continue;
+      biggest = a.troops; hitter = a.attacker;
+    }
+    if (hitter < 0) return false;
+    if (!this.hasReadySilo(p)) return false;
+    if (!this.chance(prof.retaliateChance)) return false;
+
+    const target = Game.players[hitter];
+    // Hydrogen only when it is worth it (same test as maybeNuke) AND a spot
+    // exists where its 100-tile blast stays off our own land.
+    if ((target.tiles.size > p.tiles.size || target.troops > p.troops) &&
+        p.gold >= Game.unitCost(p, 'hydrogenbomb') && this.chance(prof.hydrogenChance)) {
+      const tile = this.retaliationTarget(p, hitter, 'hydrogenbomb');
+      if (tile >= 0) return Game.launchNuke(p.id, 'hydrogenbomb', tile);
+    }
+    const tile = this.retaliationTarget(p, hitter, 'atombomb');
+    return tile >= 0 && Game.launchNuke(p.id, 'atombomb', tile);
+  },
+
+  // Candidate aim points: from a sample of the front tiles the attack is
+  // eating (a.border holds OUR tiles next to their land), step across into
+  // the attacker's territory at a few depths. Plus their structures, so a
+  // Silo/City sitting near the front is preferred when it is in reach. Each
+  // candidate is scored on a coarse grid over the blast's outer circle:
+  // attacker land counts for it, our land against it (and rejects it past
+  // RETALIATE_OWN_LIMIT), and any ally land or structure — or any structure of
+  // ours — rejects it outright, since maybeBreakNukeAlliances would fire on
+  // either. Returns -1 when no candidate is clean enough; the bot then holds
+  // fire rather than crater itself.
+  RETALIATE_FRONT_SAMPLES: 12,
+  RETALIATE_OWN_LIMIT: 0.1,
+
+  retaliationTarget(p, attackerId, type) {
+    const mag = Game.NUKE_MAGNITUDES[type];
+    const w = GameMap.width, h = GameMap.height;
+    const candidates = [];
+    const nb = Game.nbuf;
+    const depths = [Math.round(mag.inner * 0.5), mag.inner, Math.round(mag.outer * 0.7)];
+    for (const a of Game.attacks) {
+      if (a.attacker !== attackerId || a.target !== p.id || a.retreating) continue;
+      // Evenly spaced picks through the front, not the first N (which all
+      // cluster wherever the front started).
+      const stride = Math.max(1, Math.floor(a.border.size / this.RETALIATE_FRONT_SAMPLES));
+      let i = 0;
+      for (const f of a.border) {
+        if (i++ % stride) continue;
+        const n = GameMap.neighbors(f, nb);
+        let dx = 0, dy = 0;
+        for (let k = 0; k < n; k++) {
+          if (GameMap.owner[nb[k]] !== attackerId) continue;
+          dx += (nb[k] % w) - (f % w); dy += ((nb[k] / w) | 0) - ((f / w) | 0);
+        }
+        if (dx === 0 && dy === 0) continue;
+        // Sign-only direction (8-way) so the unit length is exact: no
+        // Math.hypot in sim code, whose rounding isn't pinned across engines.
+        dx = Math.sign(dx); dy = Math.sign(dy);
+        const len = dx && dy ? Math.SQRT2 : 1;
+        for (const d of depths) {
+          const x = Math.round((f % w) + dx / len * d), y = Math.round(((f / w) | 0) + dy / len * d);
+          if (x < 0 || y < 0 || x >= w || y >= h) continue;
+          if (GameMap.owner[y * w + x] === attackerId) candidates.push(y * w + x);
+        }
+      }
+    }
+    for (const b of Game.buildings.values()) {
+      if (b.built && GameMap.owner[b.tile] === attackerId && this.NUKE_TARGET_PRIORITY[b.type]) candidates.push(b.tile);
+    }
+
+    const step = Math.max(1, Math.round(mag.outer / 15));
+    const outer2 = mag.outer * mag.outer, inner2 = mag.inner * mag.inner;
+    let best = -1, bestScore = 0;
+    for (const c of candidates) {
+      const cx = c % w, cy = (c / w) | 0;
+      let theirs = 0, mine = 0, ally = false;
+      for (let y = Math.max(0, cy - mag.outer); y <= Math.min(h - 1, cy + mag.outer) && !ally; y += step) {
+        for (let x = Math.max(0, cx - mag.outer); x <= Math.min(w - 1, cx + mag.outer); x += step) {
+          const d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+          if (d2 > outer2) continue;
+          const o = GameMap.owner[y * w + x];
+          const wt = d2 <= inner2 ? 2 : 1;
+          if (o === attackerId) theirs += wt;
+          else if (o === p.id) mine += wt;
+          else if (o >= 0 && Game.areAllied(p.id, o)) { ally = true; break; }
+        }
+      }
+      if (ally || theirs === 0 || mine > theirs * this.RETALIATE_OWN_LIMIT) continue;
+      let score = theirs - mine * 5;
+      for (const b of Game.buildings.values()) {
+        if (Game.tileDistSq(c, b.tile) >= outer2) continue;
+        const o = GameMap.owner[b.tile];
+        if (o === p.id || (o >= 0 && Game.areAllied(p.id, o))) { score = -1; break; }
+        if (o === attackerId) score += (this.NUKE_TARGET_PRIORITY[b.type] || 0) * 20;
+      }
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+    return best;
   },
 
   // Where to actually put the warhead. A nuke's whole value is what the blast
@@ -847,6 +986,18 @@ const AI = {
   // the p.tiles.size check.
   TRIBE_SKIRMISH_RATIO: 0.2,   // vs. the normal 0.55 for a fresh nation attack
 
+  // Unclaimed land (#26). think() used to score NEUTRAL as `contact * 1.4`
+  // against every nation front, so a small leftover pocket (a nuke crater, a
+  // strip a war skipped past) lost to any real border forever, and while a
+  // war was in flight it wasn't scored at all. Free land is now claimed
+  // before any player target is weighed: whenever p borders it and has no
+  // grab already running. A fresh grab commits the profile's neutralRatio;
+  // one opened alongside a running war is a side column like a Tribe
+  // skirmish, sized small so it can't gut the main front. Leftover troops
+  // walk home when the pocket runs out (stepAttack), so over-committing to
+  // a small pocket costs nothing. The think() reserve gate still applies.
+  NEUTRAL_SKIRMISH_RATIO: 0.2,
+
   // --- Cutting losses ------------------------------------------------------
   // A human watching a push bleed out can hit retreat and get 75% of the
   // committed troops home (Game.ATTACK_RETREAT_MALUS); a bot used to ride every
@@ -984,15 +1135,21 @@ const AI = {
     if (p.troops < Game.maxTroops(p) * 0.35) return;
 
     const myAttacks = Game.attacks.filter(a => a.attacker === p.id);
+    const targets = this.borderTargets(p);
+    if (targets.size === 0) return;
+
+    // Free land first (#26). See NEUTRAL_SKIRMISH_RATIO.
+    if (targets.has(NEUTRAL) && !myAttacks.some(a => a.target === NEUTRAL)) {
+      const ratio = myAttacks.length > 0 ? this.NEUTRAL_SKIRMISH_RATIO : this.profile().neutralRatio;
+      if (Game.launchAttack(p.id, NEUTRAL, Math.floor(p.troops * ratio))) return;
+    }
+
     // Never stack a second attack on the same Tribe — or a second Tribe
     // skirmish at all — while one is still resolving.
     if (myAttacks.some(a => Game.players[a.target] && Game.players[a.target].isTribe)) return;
     // True once *any* other attack (nation war or neutral land grab) is
     // already in flight — the case that used to block think() outright.
     const atWar = myAttacks.length > 0;
-
-    const targets = this.borderTargets(p);
-    if (targets.size === 0) return;
 
     const hostiles = this.hostiles(p, targets);
     let best = null, bestScore = -Infinity;
@@ -1090,6 +1247,11 @@ const AI = {
   NAVAL_RESERVE: 0.35,
   NAVAL_RESERVE_UNDER_ATTACK: 0.6,
 
+  // How far (in navalComfortDist units) an unclaimed beach still jumps the
+  // queue ahead of player targets. Past this it falls back to plain scoring,
+  // so a bot doesn't sail across the map for a speck.
+  NAVAL_NEUTRAL_RANGE: 2,
+
   navalThink(p) {
     if (p.tiles.size === 0) return;
 
@@ -1110,7 +1272,7 @@ const AI = {
 
     const candidates = [];
     for (const lm of GameMap.landmasses) {
-      let bestTile = -1, bestTileScore = -Infinity, bestTarget = -1;
+      let bestTile = -1, bestTileScore = -Infinity, bestTarget = -1, bestDist = 0;
       for (const tile of lm.coastSample) {
         const owner = GameMap.owner[tile];
         if (owner === p.id || p.allies.has(owner)) continue;
@@ -1121,12 +1283,17 @@ const AI = {
         if (heldLandmasses.has(GameMap.landmassId[tile])) continue;
         const dist = this.nearestDist(homeCoast, tile);
         const score = this.navalScore(p, owner, lm.size, dist, hostiles);
-        if (score > bestTileScore) { bestTileScore = score; bestTile = tile; bestTarget = owner; }
+        if (score > bestTileScore) { bestTileScore = score; bestTile = tile; bestTarget = owner; bestDist = dist; }
       }
-      if (bestTile >= 0) candidates.push({ tile: bestTile, target: bestTarget, score: bestTileScore });
+      if (bestTile >= 0) candidates.push({ tile: bestTile, target: bestTarget, score: bestTileScore, dist: bestDist });
     }
     if (candidates.length === 0) return;
-    candidates.sort((a, b) => b.score - a.score);
+    // Free land first (#26): an unclaimed beach within NAVAL_NEUTRAL_RANGE is
+    // tried before any player's. Scored on raw size, a small empty island
+    // lost to every enemy continent in view and sat unclaimed all game.
+    const neutralRange = this.navalComfortDist() * this.NAVAL_NEUTRAL_RANGE;
+    const tier = c => (c.target === NEUTRAL && c.dist <= neutralRange ? 1 : 0);
+    candidates.sort((a, b) => (tier(b) - tier(a)) || (b.score - a.score));
 
     // OpenFront's boatAttackAmount default — a flat 20% of current troops,
     // used consistently for both neutral and enemy targets (its AI's own
@@ -1183,9 +1350,13 @@ const AI = {
   // decent one nearby, which read as "AI boats keep going to the far side of
   // the map" — the squared curve keeps that possible but no longer typical.
   navalDistanceFactor(dist) {
-    const comfort = (GameMap.width + GameMap.height) * 0.08;
+    const comfort = this.navalComfortDist();
     const f = comfort / (comfort + dist);
     return f * f;
+  },
+
+  navalComfortDist() {
+    return (GameMap.width + GameMap.height) * 0.08;
   },
 
   // Manhattan distance from `tile` to the closest of `points` — cheap
