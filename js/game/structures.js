@@ -168,6 +168,26 @@ Object.assign(Game, {
     {
       type: 'sam', name: 'SAM Launcher', icon: '📡', hotkey: '9',
       baseCost: 1500000, maxCost: 3000000, buildTime: 8, upgradable: true, linear: true
+    },
+    // OpenFront's UnitType.MIRV (ticket #28) — the top-tier multi-warhead
+    // strike, ported against MIRVExecution.ts/Config.ts. Same `action: true`
+    // "strike here" shape as the two bomb types above (resolveNukeLaunch/
+    // launchMirv, not buildBlockReason/build), but its cost does NOT follow
+    // baseCost/maxCost/flat/linear/costGroup the way every other entry here
+    // does: Config.ts's real cost is 25_000_000 + 15_000_000 per MIRV any
+    // player has EVER launched this match — a whole-match counter, not this
+    // player's own build history — so Game.unitCost special-cases
+    // type==='mirv' and returns before ever consulting this entry's
+    // baseCost/maxCost/flat fields. They're carried anyway (set to
+    // MIRV_BASE_COST, matching nukes.js's own constant) purely so this
+    // entry has SOME non-garbage number if anything ever reads it before
+    // unitCost's special case fires — not a claim they're the real curve.
+    // See nukes.js's "MIRV" section for the launch/flight/split/detonation
+    // logic and its own MIRV_WARHEAD_COUNT/MIRV_RANGE comments for what was
+    // scoped down from the real 350-warhead port and why.
+    {
+      type: 'mirv', name: 'MIRV', icon: '🛰', hotkey: '0',
+      baseCost: 25000000, maxCost: 25000000, buildTime: 0, upgradable: false, flat: true, action: true
     }
   ],
 
@@ -191,6 +211,13 @@ Object.assign(Game, {
   unitCost(p, type) {
     const def = this.unitDef(type);
     if (!def) return Infinity;
+    // MIRV: Config.ts's real cost formula reads game.mirvsLaunched() — a
+    // whole-match, EVERY-player lifetime counter (see nukes.js's
+    // launchMirv/Game.mirvsLaunched) — not this player's own unitsOwned/
+    // unitsBuilt history the way every curve below does, so it can't be
+    // expressed as flat/linear/exponential over `n` at all and gets its own
+    // early return. See the UNITS 'mirv' entry's own comment.
+    if (type === 'mirv') return this.MIRV_BASE_COST + this.mirvsLaunched * this.MIRV_COST_STEP;
     // Silo/AtomBomb/HydrogenBomb: costWrapper's callback ignores numUnits
     // entirely in Config.ts, so the price never moves regardless of how many
     // you've bought — no n/costGroup accounting applies at all. See the

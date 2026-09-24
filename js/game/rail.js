@@ -391,11 +391,12 @@ Object.assign(Game, {
     return stationOwnerId === trainOwnerId || this.canTrade(stationOwnerId, trainOwnerId);
   },
 
-  // The rate tier for a stop. Only alliance bumps the rate; there's no "team" tier here (no team
-  // system), so it collapses OpenFront's four-way self/team/ally/other split
-  // into three.
+  // The rate tier for a stop — TrainStation's rel(). Checked before
+  // areAllied, which is also true for teammates (game/teams.js): upstream
+  // pays a teammate's stop at the "other" rate, not the alliance one.
   tradeRel(a, b) {
     if (a === b) return 'self';
+    if (this.onSameTeam(a, b)) return 'team';
     return this.areAllied(a, b) ? 'ally' : 'other';
   },
 

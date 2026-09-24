@@ -399,6 +399,7 @@ const Render = {
     this.drawTradeShips();
     this.drawWarships();
     this.drawShells();
+    this.drawMirvs();
     this.drawNukes();
     this.drawNukeBlasts();
     this.drawSamFlashes();
@@ -846,7 +847,7 @@ const Render = {
     // tile, same idea render.js's own hoverAnnexAt throttle uses for a
     // different expensive per-frame check.
     const warshipPreview = UI.placing === 'warship' ? this.warshipLaunchPreview(tile) : null;
-    const isNuke = UI.placing === 'atombomb' || UI.placing === 'hydrogenbomb';
+    const isNuke = UI.placing === 'atombomb' || UI.placing === 'hydrogenbomb' || UI.placing === 'mirv';
     const nukePreview = isNuke ? this.nukeLaunchPreview(UI.placing, tile) : null;
     const isDebugNuke = UI.placing === 'debugnuke';
     // Hovering an existing structure of the same type while armed previews an
@@ -956,25 +957,43 @@ const Render = {
     // gives every other placement — only the radii need a real launch to be
     // worth showing.
     if (isNuke) {
-      const mag = Game.NUKE_MAGNITUDES[UI.placing];
+      // MIRV (ticket #28) has no NUKE_MAGNITUDES entry of its own — the
+      // mothership has no single blast, it splits into MIRV_WARHEAD_COUNT
+      // scattered warheads (see nukes.js's own comment on why) — so its
+      // ghost shows the whole possible spread (MIRV_RANGE) as one dashed
+      // ring instead of the inner/outer blast pair every other nuke type
+      // gets below.
       const cx = px + s / 2, cy = py + s / 2;
-      ctx.beginPath();
-      ctx.arc(cx, cy, mag.outer * s, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255, 120, 90, 0.06)';
-      ctx.fill();
-      ctx.lineWidth = Math.max(1, this.dpr * 1.2);
-      ctx.strokeStyle = 'rgba(255, 120, 90, 0.45)';
-      ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      if (UI.placing === 'mirv') {
+        ctx.beginPath();
+        ctx.arc(cx, cy, Game.MIRV_RANGE * s, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 120, 90, 0.04)';
+        ctx.fill();
+        ctx.lineWidth = Math.max(1, this.dpr * 1.2);
+        ctx.strokeStyle = 'rgba(255, 120, 90, 0.5)';
+        ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        const mag = Game.NUKE_MAGNITUDES[UI.placing];
+        ctx.beginPath();
+        ctx.arc(cx, cy, mag.outer * s, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 120, 90, 0.06)';
+        ctx.fill();
+        ctx.lineWidth = Math.max(1, this.dpr * 1.2);
+        ctx.strokeStyle = 'rgba(255, 120, 90, 0.45)';
+        ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
+        ctx.stroke();
+        ctx.setLineDash([]);
 
-      ctx.beginPath();
-      ctx.arc(cx, cy, mag.inner * s, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255, 70, 40, 0.14)';
-      ctx.fill();
-      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
-      ctx.strokeStyle = 'rgba(255, 90, 60, 0.8)';
-      ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx, cy, mag.inner * s, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 70, 40, 0.14)';
+        ctx.fill();
+        ctx.lineWidth = Math.max(1, this.dpr * 1.5);
+        ctx.strokeStyle = 'rgba(255, 90, 60, 0.8)';
+        ctx.stroke();
+      }
 
       if (nukePreview.ok) {
         // Same parabola drawNukes' contrail traces for a nuke actually in
@@ -1577,6 +1596,75 @@ const Render = {
     }
   },
 
+  // The MIRV mothership in flight (ticket #28) — see Game.launchMirv/
+  // stepMirvs, and nukes.js's own "MIRV" class comment for the full
+  // explanation of why this game's MIRV keeps the straight-line-plus-arc
+  // convention every other nuke here uses instead of porting OpenFront's
+  // real cubic-Bezier parabola pathfinder. What IS real now: from/to are the
+  // Silo and the actual mid-air separation point (launchMirv's own
+  // formula), and arcHeight below now matches the real source's own control-
+  // point height (getParabolaControlPoints: max(distance/3, 50)) rather than
+  // an unrelated guess, so the visual apex lines up with what the real
+  // pathfinder would have produced even though the curve shape underneath
+  // it (sine vs. cubic Bezier) doesn't. Kept as its own function rather than
+  // folded into drawNukes because Game.mirvs is a separate array from
+  // Game.nukes (see Game.stepMirvs' own comment on why) and because a MIRV
+  // reads as visually distinct from an ordinary nuke: a bigger warhead disc,
+  // a brighter/wider contrail, and no target-ring preview (drawNukeTarget
+  // needs a NUKE_MAGNITUDES entry, and the mothership has none — see
+  // nukes.js's own comment on why; the precise impact points aren't known
+  // until it splits, so nothing to ring yet).
+  drawMirvs() {
+    if (!Game.mirvs.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height;
+
+    for (const m of Game.mirvs) {
+      const t = Math.max(0, Math.min(1, (Game.renderElapsed - m.born) / m.duration));
+      const arc = Math.sin(Math.PI * t);
+      const dist = Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y);
+      const arcHeight = Math.max(dist / 3, 50);
+
+      const tx = m.from.x + (m.to.x - m.from.x) * t;
+      const ty = m.from.y + (m.to.y - m.from.y) * t - arc * arcHeight;
+      const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
+
+      const owner = Game.players[m.ownerId];
+      const col = owner ? owner.color : [255, 255, 255];
+      const colour = `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
+      const radius = Math.max(9 * this.dpr, Math.min(20 * this.dpr, s * 0.65));
+
+      const steps = Math.max(2, Math.ceil(t * 24));
+      ctx.setTransform(s, 0, 0, s, cw / 2 - this.cam.x * s, ch / 2 - this.cam.y * s);
+      ctx.beginPath();
+      for (let i = 0; i <= steps; i++) {
+        const u = t * i / steps;
+        const ua = Math.sin(Math.PI * u);
+        const ux = m.from.x + (m.to.x - m.from.x) * u + 0.5;
+        const uy = m.from.y + (m.to.y - m.from.y) * u - ua * arcHeight + 0.5;
+        if (i === 0) ctx.moveTo(ux, uy); else ctx.lineTo(ux, uy);
+      }
+      ctx.lineWidth = Math.max(2, this.dpr * 1.5) / s;
+      ctx.strokeStyle = colour;
+      ctx.globalAlpha = 0.6;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+      ctx.beginPath();
+      ctx.arc(px, py, radius, 0, Math.PI * 2);
+      ctx.fillStyle = colour;
+      ctx.fill();
+      ctx.lineWidth = Math.max(1.5, this.dpr);
+      ctx.strokeStyle = '#fff';
+      ctx.globalAlpha = 0.8;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  },
+
   // A nuke in flight — see Game.launchNuke (fixed from/to tile-space points
   // and a born/duration pair, exactly like a warship's own shell) and
   // Game.stepNukes (detonates once duration elapses). Unlike a shell's
@@ -1599,10 +1687,23 @@ const Render = {
       // it will hit — a pulsing red ring at its outer blast radius plus a
       // solid one at the guaranteed-destroyed inner radius. Drawn before the
       // warhead's own off-screen skip below, so the target still shows when
-      // the missile itself is out of view.
-      if (UI.nukeThreatensMe(n)) this.drawNukeTarget(n, s, cw, ch);
+      // the missile itself is out of view. Skipped for mirvwarhead: up to
+      // MIRV_WARHEAD_COUNT of these can be airborne from one strike, and
+      // nukes.js's own updateNukeAlert already skips individual warhead rows
+      // in favour of one alert for the mothership — this keeps the on-map
+      // rings consistent with that same "warn once, not 350 times" call
+      // (ui.js's own comment on it) and avoids up to 350 extra ring draws a
+      // frame.
+      const isWarhead = n.nukeType === 'mirvwarhead';
+      if (!isWarhead && UI.nukeThreatensMe(n)) this.drawNukeTarget(n, s, cw, ch);
 
-      const t = Math.min(1, (Game.renderElapsed - n.born) / n.duration);
+      // Clamped on the low end too, unlike a plain Math.min(1, ...): a
+      // mirvwarhead can have a `born` still in the FUTURE while it waits out
+      // its own per-warhead spawn delay (spawnMirvWarheads' own comment) —
+      // without the floor, a negative t here would lerp/arc backward past
+      // `from` instead of just sitting at it. A no-op for every other nuke
+      // type, whose born is never later than the current tick.
+      const t = Math.max(0, Math.min(1, (Game.renderElapsed - n.born) / n.duration));
       const arc = Math.sin(Math.PI * t);
       // Arc height scales with the trip's own length (in tile-space) so a
       // short hop between neighbouring Silos doesn't rocket absurdly high
@@ -1631,7 +1732,13 @@ const Render = {
       // whole flight is a few seconds and a handful of sample points, not a
       // boat's much longer sea route. Stroked via the same camera-matching
       // transform trick drawBoats uses so it stays correct across pan/zoom.
-      const steps = Math.max(2, Math.ceil(t * 24));
+      // mirvwarhead gets a flat 2-point contrail (a straight line to its
+      // current position) instead of the full up-to-24-segment arced
+      // polyline every other nuke draws — with up to MIRV_WARHEAD_COUNT of
+      // these on screen from one strike, a full per-warhead polyline is real
+      // per-frame cost for a detail that reads as visual noise at that
+      // density anyway. atombomb/hydrogenbomb keep the full polyline.
+      const steps = isWarhead ? 1 : Math.max(2, Math.ceil(t * 24));
       ctx.setTransform(s, 0, 0, s, cw / 2 - this.cam.x * s, ch / 2 - this.cam.y * s);
       ctx.beginPath();
       for (let i = 0; i <= steps; i++) {
@@ -2000,7 +2107,8 @@ const Render = {
       // and who has just broken one and is worth attacking while it lasts.
       // 🚫: trade with you is blocked, by either side's embargo.
       const noTrade = !p.isTribe && Game.me >= 0 && p.id !== Game.me && !Game.canTrade(Game.me, p.id);
-      const name = (Game.areAllied(Game.me, p.id) ? '🤝 ' : '') +
+      // 👥: a teammate (issue #31) — permanent, unlike an alliance.
+      const name = (Game.onSameTeam(Game.me, p.id) ? '👥 ' : Game.areAllied(Game.me, p.id) ? '🤝 ' : '') +
                    (Game.isTraitor(p) ? '🗡 ' : '') +
                    (noTrade ? '🚫 ' : '') + p.name;
       ctx.font = '600 ' + font.toFixed(1) + 'px system-ui, sans-serif';

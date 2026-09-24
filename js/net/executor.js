@@ -249,6 +249,13 @@ const Executor = {
       if (it.unit === 'atombomb' || it.unit === 'hydrogenbomb') {
         return Game.launchNuke(playerId, it.unit, it.tile);
       }
+      // MIRV (ticket #28): same "strike here" click, but it never lands in
+      // this.nukes directly (see nukes.js's launchMirv/stepMirvs — it's a
+      // mothership missile that splits into MIRVWarhead nukes on arrival),
+      // so it gets its own Game method rather than reusing launchNuke.
+      if (it.unit === 'mirv') {
+        return Game.launchMirv(playerId, it.tile);
+      }
       // Everything else is an ordinary territory-bound structure.
       return Game.build(playerId, it.unit, it.tile);
     },
@@ -343,6 +350,20 @@ const Executor = {
     // radial.js Game.setEmbargoAll — EmbargoAllExecution, cooldown included.
     embargo_all(playerId, it) {
       return Game.setEmbargoAll(playerId, it.action);
+    },
+
+    // radial.js Game.donateGold — DonateGoldExecution. canDonate (ally gate,
+    // cooldown) and the amount clamp (sender's balance) live in Game.donateGold
+    // itself, matching every other donate/embargo-style call here.
+    donate_gold(playerId, it) {
+      return Game.donateGold(playerId, it.recipient, it.gold);
+    },
+
+    // radial.js Game.donateTroops — DonateTroopExecution. Same shape as
+    // donate_gold; the recipient's headroom under their own troop cap is
+    // clamped inside Game.donateTroops.
+    donate_troops(playerId, it) {
+      return Game.donateTroops(playerId, it.recipient, it.troops);
     },
 
     // New in §4 — the one intent with no existing call site (Protocol lists its

@@ -7,7 +7,9 @@
 // mainMenuInnerRadius 40, centerButtonSize 30, 300ms reopen cooldown.
 //
 // Four quadrants: trade toggle (north), Boat/Betray (east), Peace/Renew
-// (south). West is empty for now.
+// (south). West is empty for now. In a team game the centre button on a
+// friendly nation opens a second ring, Donate, with Troops and Gold; its
+// centre goes back. Everywhere else the centre just closes the menu.
 const Radial = {
   el: null,
   menuEl: null,
@@ -17,6 +19,7 @@ const Radial = {
   lastHide: 0,
   key: '',
   validatedAt: 0,   // last time refresh() re-ran the wedge validators
+  mode: 'main',     // 'main' ring, or the 'donate' sub-ring
 
   OUTER: 92,
   INNER: 38,
@@ -35,6 +38,8 @@ const Radial = {
     });
     this.menuEl.addEventListener('click', e => {
       if (e.target.closest('[data-close]')) { this.hide(); return; }
+      if (e.target.closest('[data-donate]')) { this.setMode('donate'); return; }
+      if (e.target.closest('[data-back]')) { this.setMode('main'); return; }
       const path = e.target.closest('path[data-slot]');
       if (path) this.activate(+path.dataset.slot);
     });
@@ -57,10 +62,25 @@ const Radial = {
     this.targetId = targetId;
     this.tile = tile;
     this.shown = true;
+    this.mode = 'main';
     this.key = '';
     this.el.classList.remove('hidden');
     this.place(sx, sy);
     this.refresh();
+  },
+
+  setMode(mode) {
+    this.mode = mode;
+    this.key = '';
+    this.refresh();
+  },
+
+  // The centre opens Donate only where a donation could ever apply: a team
+  // game and a friendly (teammate or allied) nation. A cooldown still opens
+  // it, and the wedges say how long is left.
+  canOpenDonate() {
+    const t = this.targetId;
+    return !!Game.teams && t >= 0 && Game.areAllied(Game.me, t);
   },
 
   hide() {
@@ -106,6 +126,7 @@ const Radial = {
   // deliberately absent from the intents themselves — the server stamps the
   // author, so a client cannot act as anyone but itself.
   slots() {
+    if (this.mode === 'donate') return this.donateSlots();
     const me = Game.me, t = this.targetId;
     const out = [null, null, null, null];
 
@@ -161,6 +182,25 @@ const Radial = {
     return out;
   },
 
+  // The Donate sub-ring: Troops west, Gold east, amounts off the same ratio
+  // slider Boat and attacks use. Absolute amounts go on the wire (see
+  // Protocol's donate_gold note). One cooldown covers both, as upstream.
+  donateSlots() {
+    const me = Game.me, t = this.targetId, p = Game.players[me];
+    const reason = Game.donateBlockReason(me, t);
+    const troops = Math.floor(p.troops * UI.ratio);
+    const gold = Math.floor(p.gold * UI.ratio);
+    return [null, {
+      icon: '🪙', label: 'Gold', cls: 'good',
+      note: reason || formatCount(gold), disabled: !!reason || gold < 1,
+      act: () => Transport.sendIntent(Protocol.intent.donateGold(t, gold))
+    }, null, {
+      icon: '🪖', label: 'Troops', cls: 'good',
+      note: reason || formatCount(troops), disabled: !!reason || troops < 1,
+      act: () => Transport.sendIntent(Protocol.intent.donateTroops(t, troops))
+    }];
+  },
+
   tradeSlot(me, t) {
     const mine = Game.players[me].embargoes.get(t);
     const theirs = Game.hasEmbargoAgainst(t, me);
@@ -213,7 +253,8 @@ const Radial = {
     this.validatedAt = now;
 
     const slots = this.slots();
-    const key = slots.map(s => s ? [s.icon, s.label, s.note, s.disabled].join('|') : '-').join('/');
+    const key = this.mode + (this.canOpenDonate() ? '+' : '') + '/' +
+      slots.map(s => s ? [s.icon, s.label, s.note, s.disabled].join('|') : '-').join('/');
     if (key === this.key) return;
     this.key = key;
     this.menuEl.innerHTML = this.render(slots, p);
@@ -257,10 +298,13 @@ const Radial = {
     const traitor = p && Game.isTraitor(p) ? ' 🗡' : '';
     const label = p ? `${p.name}${traitor} · ${formatCount(p.troops)}`
                      : (this.targetId === NEUTRAL ? 'Unclaimed land' : 'Open water');
+    const centre = this.mode === 'donate' ? { attr: 'data-back', icon: '↩' }
+                 : this.canOpenDonate() ? { attr: 'data-donate', icon: '🎁' }
+                 : { attr: 'data-close', icon: '✕' };
     return `<svg viewBox="0 0 ${span} ${span}" width="${span}" height="${span}">` +
       paths +
-      `<circle class="rCentre" data-close="1" cx="${c}" cy="${c}" r="${this.CENTER}" fill="${colour}"></circle>` +
-      `<text class="rCentreIcon" x="${c}" y="${c}">✕</text>` +
+      `<circle class="rCentre" ${centre.attr}="1" cx="${c}" cy="${c}" r="${this.CENTER}" fill="${colour}"></circle>` +
+      `<text class="rCentreIcon" x="${c}" y="${c}">${centre.icon}</text>` +
       text +
       `</svg><div class="rName">${label}</div>`;
   }

@@ -169,6 +169,26 @@
           <option value="hard">Hard</option>
         </select>
       </label>
+      <label>Mode
+        <select id="gameMode">
+          <option value="ffa" selected>Free for All</option>
+          <option value="team">Teams</option>
+        </select>
+      </label>
+      <label id="playerTeamsRow" class="hidden">Teams
+        <select id="playerTeams">
+          <option value="2" selected>2 teams</option>
+          <option value="3">3 teams</option>
+          <option value="4">4 teams</option>
+          <option value="5">5 teams</option>
+          <option value="6">6 teams</option>
+          <option value="7">7 teams</option>
+          <option value="Duos">Duos</option>
+          <option value="Trios">Trios</option>
+          <option value="Quads">Quads</option>
+          <option value="Humans Vs Nations">Humans vs Nations</option>
+        </select>
+      </label>
       <label>Bots <input id="botCount" type="number" min="2" max="100" value="82"></label>
       <label>Tribes <input id="tribeCount" type="number" min="0" max="400" value="400"></label>
       <button id="startBtn">Start Game</button>
@@ -193,6 +213,26 @@
           <option value="easy">Easy</option>
           <option value="medium" selected>Medium</option>
           <option value="hard">Hard</option>
+        </select>
+      </label>
+      <label>Mode
+        <select id="hostGameMode">
+          <option value="ffa" selected>Free for All</option>
+          <option value="team">Teams</option>
+        </select>
+      </label>
+      <label id="hostPlayerTeamsRow" class="hidden">Teams
+        <select id="hostPlayerTeams">
+          <option value="2" selected>2 teams</option>
+          <option value="3">3 teams</option>
+          <option value="4">4 teams</option>
+          <option value="5">5 teams</option>
+          <option value="6">6 teams</option>
+          <option value="7">7 teams</option>
+          <option value="Duos">Duos</option>
+          <option value="Trios">Trios</option>
+          <option value="Quads">Quads</option>
+          <option value="Humans Vs Nations">Humans vs Nations</option>
         </select>
       </label>
       <label>Bots <input id="hostBotCount" type="number" min="0" max="100" value="82"></label>
@@ -274,7 +314,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/nukes', 'game/sam', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/nukes', 'game/sam', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

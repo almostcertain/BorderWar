@@ -767,7 +767,11 @@ class GameServer {
         tribes: Number.isInteger(config.tribes) ? config.tribes : 0,
         // Unknown values fall back to Medium in Game.init as well; whitelisted
         // here so the broadcast gameStartInfo only ever carries a real tier.
-        difficulty: ['easy', 'medium', 'hard'].includes(config.difficulty) ? config.difficulty : 'medium'
+        difficulty: ['easy', 'medium', 'hard'].includes(config.difficulty) ? config.difficulty : 'medium',
+        // Issue #31: team modes, in OpenFront's shape (js/game/teams.js).
+        // Whitelisted here too, so every client is handed the same teams.
+        gameMode: config.gameMode === 'team' ? 'team' : 'ffa',
+        playerTeams: GameServer.normalizePlayerTeams(config.playerTeams)
       },
       players: players
     };
@@ -889,5 +893,14 @@ GameServer.abandonedTimeout = 2 * 60 * 1000;
 // fill/start window.
 GameServer.autoLobbyMinPlayers = 2;
 GameServer.autoLobbyCountdownMs = 20 * 1000;
+
+// Issue #31: OpenFront's TeamCountConfig — a team count, or one of its named
+// modes. Mirrors Teams.normalize in js/game/teams.js (which the server does
+// not load); anything else becomes 2 teams.
+GameServer.normalizePlayerTeams = function (pt) {
+  if (['Duos', 'Trios', 'Quads', 'Humans Vs Nations'].includes(pt)) return pt;
+  if (Number.isInteger(pt) && pt >= 2 && pt <= 64) return pt;
+  return 2;
+};
 
 module.exports = GameServer;

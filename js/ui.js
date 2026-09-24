@@ -461,7 +461,8 @@ const UI = {
     document.getElementById('hpSub').textContent =
       (p.isBot ? '🤖 ' : '') +
       (p.isTribe ? 'Tribe' : '') +
-      (Game.areAllied(Game.me, p.id) ? ' Allied' : '') +
+      (p.team ? ' Team ' + p.team + (Game.onSameTeam(Game.me, p.id) ? ' (teammate)' : '') : '') +
+      (Game.areAllied(Game.me, p.id) && !Game.onSameTeam(Game.me, p.id) ? ' Allied' : '') +
       (Game.isTraitor(p) ? ' 🗡 Traitor' : '') +
       (!p.isTribe && p.id !== Game.me && Game.me >= 0 && !Game.canTrade(Game.me, p.id) ? ' 🚫 No trade' : '');
     this.updateBotFace(p);
@@ -622,7 +623,12 @@ const UI = {
     // player's own territory) is a legal target, so there's no snap-related
     // reason text to special-case the way Warship's "No open water there"
     // is.
-    if (this.placing === 'atombomb' || this.placing === 'hydrogenbomb') {
+    // MIRV (ticket #28) rides this exact same branch — nukeBlockReason/
+    // Protocol.intent.buildUnit are both already generic over nukeType/unit,
+    // and the executor routes 'mirv' to Game.launchMirv on its own (see its
+    // own comment), so nothing here needs to know MIRV is a different shape
+    // once it's airborne.
+    if (this.placing === 'atombomb' || this.placing === 'hydrogenbomb' || this.placing === 'mirv') {
       const tile = Render.screenToTile(sx, sy);
       const reason = Game.nukeBlockReason(Game.me, this.placing, tile);
       if (reason) {
@@ -940,11 +946,12 @@ const UI = {
       .sort((a, b) => b.tiles.size - a.tiles.size)
       .slice(0, 6);
 
-    document.getElementById('leaderboard').innerHTML = ranked.map(p => {
+    document.getElementById('leaderboard').innerHTML = this.teamStandingsHtml() + ranked.map(p => {
       const pct = (p.tiles.size / GameMap.landTiles * 100).toFixed(1);
       const c = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
       const mark = (p.isBot ? '🤖' : '') +
-                   (Game.areAllied(Game.me, p.id) ? '🤝' : '') +
+                   (Game.onSameTeam(Game.me, p.id) ? '👥'
+                     : Game.areAllied(Game.me, p.id) ? '🤝' : '') +
                    (Game.isTraitor(p) ? '🗡' : '') +
                    (p.isDisconnected ? '🔌' : '');
       return `<div class="lbRow${p.id === Game.me ? ' me' : ''}">
@@ -952,6 +959,28 @@ const UI = {
         <div class="lbName">${escapeHtml(p.name)}</div>
         <div class="lbMark">${mark}</div>
         <div class="lbGold">${formatGold(p.gold)}</div>
+        <div class="lbPct">${pct}%</div>
+      </div>`;
+    }).join('');
+  },
+
+  // Issue #31: in a team game, one row per team (largest first) above the
+  // player rows, with your own team highlighted. Empty in FFA.
+  teamStandingsHtml() {
+    if (!Game.isTeamGame()) return '';
+    const mine = Game.teamOf(Game.me);
+    const rows = Game.teams
+      .map((t, i) => ({ t, i, tiles: Game.teamTiles(t) }))
+      .filter(r => r.tiles > 0)
+      .sort((a, b) => b.tiles - a.tiles);
+    return rows.map(r => {
+      const c = Teams.baseColor(r.t, r.i);
+      const pct = (r.tiles / GameMap.landTiles * 100).toFixed(1);
+      return `<div class="lbRow${r.t === mine ? ' me' : ''}">
+        <div class="lbSwatch" style="background:rgb(${c[0]},${c[1]},${c[2]})"></div>
+        <div class="lbName">Team ${escapeHtml(r.t)}</div>
+        <div class="lbMark">👥</div>
+        <div class="lbGold"></div>
         <div class="lbPct">${pct}%</div>
       </div>`;
     }).join('');
@@ -975,7 +1004,7 @@ const UI = {
       els.btn.classList.toggle('poor', me.gold < cost);
       els.btn.classList.toggle('armed', this.placing === u.type);
       els.btn.classList.toggle('locked',
-        (u.type === 'atombomb' || u.type === 'hydrogenbomb') && Game.unitsOwned(me, 'silo') < 1);
+        (u.type === 'atombomb' || u.type === 'hydrogenbomb' || u.type === 'mirv') && Game.unitsOwned(me, 'silo') < 1);
     }
 
     document.getElementById('debugNukeAtom').classList.toggle('armed',
@@ -996,7 +1025,7 @@ const UI = {
         ? 'Build a Port first to unlock Warships · Esc to cancel'
         : 'Tap anywhere to launch a Warship from your nearest Port · ' +
           formatGold(Game.unitCost(me, 'warship')) + ' gold · Esc to cancel';
-    } else if (this.placing === 'atombomb' || this.placing === 'hydrogenbomb') {
+    } else if (this.placing === 'atombomb' || this.placing === 'hydrogenbomb' || this.placing === 'mirv') {
       const def = Game.unitDef(this.placing);
       const article = this.placing === 'atombomb' ? 'an' : 'a';
       hintEl.textContent = Game.unitsOwned(me, 'silo') < 1
@@ -1180,7 +1209,40 @@ const UI = {
     const prev = this._nukeRowByRef || new Map();
     const next = new Map();
 
+    // MIRV (ticket #28): warn on the mothership itself, same as any other
+    // nuke, from the moment it launches — matching real OpenFront's own
+    // displayIncomingUnit call, which fires the instant the missile spawns,
+    // not once it splits. Skipped in the this.nukes loop below is the
+    // opposite case — once it splits into MIRV_WARHEAD_COUNT individual
+    // mirvwarhead entries, those do NOT each get their own alert row (see
+    // that loop's own comment): the player already knows a strike is
+    // inbound from this row, and 40 simultaneous rows replacing it the
+    // instant it splits would be pure noise, not information.
+    for (const m of Game.mirvs) {
+      if (!this.nukeThreatensMe(m)) continue;
+      let row = prev.get(m);
+      if (!row) {
+        row = document.createElement('div');
+        row.className = 'nukeAlertRow';
+        const owner = Game.players[m.ownerId];
+        row.innerHTML =
+          `<span class="nukeAlertText">🛰 MIRV incoming from ${escapeHtml(owner ? owner.name : 'unknown')}!</span>` +
+          `<span class="nukeAlertTime"></span>`;
+        row._timeEl = row.querySelector('.nukeAlertTime');
+        // Jumps to the real aim tile (m.dst), not m.to — m.to is now the
+        // mid-air separation point the mothership itself is flying toward
+        // (see nukes.js's launchMirv), not the ground it threatens.
+        row.addEventListener('click', () => Render.jumpToTile(m.dst % GameMap.width, (m.dst / GameMap.width) | 0));
+      }
+      const left = Math.max(0, m.duration - (Game.elapsed - m.born));
+      row._timeEl.textContent = Math.ceil(left) + 's';
+      next.set(m, row);
+    }
+
     for (const n of Game.nukes) {
+      // See this function's own comment on Game.mirvs above — a split
+      // MIRV's individual warheads stay off this list entirely.
+      if (n.nukeType === 'mirvwarhead') continue;
       if (!this.nukeThreatensMe(n)) continue;
       let row = prev.get(n);
       if (!row) {
@@ -1343,7 +1405,14 @@ const UI = {
     if (Game.winnerId === null || this.endGameHandled) return;
     this.endGameHandled = true;
 
-    if (Game.winnerId === Game.me) {
+    if (Game.winnerTeam) {
+      // Issue #31: a team game is won by the whole team, alive or not.
+      if (Game.teamOf(Game.me) === Game.winnerTeam) {
+        this.showEnd('Victory', 'Team ' + Game.winnerTeam + ' controls the world.');
+      } else {
+        this.showEnd('Game Over', 'Team ' + Game.winnerTeam + ' has won the game.');
+      }
+    } else if (Game.winnerId === Game.me) {
       this.showEnd('Victory', 'You control the world.');
     } else if (!me.alive) {
       // Already shown above, with the placement text — leave it as is.
@@ -1407,6 +1476,8 @@ const UI = {
     });
 
     document.getElementById('lobbyCode').addEventListener('click', () => this.copyLobbyCode());
+    this.bindModeSelect('');
+    this.bindModeSelect('host');
 
     // Prefill the shared name field from the last time this browser played.
     let savedName = '';
@@ -1435,7 +1506,36 @@ const UI = {
     const bots = Math.max(0, Math.min(100, parseInt(document.getElementById('hostBotCount').value, 10) || 0));
     const tribes = Math.max(0, Math.min(400, parseInt(document.getElementById('hostTribeCount').value, 10) || 0));
     const difficulty = document.getElementById('hostDifficulty').value;
-    return { map: map, mapSize: mapSize, bots: bots, tribes: tribes, difficulty: difficulty };
+    const mode = this.getModeConfig('host');
+    return { map: map, mapSize: mapSize, bots: bots, tribes: tribes, difficulty: difficulty,
+      gameMode: mode.gameMode, playerTeams: mode.playerTeams };
+  },
+
+  // Issue #31: the Mode/Teams pair on the singleplayer ('') and host ('host')
+  // panels, read into gameStartInfo.config's {gameMode, playerTeams}. A team
+  // count is sent as an integer, the named modes (Duos, Humans Vs Nations...)
+  // as their OpenFront strings.
+  modeIds(prefix) {
+    return prefix
+      ? { mode: prefix + 'GameMode', teams: prefix + 'PlayerTeams', row: prefix + 'PlayerTeamsRow' }
+      : { mode: 'gameMode', teams: 'playerTeams', row: 'playerTeamsRow' };
+  },
+
+  getModeConfig(prefix) {
+    const ids = this.modeIds(prefix);
+    const gameMode = document.getElementById(ids.mode).value === 'team' ? 'team' : 'ffa';
+    const raw = document.getElementById(ids.teams).value;
+    const playerTeams = /^\d+$/.test(raw) ? parseInt(raw, 10) : raw;
+    return { gameMode, playerTeams };
+  },
+
+  // The Teams row only shows once Teams is picked.
+  bindModeSelect(prefix) {
+    const ids = this.modeIds(prefix);
+    const mode = document.getElementById(ids.mode);
+    const sync = () => document.getElementById(ids.row).classList.toggle('hidden', mode.value !== 'team');
+    mode.addEventListener('change', sync);
+    sync();
   },
 
   getJoinInputs() {

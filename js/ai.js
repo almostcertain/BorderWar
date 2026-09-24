@@ -24,6 +24,12 @@ const AI = {
   //   nukes                  whether it builds Silos and fires warheads at all.
   //   nukeChance / hydrogenChance  1-in-n roll per economy cycle to fire, and
   //                          to make that warhead a Hydrogen Bomb.
+  //   mirvChance             1-in-n roll, on top of an already-Hydrogen-
+  //                          worthy strike (see maybeNuke), to reach for a
+  //                          MIRV instead — gated by MIRV's own much larger
+  //                          treasury requirement, so this mostly matters
+  //                          for a bot that has been sitting on a ready Silo
+  //                          for a long time. 0 = never (ticket #28).
   //   retaliateChance        1-in-n roll per economy cycle to nuke a nation
   //                          that is actively eating our land (maybeRetaliate);
   //                          0 = never.
@@ -36,7 +42,7 @@ const AI = {
       attackRatio: 0.4, neutralRatio: 0.3,
       confusion: 10,
       betrayHelpless: 20, betrayOpportunist: false,
-      nukes: false, nukeChance: 0, hydrogenChance: 4, retaliateChance: 0,
+      nukes: false, nukeChance: 0, hydrogenChance: 4, mirvChance: 0, retaliateChance: 0,
       embargoLiftAt: 0
     },
     medium: {
@@ -44,7 +50,7 @@ const AI = {
       attackRatio: 0.55, neutralRatio: 0.35,
       confusion: 20,
       betrayHelpless: 10, betrayOpportunist: true,
-      nukes: true, nukeChance: 8, hydrogenChance: 4, retaliateChance: 2,
+      nukes: true, nukeChance: 8, hydrogenChance: 4, mirvChance: 6, retaliateChance: 2,
       embargoLiftAt: 0
     },
     hard: {
@@ -52,7 +58,7 @@ const AI = {
       attackRatio: 0.65, neutralRatio: 0.45,
       confusion: 0,
       betrayHelpless: 5, betrayOpportunist: true,
-      nukes: true, nukeChance: 5, hydrogenChance: 3, retaliateChance: 1,
+      nukes: true, nukeChance: 5, hydrogenChance: 3, mirvChance: 4, retaliateChance: 1,
       embargoLiftAt: 50
     }
   },
@@ -151,6 +157,7 @@ const AI = {
     this.handleExtensions(p);
     this.maybeBetray(p);
     this.maybeSendRequests(p);
+    this.maybeDonate(p);
   },
 
   // Below OpenFront's Hostile band (-50) a nation stops trading with you.
@@ -223,6 +230,51 @@ const AI = {
     }
   },
 
+  // AiAttackBehavior.donateTroops, ticket #29. Upstream only donates in team
+  // games ("Only donate in team games" / "Don't donate in public games (To
+  // balance HvN)"), and so does this game (Game.donateBlockReason): a
+  // Nation reinforcing a teammate or ally that's actively fighting. No
+  // OpenFront equivalent asks allies *for* help (see diplomacy.js's donate
+  // section and this ticket's report) — donation here is one-directional,
+  // exactly as upstream.
+  //
+  // Difficulty gating ported verbatim from AiAttackBehavior: Easy never
+  // donates, Medium 1-in-4, Hard 1-in-2 (upstream's Impossible tier, always,
+  // has no row in this game's three-tier PROFILES — Hard already reacts
+  // fastest and it lacks a fourth tier to reuse, so it stops at 1-in-2).
+  DONATE_CHANCE: { easy: 0, medium: 4, hard: 2 },
+  // Fraction of Game.maxTroops(p) this nation always keeps at home — mirrors
+  // AiAttackBehavior's own per-nation reserveRatio (a random 30-40% picked at
+  // spawn); this game's AI has no per-nation persisted field for that, so a
+  // fixed midpoint of upstream's range stands in.
+  DONATE_RESERVE_RATIO: 0.35,
+
+  maybeDonate(p) {
+    if (!Game.teams) return;
+    const n = this.DONATE_CHANCE[Game.difficulty];
+    if (!n || !this.chance(n)) return;
+    if (p.allies.size === 0) return;
+
+    // Allies currently fighting — either side of an attack, matching
+    // upstream's incomingAttacks().length > 0 || outgoingAttacks().length > 0.
+    let weakest = null, weakestRatio = Infinity;
+    for (const allyId of p.allies) {
+      const ally = Game.players[allyId];
+      if (!ally || !ally.alive) continue;
+      const fighting = Game.attacks.some(a => a.attacker === allyId || a.target === allyId);
+      if (!fighting) continue;
+      if (!Game.canDonate(p.id, allyId)) continue;
+      const ratio = ally.troops / Math.max(1, Game.maxTroops(ally));
+      if (ratio < weakestRatio) { weakestRatio = ratio; weakest = allyId; }
+    }
+    if (weakest === null) return;
+
+    const keep = Game.maxTroops(p) * this.DONATE_RESERVE_RATIO;
+    const available = p.troops - keep;
+    if (available < 1) return;
+    Game.donateTroops(p.id, weakest, available);
+  },
+
   // OpenFront's getAllianceDecision, Medium column throughout bar the
   // confusion rate. `isResponse` is true when answering someone else's offer
   // rather than opening one.
@@ -276,6 +328,8 @@ const AI = {
     for (const allyId of [...p.allies]) {
       const other = Game.players[allyId];
       if (!other || !other.alive) continue;
+      // Teammates sit in p.allies too (game/teams.js) but can't be betrayed.
+      if (Game.onSameTeam(p.id, allyId)) continue;
 
       // Medium's weak-ally test is the blunt one — ten times their army. The
       // sharper maxTroops-aware version is Hard and Impossible only, and
@@ -595,6 +649,17 @@ const AI = {
     if (targetTile < 0) return;
 
     const hydrogenWorthy = target.tiles.size > p.tiles.size || target.troops > p.troops;
+    // MIRV (ticket #28): the tier above Hydrogen — only worth its enormous,
+    // ever-rising price (see Game.unitCost's own 'mirv' branch) against a
+    // rival that dwarfs us outright, not merely one that edges us out the
+    // way hydrogenWorthy alone allows. Checked before the Hydrogen/Atom
+    // choice below and returns early on a hit, so a bot that rolls a MIRV
+    // never also fires a second warhead the same cycle.
+    const mirvWorthy = hydrogenWorthy && target.tiles.size > p.tiles.size * 1.5;
+    if (mirvWorthy && p.gold >= Game.unitCost(p, 'mirv') && this.chance(prof.mirvChance)) {
+      Game.launchMirv(p.id, targetTile);
+      return;
+    }
     const type = hydrogenWorthy && p.gold >= Game.unitCost(p, 'hydrogenbomb') && this.chance(prof.hydrogenChance)
       ? 'hydrogenbomb' : 'atombomb';
     Game.launchNuke(p.id, type, targetTile);

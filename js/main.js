@@ -451,6 +451,7 @@
     const bots = Math.max(2, Math.min(BOT_CAP, parseInt(botInput.value, 10) || 9));
     const tribes = Math.max(0, Math.min(TRIBE_CAP, parseInt(tribeInput.value, 10) || 0));
     const mapSize = sizeSelect.value;
+    const mode = UI.getModeConfig('');
 
     // A new match is a new connection. Tearing the old one down first stops a
     // previous match's LocalServer pump from outliving it and emitting turns
@@ -474,7 +475,9 @@
       mapSize: mapSize,
       bots: bots,
       tribes: tribes,
-      difficulty: difficultySelect.value
+      difficulty: difficultySelect.value,
+      gameMode: mode.gameMode,
+      playerTeams: mode.playerTeams
     });
   }
 

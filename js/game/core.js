@@ -345,6 +345,16 @@ const Game = {
     this.samFlashes = [];
     this.nukes = [];
     this.nukeBlasts = [];
+    // MIRV (ticket #28): the "mothership" missile in flight, before it
+    // splits into individual MIRVWarhead nukes — see nukes.js's launchMirv/
+    // stepMirvs. Kept out of this.nukes entirely (not SAM-interceptable —
+    // see stepMirvs' own comment) rather than folded into it, so a plain
+    // `this.nukes.length` check (stepSAMs, drawNukes) never has to
+    // special-case a shape it can't act on. mirvsLaunched is a lifetime,
+    // whole-match counter (not per-player) — Config.ts's own MIRV cost rises
+    // with EVERY player's launches, not just the buyer's own, see unitCost.
+    this.mirvs = [];
+    this.mirvsLaunched = 0;
     // Irradiated land — see detonateNuke/falloutDefenseModifier. Tile
     // indices, always unowned land (GameImpl's own setFallout throws if the
     // tile has an owner) — cleared the instant anyone actually captures one.
@@ -446,6 +456,12 @@ const Game = {
         // Nation AI bookkeeping: who has already cost us the one-off
         // embargo relation hit (AI.updateRelationsFromEmbargoes).
         embargoMalusFrom: new Set(),
+        // recipientId -> Game.elapsed of the last gold OR troop donation sent
+        // to them. OpenFront's PlayerImpl.sentDonations is a single list shared
+        // by both donation types (canDonateGold and canDonateTroops both walk
+        // it), so one cooldown table covers both here too — see
+        // game/diplomacy.js's DONATE_COOLDOWN.
+        lastDonationAt: new Map(),
         traitorUntil: 0,
         betrayals: 0,
         // When and by whom a fresh front (land or boat) last opened on this
@@ -464,6 +480,9 @@ const Game = {
         navalNoRoute: new Map()
       });
     }
+
+    // Team modes (game/teams.js). A no-op for FFA.
+    this.setupTeams(config, H, botCount);
 
     // Spawn-pick phase: every Nation/Tribe claims a provisional starting disc
     // immediately, then keeps re-rolling it to a new nearby spot every
@@ -910,6 +929,12 @@ const Game = {
     this.stepTradeShips();
     this.stepWarships();
     this.stepShells();
+    // Must run before stepSAMs/stepNukes: a MIRV that splits this tick has
+    // to land its fresh MIRVWarhead entries in this.nukes before either one
+    // runs, so a warhead can be shot down or can detonate the very same tick
+    // its parent missile arrives, rather than getting one free tick of
+    // immunity purely from array-processing order.
+    this.stepMirvs();
     // Must run before stepNukes: a nuke a SAM successfully intercepts this
     // tick has to be removed from this.nukes before stepNukes' own duration
     // check gets a chance to detonate the same object.
@@ -933,7 +958,9 @@ const Game = {
     // simulated, so if it still holds territory it is a legitimate sole
     // survivor or a legitimate blocker of someone else's 95% threshold,
     // exactly as if they were still playing.
-    if (this.winnerId === null) {
+    // Team games win per team instead — see checkTeamWin in game/teams.js.
+    if (this.teams) this.checkTeamWin();
+    else if (this.winnerId === null) {
       // Counted in a loop rather than collected with filter(): this runs on
       // every tick of every match, and the array it used to build was thrown
       // away again immediately.

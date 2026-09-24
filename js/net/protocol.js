@@ -75,7 +75,7 @@ const Protocol = {
   // Which Game.* method that becomes is the Executor's business (MP-1.2).
   UNIT_TYPES: [
     'city', 'factory', 'port', 'fort', 'warship',
-    'silo', 'atombomb', 'hydrogenbomb', 'sam'
+    'silo', 'atombomb', 'hydrogenbomb', 'sam', 'mirv'
   ],
 
   // --- Field type vocabulary -------------------------------------------------
@@ -218,11 +218,19 @@ const Protocol = {
   // with no OpenFront equivalent: it is this game's own mechanic, and it is
   // named in the snake_case house style of the majority.
   //
-  // Deliberately absent, per §4: targetPlayer, emoji, quick_chat, donate_gold,
-  // donate_troops, delete_unit, kick_player, toggle_pause,
-  // update_game_config. None has a mechanic in this game. fastForward and the
-  // debug gold/nuke buttons are singleplayer-only and are hard disabled in
-  // multiplayer rather than converted to intents.
+  // Deliberately absent, per §4: targetPlayer, emoji, quick_chat, delete_unit,
+  // kick_player, toggle_pause, update_game_config. None has a mechanic in
+  // this game. fastForward and the debug gold/nuke buttons are
+  // singleplayer-only and are hard disabled in multiplayer rather than
+  // converted to intents.
+  //
+  // donate_gold / donate_troops (ticket #29) send an absolute amount, not
+  // null-for-default like OpenFront's DonateGoldIntentSchema/
+  // DonateTroopIntentSchema allow — same reasoning as `attack`'s troops
+  // field above: the amount is resolved client-side (from the ratio slider
+  // or a default) before it ever reaches the wire, so every client applies
+  // the same number instead of each recomputing its own "third of my gold"
+  // from state that could in principle disagree.
   INTENTS: {
     spawn: {
       fields: { tile: 'tile' },
@@ -319,6 +327,19 @@ const Protocol = {
       fields: { action: 'embargoAction' },
       from: 'radial.js Game.setEmbargoAll',
       openfront: 'EmbargoAllIntentSchema'
+    },
+    donate_gold: {
+      // `gold` reuses the `troops` field type — both are the same shape (a
+      // finite non-negative number bounded by MAX_TROOPS), and adding a
+      // same-shaped `gold` type would just be another name for it.
+      fields: { recipient: 'playerId', gold: 'troops' },
+      from: 'radial.js Game.donateGold',
+      openfront: 'DonateGoldIntentSchema (recipient there is nullable-amount; here amount is always sent, see the note above)'
+    },
+    donate_troops: {
+      fields: { recipient: 'playerId', troops: 'troops' },
+      from: 'radial.js Game.donateTroops',
+      openfront: 'DonateTroopIntentSchema (same nullable-amount note)'
     },
     mark_disconnected: {
       // New — no current call site. Paired with the server's 30 s lastPing
@@ -470,6 +491,8 @@ const Protocol = {
     breakAlliance(recipient) { return { type: 'breakAlliance', recipient: recipient }; },
     embargo(targetID, action) { return { type: 'embargo', targetID: targetID, action: action }; },
     embargoAll(action) { return { type: 'embargo_all', action: action }; },
+    donateGold(recipient, gold) { return { type: 'donate_gold', recipient: recipient, gold: gold }; },
+    donateTroops(recipient, troops) { return { type: 'donate_troops', recipient: recipient, troops: troops }; },
     markDisconnected(isDisconnected) { return { type: 'mark_disconnected', isDisconnected: isDisconnected }; }
   },
 

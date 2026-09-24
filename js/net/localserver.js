@@ -194,7 +194,11 @@ const LocalServer = {
         tribes: opts.tribes | 0,
         // Singleplayer only for now: the host lobby sends none, and Game.init
         // reads a missing one as Medium.
-        difficulty: opts.difficulty
+        difficulty: opts.difficulty,
+        // Issue #31. Game.init (via Teams.normalize) treats anything but
+        // 'team' as free-for-all.
+        gameMode: opts.gameMode === 'team' ? 'team' : 'ffa',
+        playerTeams: opts.playerTeams
       },
       players: [{
         clientID: this.clientID,

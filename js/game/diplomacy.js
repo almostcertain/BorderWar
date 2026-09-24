@@ -77,6 +77,7 @@ Object.assign(Game, {
   allianceBlockReason(fromId, toId) {
     const to = this.players[toId];
     if (to && to.isTribe) return 'Tribes do not ally';
+    if (this.onSameTeam(fromId, toId)) return 'Teammate';
     if (this.areAllied(fromId, toId)) return null;
     if (this.pendingRequest(fromId, toId)) return 'Offer already pending';
     if (this.pendingRequest(toId, fromId)) return null;
@@ -303,11 +304,12 @@ Object.assign(Game, {
     return this.stopEmbargo(fromId, toId);
   },
 
-  // Players EmbargoAllExecution acts on: every living non-tribe but you.
+  // Players EmbargoAllExecution acts on: every living non-tribe but you and
+  // your teammates (canEmbargoAll's isOnSameTeam skip).
   embargoAllTargets(fromId) {
     const out = [];
     for (const p of this.players) {
-      if (p.id === fromId || !p.alive || p.isTribe) continue;
+      if (p.id === fromId || !p.alive || p.isTribe || this.onSameTeam(fromId, p.id)) continue;
       out.push(p.id);
     }
     return out;
@@ -346,6 +348,128 @@ Object.assign(Game, {
         p.embargoes.delete(id);
       }
     }
+  },
+
+  // --- Donations, after OpenFront -------------------------------------------
+  // Ported from PlayerImpl (canDonateGold/canDonateTroops/donateGold/
+  // donateTroops), DonateGoldExecution and DonateTroopExecution. OpenFront
+  // gates both on isFriendly(), which is isOnSameTeam() OR isAlliedWith() —
+  // areAllied() here, since game/teams.js puts teammates in each other's
+  // allies. Donations are also limited to team games for now (a design call,
+  // not OpenFront's rule): Game.teams only exists in a team match.
+  // OpenFront also refuses a donation while the game config's donateGold()/
+  // donateTroops() flag is off (a lobby-settings toggle) — this game has no
+  // per-lobby toggle for it, so that check is simply absent rather than
+  // hardcoded true.
+  //
+  // OpenFront's cooldown (donateCooldown(): 10*10 ticks at 10 ticks/sec) is
+  // 10 seconds; Game.elapsed is already in seconds, so it ports as a flat 10.
+  // One shared table (Player.lastDonationAt) covers both gold and troops, per
+  // recipient — exactly PlayerImpl.sentDonations, which canDonateGold and
+  // canDonateTroops both walk.
+  DONATE_COOLDOWN: 10,
+
+  canDonate(fromId, toId) {
+    if (fromId === toId || fromId < 0 || toId < 0) return false;
+    const from = this.players[fromId], to = this.players[toId];
+    if (!from || !to || !from.alive || !to.alive) return false;
+    if (!this.teams || !this.areAllied(fromId, toId)) return false;
+    const last = from.lastDonationAt.get(toId);
+    return last === undefined || this.elapsed - last >= this.DONATE_COOLDOWN;
+  },
+
+  // Why a donation is unavailable, for the radial menu. null when available.
+  donateBlockReason(fromId, toId) {
+    if (fromId === toId || fromId < 0 || toId < 0) return 'Invalid';
+    const from = this.players[fromId], to = this.players[toId];
+    if (!from || !to || !from.alive || !to.alive) return 'Invalid';
+    if (!this.teams) return 'Team games only';
+    if (!this.areAllied(fromId, toId)) return 'Not allied';
+    const last = from.lastDonationAt.get(toId);
+    if (last !== undefined) {
+      const wait = this.DONATE_COOLDOWN - (this.elapsed - last);
+      if (wait > 0) return 'Wait ' + Math.ceil(wait) + 's';
+    }
+    return null;
+  },
+
+  // DonateTroopExecution's getMinTroopsForRelationUpdate, Medium column
+  // (the only tier this game's AI.PROFILES borrows verbatim rather than
+  // re-tuning — see AI.PROFILES' own header): a random 1/11..1/9 slice of the
+  // recipient's cap. Sending less than this still moves the troops but buys
+  // no goodwill — DonateTroopExecution's own anti-cheese rule ("Prevent
+  // players from just buying a good relation by sending 1% troops").
+  // Expressed as a fraction of Game.maxTroops(recipient), which is already in
+  // this game's own troop units, so the OpenFront ratio ports without any
+  // rescaling.
+  minDonationForRelation(toId) {
+    const cap = this.maxTroops(this.players[toId]);
+    const lo = cap / 11, hi = cap / 9;
+    return lo + this.rng() * (hi - lo);
+  },
+
+  // DonateTroopExecution.tick: move troops, capped to what the sender
+  // actually has and to the recipient's free headroom under their own cap
+  // (mg.config().maxTroops(recipient) - recipient.troops(), computed in
+  // upstream's init() before the transfer). A donation crossing the minimum
+  // above earns the recipient's goodwill; PlayerType.Nation-only auto-emoji
+  // reply is skipped — this game's Fx/emoji layer has no such reaction yet.
+  donateTroops(fromId, toId, troops) {
+    if (!this.canDonate(fromId, toId)) return false;
+    const from = this.players[fromId], to = this.players[toId];
+    const headroom = Math.max(0, this.maxTroops(to) - to.troops);
+    const amount = Math.min(Math.max(0, troops), from.troops, headroom);
+    if (amount <= 0) return false;
+    from.troops -= amount;
+    to.troops += amount;
+    from.lastDonationAt.set(toId, this.elapsed);
+    if (amount >= this.minDonationForRelation(toId)) {
+      this.adjustRelation(to, fromId, 50);
+    }
+    return true;
+  },
+
+  // DonateGoldExecution's getGoldChunkSize()/calculateRelationUpdate, rescaled:
+  // upstream's chunk sizes (2,500 Easy .. 25,000 Impossible) are tuned for
+  // OpenFront's own gold economy and don't transfer to this game's
+  // independently-dialed one (see economy.js's GOLD_PER_SEC comment — gold
+  // here is "a dial, not a ported constant"). Same shape ported instead: a
+  // difficulty-scaled chunk, growing with match progress, worth 5 relation per
+  // complete chunk donated, capped at 100. The chunk is sized off this game's
+  // own GOLD_PER_SEC so it stays meaningful across the tuned economy: 30
+  // seconds of baseline income for Medium, scaled the same 0.5/1/1.5x the
+  // Nation difficulty tiers already use for growth (NATION_DIFFICULTY).
+  GOLD_CHUNK_SECONDS: 30,
+  GOLD_CHUNK_DIFFICULTY_MULT: { easy: 0.5, medium: 1, hard: 1.5 },
+
+  goldChunkSize() {
+    const mult = this.GOLD_CHUNK_DIFFICULTY_MULT[this.difficulty]
+      || this.GOLD_CHUNK_DIFFICULTY_MULT[this.DEFAULT_DIFFICULTY];
+    return this.GOLD_PER_SEC * this.GOLD_CHUNK_SECONDS * mult;
+  },
+
+  // ticks / (3000 + numSpawnPhaseTurns), OpenFront's own scale-free growth
+  // multiplier — 5 real-time minutes at their 10 ticks/sec, expressed here in
+  // Game.elapsed seconds against SPAWN_PHASE_TURNS converted the same way.
+  goldRelationUpdate(gold) {
+    const chunk = this.goldChunkSize();
+    const growthWindow = 300 + this.SPAWN_PHASE_TURNS * this.TICK_DT;
+    const adjustedChunk = chunk + chunk * (this.elapsed / growthWindow);
+    const chunks = Math.floor(gold / adjustedChunk);
+    return Math.min(100, chunks * 5);
+  },
+
+  donateGold(fromId, toId, gold) {
+    if (!this.canDonate(fromId, toId)) return false;
+    const from = this.players[fromId], to = this.players[toId];
+    const amount = Math.min(Math.max(0, gold), from.gold);
+    if (amount <= 0) return false;
+    from.gold -= amount;
+    to.gold += amount;
+    from.lastDonationAt.set(toId, this.elapsed);
+    const bump = this.goldRelationUpdate(amount);
+    if (bump > 0) this.adjustRelation(to, fromId, bump);
+    return true;
   },
 
   updateDiplomacy() {

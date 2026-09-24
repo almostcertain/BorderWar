@@ -21,6 +21,10 @@ scenarios.push({ name: 'medium-easy-67890', size: 'medium', seed: 67890, bots: 8
 scenarios.push({ name: 'medium-hard-12345', size: 'medium', seed: 12345, bots: 8, tribes: 12, ticks: 6000, difficulty: 'hard' });
 scenarios.push({ name: 'late-medium-easy-24680', size: 'medium', seed: 24680, bots: 8, tribes: 12, ticks: 6000, gold: 100000000, difficulty: 'easy' });
 scenarios.push({ name: 'late-medium-hard-24680', size: 'medium', seed: 24680, bots: 8, tribes: 12, ticks: 6000, gold: 100000000, difficulty: 'hard' });
+// Team mode (issue #31): 4 teams, long enough for Red to pass the team win
+// share (~tick 2400), so assignment, teammate friendliness and checkTeamWin
+// are all covered.
+scenarios.push({ name: 'teams4-small-12345', size: 'small', seed: 12345, bots: 8, tribes: 12, ticks: 3000, gameMode: 'team', playerTeams: 4 });
 function digest(Game, GameMap) {
   let fnv = 2166136261;
   for (const owner of GameMap.owner) {

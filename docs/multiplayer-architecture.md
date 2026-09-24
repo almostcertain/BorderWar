@@ -221,10 +221,12 @@ The mapping is 1:1. OpenFront names are used where they exist.
 | `allianceAccept` | `requestor` | `ui.js:844` — OpenFront folds accept into request; keep explicit |
 | `allianceExtension` | `recipient` | `ui.js:868`, `radial.js:114` |
 | `breakAlliance` | `recipient` | `radial.js:107` |
+| `donate_gold` | `recipient, gold` | `radial.js` `Game.donateGold` (ticket #29; Donate sub-ring, team games only) |
+| `donate_troops` | `recipient, troops` | `radial.js` `Game.donateTroops` (ticket #29) |
 | `mark_disconnected` | `isDisconnected` | new |
 
-Deliberately **not** ported now: `targetPlayer`, `emoji`, `quick_chat`, `donate_gold`,
-`donate_troops`, `embargo`, `embargo_all`, `delete_unit`, `kick_player`, `toggle_pause`,
+Deliberately **not** ported now: `targetPlayer`, `emoji`, `quick_chat`,
+`embargo`, `embargo_all`, `delete_unit`, `kick_player`, `toggle_pause`,
 `update_game_config`. None have a mechanic in this game yet. The troop-ratio slider
 stays client-local (it is only ever read at the moment an `attack` intent is built, so
 its value travels inside `attack.troops` — this matches OpenFront, which sends absolute
