@@ -355,6 +355,13 @@ const AI = {
   // without freezing everything else for the rest of the match.
   SILO_MIN_CITIES: 3,
 
+  // How many Ports, and separately how many Warships, a nation may buy even
+  // while savingsGoal is holding gold back. One of each: the Port unlocks
+  // trade income and the navy, and one ship patrols the home coast. Anything
+  // past that waits its turn behind the Silo/SAM/bomb reserve like any other
+  // purchase.
+  NAVY_EXEMPT_COUNT: 1,
+
   // Which single big-ticket purchase this bot is currently banking toward, or
   // null for "nothing — spend freely." Strictly ordered, one goal at a time:
   // a bot that tried to save for a Silo and a SAM at once would reserve 2.5M
@@ -413,7 +420,14 @@ const AI = {
     // that finally buys it isn't blocked by its own savings.
     const goal = this.savingsGoal(p);
     const reserve = this.savingsReserve(p, goal);
-    const spendable = t => p.gold - (t === goal ? 0 : reserve);
+    // A coastal nation's first Port and its first Warship are exempt from the
+    // reserve too (see NAVY_EXEMPT_COUNT). Without this a 3-city nation banks
+    // for its 1M Silo before it has ever built a Port, and since a Warship
+    // needs a Port, nations effectively never put a ship in the water.
+    const navyExempt = t =>
+      (t === 'port' && Game.unitsOwned(p, 'port') + Game.unitsPending(p, 'port') < this.NAVY_EXEMPT_COUNT) ||
+      (t === 'warship' && this.warshipCount(p) < this.NAVY_EXEMPT_COUNT);
+    const spendable = t => p.gold - (t === goal || navyExempt(t) ? 0 : reserve);
 
     const consideredTypes = new Set();
     for (const u of Game.UNITS) {
@@ -435,6 +449,12 @@ const AI = {
           const owned = Game.unitsOwned(p, t) + Game.unitsPending(p, t);
           if (owned < bestOwned) { bestOwned = owned; type = t; }
         }
+        // A coastal nation's first Port jumps the Factory/Port queue. Port
+        // and Factory share one price curve, so a Factory bought first makes
+        // the Port twice as dear and a mid-game nation never gets round to
+        // it; and while saving for a Silo only the (reserve-exempt) Port is
+        // affordable at all, so picking the Factory would stall for good.
+        if (pool.includes('port') && navyExempt('port') && this.hasCoast(p)) type = 'port';
       }
 
       // Forts, Silos, and SAM Launchers are only worth building once there's
@@ -501,7 +521,7 @@ const AI = {
     // checked here too so a bot without one skips straight past instead of
     // wasting a coastalTiles scan on a purchase that's going to fail anyway.
     if (Game.unitsOwned(p, 'port') >= 1 && spendable('warship') >= Game.unitCost(p, 'warship') &&
-        Game.warships.filter(w => w.owner === p.id).length < Game.MAX_WARSHIPS_PER_PLAYER) {
+        this.warshipCount(p) < Game.MAX_WARSHIPS_PER_PLAYER) {
       const site = this.warshipSite(p);
       if (site >= 0) Game.buildWarship(p.id, site);
     }
@@ -713,6 +733,20 @@ const AI = {
       if (water >= 0) return water;
     }
     return -1;
+  },
+
+  // Whether p owns any shore at all. Coastal tiles always touch non-owned
+  // water, so walking borderTiles is enough and far cheaper than p.tiles
+  // for a big landlocked nation.
+  hasCoast(p) {
+    for (const t of p.borderTiles) if (GameMap.isCoastal(t)) return true;
+    return false;
+  },
+
+  warshipCount(p) {
+    let n = 0;
+    for (const w of Game.warships) if (w.owner === p.id) n++;
+    return n;
   },
 
   // How many completed structures of `type` p currently owns — distinct from
