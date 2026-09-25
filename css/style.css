@@ -13,6 +13,16 @@ html, body {
   overscroll-behavior: none;
 }
 
+/* Inline icon from assets/icons/ (iconHtml in ui.js), sized to the text it
+   sits in. Containers that need a different size override width/height. */
+.ic {
+  display: inline-block;
+  width: 1.2em;
+  height: 1.2em;
+  vertical-align: -0.28em;
+  pointer-events: none;
+}
+
 #game {
   position: fixed;
   inset: 0;
@@ -60,7 +70,7 @@ html, body {
 }
 
 .lbName { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lbMark { flex: 0 0 auto; font-size: 10px; }
+.lbMark { flex: 0 0 auto; font-size: 10px; display: flex; gap: 1px; }
 /* Right-aligned in a fixed column so the treasuries stack into something
    comparable at a glance rather than jittering as the digits change. */
 .lbGold { flex: 0 0 auto; width: 46px; text-align: right; color: #f0c869; opacity: 0.9; }
@@ -188,7 +198,8 @@ html, body {
 .frontChip.mine { border-color: rgba(109, 180, 255, 0.4); }
 .frontChip.theirs { border-color: rgba(255, 107, 107, 0.4); }
 
-.frontIcon { font-size: 13px; opacity: 0.85; }
+.frontIcon { font-size: 13px; line-height: 1; }
+.frontIcon .ic { width: 1.25em; height: 1.25em; vertical-align: middle; }
 .frontTroops { font-weight: 600; }
 .frontName { opacity: 0.7; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -467,7 +478,8 @@ html, body {
   border-left: 1px solid rgba(255, 255, 255, 0.14);
   font-variant-numeric: tabular-nums;
 }
-.hpIcon { opacity: 0.6; font-size: 24px; }
+.hpIcon { font-size: 20px; line-height: 1; }
+.hpIcon .ic { width: 1em; height: 1em; vertical-align: middle; }
 
 /* Fixed-size bar, same fill logic as the player's own #popBar: width tracks
    home reserve / cap. A second, differently-coloured segment stacked after it
@@ -517,7 +529,8 @@ html, body {
 #hpGoldRate { opacity: 0.55; }
 
 /* Bot's opinion of the player, as a face (UI.updateBotFace). */
-#hpFace { flex: 0 0 auto; font-size: 32px; line-height: 1; }
+#hpFace { flex: 0 0 auto; font-size: 30px; line-height: 1; }
+#hpFace .ic { width: 1em; height: 1em; vertical-align: middle; }
 #hpFace:empty { display: none; }
 
 /* Spawn selection: shown between Start and the human's first tap, prompting
@@ -630,7 +643,9 @@ html, body {
 .rNote { font-size: 9px; opacity: 0.65; }
 .rCentreIcon { font-size: 16px; font-weight: 700; }
 
-#radialMenu text.dim { opacity: 0.45; }
+#radialMenu .dim { opacity: 0.45; }
+/* Icons sit over the wedges and centre disc; clicks must reach those. */
+#radialMenu image { pointer-events: none; }
 
 .rName {
   position: absolute;
@@ -771,6 +786,7 @@ html, body {
 }
 
 .bbIcon { font-size: 19px; line-height: 1; }
+.bbIcon .ic { width: 1.1em; height: 1.1em; vertical-align: middle; }
 .bbName { display: none; }
 .bbBody { display: flex; line-height: 1; }
 .bbCost { font-size: 10px; color: #f0c869; font-variant-numeric: tabular-nums; }

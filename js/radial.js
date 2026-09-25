@@ -140,13 +140,13 @@ const Radial = {
         // invade an ally, so the moment one is boat-blocked it opens up for
         // the other action that only makes sense against one.
         out[1] = {
-          icon: '🗡', label: 'Betray', cls: 'danger',
+          icon: 'traitor', label: 'Betray', cls: 'danger',
           act: () => Transport.sendIntent(Protocol.intent.breakAlliance(t))
         };
         if (Game.extendWindowOpen(al)) {
           const waiting = Game.agreedToExtend(al, me);
           out[2] = {
-            icon: '⏳', label: waiting ? 'Sent' : 'Renew', cls: 'good',
+            icon: 'expiring', label: waiting ? 'Sent' : 'Renew', cls: 'good',
             note: waiting ? 'Awaiting reply' : Math.ceil(al.expiresAt - Game.elapsed) + 's left',
             disabled: waiting,
             act: () => Transport.sendIntent(Protocol.intent.allianceExtension(t))
@@ -155,7 +155,7 @@ const Radial = {
       } else {
         const reason = Game.allianceBlockReason(me, t);
         out[2] = {
-          icon: '🤝', label: 'Peace', cls: 'good',
+          icon: 'ally', label: 'Peace', cls: 'good',
           note: reason, disabled: !!reason,
           act: () => Transport.sendIntent(Protocol.intent.allianceRequest(t))
         };
@@ -168,7 +168,7 @@ const Radial = {
       const reason = Game.targetBlockReason(me, t);
       const marked = Game.activeTargets(Game.players[me]).includes(t);
       out[3] = {
-        icon: '🎯', label: marked ? 'Marked' : 'Target', cls: 'danger',
+        icon: 'target', label: marked ? 'Marked' : 'Target', cls: 'danger',
         note: marked ? null : reason, disabled: marked || !!reason,
         act: () => Transport.sendIntent(Protocol.intent.targetPlayer(t))
       };
@@ -186,7 +186,7 @@ const Radial = {
       const troops = Math.floor(Game.players[me].troops * UI.ratio);
       const reason = Game.navalInvasionBlockReason(me, this.tile, troops);
       out[1] = {
-        icon: '⛵', label: 'Boat', cls: 'good',
+        icon: 'boat', label: 'Boat', cls: 'good',
         note: reason, disabled: !!reason,
         act: () => Transport.sendIntent(Protocol.intent.boat(this.tile, troops))
       };
@@ -204,11 +204,11 @@ const Radial = {
     const troops = Math.floor(p.troops * UI.ratio);
     const gold = Math.floor(p.gold * UI.ratio);
     return [null, {
-      icon: '🪙', label: 'Gold', cls: 'good',
+      icon: 'gold', label: 'Gold', cls: 'good',
       note: reason || formatCount(gold), disabled: !!reason || gold < 1,
       act: () => Transport.sendIntent(Protocol.intent.donateGold(t, gold))
     }, null, {
-      icon: '🪖', label: 'Troops', cls: 'good',
+      icon: 'troops', label: 'Troops', cls: 'good',
       note: reason || formatCount(troops), disabled: !!reason || troops < 1,
       act: () => Transport.sendIntent(Protocol.intent.donateTroops(t, troops))
     }];
@@ -220,13 +220,13 @@ const Radial = {
     if (mine) {
       const left = Game.TEMPORARY_EMBARGO_DURATION - (Game.elapsed - mine.createdAt);
       return {
-        icon: '💰', label: 'Trade', cls: 'good',
+        icon: 'trade', label: 'Trade', cls: 'good',
         note: theirs ? 'They refuse too' : mine.temporary ? 'Auto · ' + Math.ceil(left) + 's' : 'Embargoed',
         act: () => Transport.sendIntent(Protocol.intent.embargo(t, 'stop'))
       };
     }
     return {
-      icon: '🚫', label: 'Stop trade', cls: 'danger',
+      icon: 'embargo', label: 'Stop trade', cls: 'danger',
       note: theirs ? 'They refuse you' : null,
       act: () => Transport.sendIntent(Protocol.intent.embargo(t, 'start'))
     };
@@ -300,7 +300,7 @@ const Radial = {
       const x = (c + mid * Math.sin(a)).toFixed(1);
       const y = +(c - mid * Math.cos(a)).toFixed(1);
       const dim = s.disabled ? ' dim' : '';
-      text += `<text class="rIcon${dim}" x="${x}" y="${y - 8}">${s.icon}</text>` +
+      text += `<image class="rIcon${dim}" href="assets/icons/${s.icon}.svg" x="${x - 11}" y="${y - 19}" width="22" height="22"></image>` +
               `<text class="rLabel${dim}" x="${x}" y="${y + 12}">${s.label}</text>`;
       if (s.note) text += `<text class="rNote${dim}" x="${x}" y="${y + 25}">${s.note}</text>`;
     }
@@ -308,16 +308,19 @@ const Radial = {
     // Water/neutral has no nation to show — a plain grey hub and a label
     // naming what's actually there instead of a name and troop count.
     const colour = p ? `rgb(${p.color[0]},${p.color[1]},${p.color[2]})` : 'rgb(120,135,150)';
-    const traitor = p && Game.isTraitor(p) ? ' 🗡' : '';
-    const label = p ? `${p.name}${traitor} · ${formatCount(p.troops)}`
+    const traitor = p && Game.isTraitor(p) ? ' ' + iconHtml('traitor') : '';
+    const label = p ? `${escapeHtml(p.name)}${traitor} · ${formatCount(p.troops)}`
                      : (this.targetId === NEUTRAL ? 'Unclaimed land' : 'Open water');
-    const centre = this.mode === 'donate' ? { attr: 'data-back', icon: '↩' }
-                 : this.canOpenDonate() ? { attr: 'data-donate', icon: '🎁' }
-                 : { attr: 'data-close', icon: '✕' };
+    // Back and Donate are icons; Close stays a plain ✕ glyph (not an emoji).
+    const centre = this.mode === 'donate' ? { attr: 'data-back', icon: 'back' }
+                 : this.canOpenDonate() ? { attr: 'data-donate', icon: 'gift' }
+                 : { attr: 'data-close', text: '✕' };
     return `<svg viewBox="0 0 ${span} ${span}" width="${span}" height="${span}">` +
       paths +
       `<circle class="rCentre" ${centre.attr}="1" cx="${c}" cy="${c}" r="${this.CENTER}" fill="${colour}"></circle>` +
-      `<text class="rCentreIcon" x="${c}" y="${c}">${centre.icon}</text>` +
+      (centre.icon
+        ? `<image class="rCentreIcon" href="assets/icons/${centre.icon}.svg" x="${c - 10}" y="${c - 10}" width="20" height="20"></image>`
+        : `<text class="rCentreIcon" x="${c}" y="${c}">${centre.text}</text>`) +
       text +
       `</svg><div class="rName">${label}</div>`;
   }

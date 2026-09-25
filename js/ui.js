@@ -4,6 +4,13 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// A bespoke icon from assets/icons/ as inline HTML, in place of emoji (which
+// look different on every platform). Sized to the surrounding text by .ic in
+// style.css; render.js draws the same files on the map canvas.
+function iconHtml(name) {
+  return `<img class="ic" src="assets/icons/${name}.svg" alt="" draggable="false">`;
+}
+
 // 1 -> '1st', 2 -> '2nd', 11 -> '11th', 21 -> '21st', etc. Only the defeat
 // screen's placement line needs this, so it lives here rather than a shared
 // utils module.
@@ -174,6 +181,11 @@ const UI = {
     LocalServer.setPaused(!LocalServer.paused);
   },
 
+  // Build-bar icon per unit type, where the file name differs from the type.
+  // Game.UNITS keeps its emoji `icon` field (it's sim data, and the goldens
+  // hash it); the UI ignores it in favour of assets/icons/.
+  UNIT_ICONS: { atombomb: 'nuke', hydrogenbomb: 'hbomb' },
+
   // Built once from Game.UNITS rather than written into the HTML, so adding a
   // structure to that table is the only edit a new building needs. Only the
   // live parts — cost, count, affordability — are rewritten per frame; redoing
@@ -183,7 +195,7 @@ const UI = {
     bar.innerHTML = Game.UNITS.map(u =>
       `<button class="buildBtn" data-type="${u.type}">
          <span class="bbKey">${u.hotkey}</span>
-         <span class="bbIcon">${u.icon}</span>
+         <span class="bbIcon">${iconHtml(this.UNIT_ICONS[u.type] || u.type)}</span>
          <span class="bbBody">
            <span class="bbName">${u.name}</span>
            <span class="bbCost"></span>
@@ -334,13 +346,15 @@ const UI = {
         if (this.seenMarks.has(key)) continue;
         this.seenMarks.add(key);
         if (Game.elapsed - t.at >= Game.TARGET_DURATION) continue;
-        this.flash('🎯 ' + ally.name + ' marked ' + Game.players[t.id].name + ' as a target');
+        this.flash(ally.name + ' marked ' + Game.players[t.id].name + ' as a target', 'target');
       }
     }
   },
 
-  flash(text) {
+  // `icon` (optional) is an assets/icons name shown before the text.
+  flash(text, icon) {
     this.flashText = text;
+    this.flashIcon = icon || null;
     this.flashUntil = performance.now() + 1600;
   },
 
@@ -476,13 +490,16 @@ const UI = {
     document.getElementById('hpSwatch').style.background =
       `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
     document.getElementById('hpName').textContent = p.name;
-    document.getElementById('hpSub').textContent =
-      (p.isBot ? '🤖 ' : '') +
+    // Runs every frame (refreshHoverPanel), so only rewritten on a change.
+    const subEl = document.getElementById('hpSub');
+    const sub =
+      (p.isBot ? iconHtml('bot') + ' ' : '') +
       (p.isTribe ? 'Tribe' : '') +
-      (p.team ? ' Team ' + p.team + (Game.onSameTeam(Game.me, p.id) ? ' (teammate)' : '') : '') +
-      (Game.areAllied(Game.me, p.id) && !Game.onSameTeam(Game.me, p.id) ? ' Allied' : '') +
-      (Game.isTraitor(p) ? ' 🗡 Traitor' : '') +
-      (!p.isTribe && p.id !== Game.me && Game.me >= 0 && !Game.canTrade(Game.me, p.id) ? ' 🚫 No trade' : '');
+      (p.team ? ' Team ' + escapeHtml(p.team) + (Game.onSameTeam(Game.me, p.id) ? ' (teammate)' : '') : '') +
+      (Game.areAllied(Game.me, p.id) && !Game.onSameTeam(Game.me, p.id) ? ' ' + iconHtml('ally') + ' Allied' : '') +
+      (Game.isTraitor(p) ? ' ' + iconHtml('traitor') + ' Traitor' : '') +
+      (!p.isTribe && p.id !== Game.me && Game.me >= 0 && !Game.canTrade(Game.me, p.id) ? ' ' + iconHtml('embargo') + ' No trade' : '');
+    if (subEl._html !== sub) { subEl._html = sub; subEl.innerHTML = sub; }
     this.updateBotFace(p);
     document.getElementById('hpTiles').textContent =
       p.tiles.size.toLocaleString() + ' (' + (p.tiles.size / GameMap.landTiles * 100).toFixed(1) + '%)';
@@ -513,9 +530,10 @@ const UI = {
   // same way its AI reads it (ai.js FRIENDLY / DISTRUSTFUL). Bots only.
   updateBotFace(p) {
     const el = document.getElementById('hpFace');
-    if (!p.isBot || Game.me < 0 || p.id === Game.me) { el.textContent = ''; return; }
+    if (!p.isBot || Game.me < 0 || p.id === Game.me) { el.textContent = ''; el.dataset.mood = ''; return; }
     const rel = Game.relation(p, Game.me);
-    el.textContent = rel >= AI.FRIENDLY ? '🙂' : rel >= AI.DISTRUSTFUL ? '😐' : '🙁';
+    const mood = rel >= AI.FRIENDLY ? 'mood-friendly' : rel >= AI.DISTRUSTFUL ? 'mood-neutral' : 'mood-hostile';
+    if (el.dataset.mood !== mood) { el.dataset.mood = mood; el.innerHTML = iconHtml(mood); }
   },
 
   hideHoverPanel() {
@@ -883,7 +901,12 @@ const UI = {
     const pauseBtn = document.getElementById('pauseBtn');
     pauseBtn.classList.toggle('hidden', !Transport.isLocal || Game.winnerId !== null);
     pauseBtn.classList.toggle('paused', LocalServer.paused);
-    pauseBtn.textContent = LocalServer.paused ? '▶ Resume' : '❚❚ Pause';
+    // Only rewritten on a change: this runs every frame, and replacing the
+    // button's contents at 60Hz would reload its icon and break :active.
+    if (pauseBtn._paused !== LocalServer.paused) {
+      pauseBtn._paused = LocalServer.paused;
+      pauseBtn.innerHTML = LocalServer.paused ? iconHtml('play') + ' Resume' : iconHtml('pause') + ' Pause';
+    }
 
     // The HUD stays hidden until the human has claimed a capital — only the
     // banner (and the leaderboard, already outside #hud) is live.
@@ -946,8 +969,12 @@ const UI = {
     // an overlay badge on the pop bar rather than its own row, so it costs no
     // layout space the rest of the match (see :empty in style.css).
     const traitorEl = document.getElementById('traitorChip');
-    traitorEl.textContent = Game.isTraitor(me)
-      ? '🗡 TRAITOR ' + Math.ceil(me.traitorUntil - Game.elapsed) + 's' : '';
+    const traitorText = Game.isTraitor(me)
+      ? 'TRAITOR ' + Math.ceil(me.traitorUntil - Game.elapsed) + 's' : '';
+    if (traitorEl._text !== traitorText) {           // per frame; rewrite only on change
+      traitorEl._text = traitorText;
+      traitorEl.innerHTML = traitorText ? iconHtml('traitor') + ' ' + traitorText : '';
+    }
 
     this.updateNukeAlert();
     this.updateBanner();
@@ -968,11 +995,11 @@ const UI = {
     document.getElementById('leaderboard').innerHTML = this.teamStandingsHtml() + ranked.map(p => {
       const pct = (p.tiles.size / GameMap.landTiles * 100).toFixed(1);
       const c = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
-      const mark = (p.isBot ? '🤖' : '') +
-                   (Game.onSameTeam(Game.me, p.id) ? '👥'
-                     : Game.areAllied(Game.me, p.id) ? '🤝' : '') +
-                   (Game.isTraitor(p) ? '🗡' : '') +
-                   (p.isDisconnected ? '🔌' : '');
+      const mark = (p.isBot ? iconHtml('bot') : '') +
+                   (Game.onSameTeam(Game.me, p.id) ? iconHtml('teammate')
+                     : Game.areAllied(Game.me, p.id) ? iconHtml('ally') : '') +
+                   (Game.isTraitor(p) ? iconHtml('traitor') : '') +
+                   (p.isDisconnected ? iconHtml('disconnected') : '');
       return `<div class="lbRow${p.id === Game.me ? ' me' : ''}">
         <div class="lbSwatch" style="background:${c}"></div>
         <div class="lbName">${escapeHtml(p.name)}</div>
@@ -998,7 +1025,7 @@ const UI = {
       return `<div class="lbRow${r.t === mine ? ' me' : ''}">
         <div class="lbSwatch" style="background:rgb(${c[0]},${c[1]},${c[2]})"></div>
         <div class="lbName">Team ${escapeHtml(r.t)}</div>
-        <div class="lbMark">👥</div>
+        <div class="lbMark">${iconHtml('teammate')}</div>
         <div class="lbGold"></div>
         <div class="lbPct">${pct}%</div>
       </div>`;
@@ -1034,11 +1061,16 @@ const UI = {
 
     const hintEl = document.getElementById('hint');
     if (performance.now() < this.flashUntil) {
-      hintEl.textContent = this.flashText;
+      if (!this.flashIcon) { hintEl.textContent = this.flashText; hintEl._flash = null; }
+      else if (hintEl._flash !== this.flashIcon + this.flashText) {   // per frame; rewrite only on change
+        hintEl._flash = this.flashIcon + this.flashText;
+        hintEl.innerHTML = iconHtml(this.flashIcon) + ' ' + escapeHtml(this.flashText);
+      }
       hintEl.classList.add('warn');
       return;
     }
     hintEl.classList.remove('warn');
+    hintEl._flash = null;
     if (this.placing === 'warship') {
       hintEl.textContent = Game.unitsOwned(me, 'port') < 1
         ? 'Build a Port first to unlock Warships · Esc to cancel'
@@ -1113,7 +1145,7 @@ const UI = {
       const mine = a.attacker === Game.me;
       items.push({
         kind: 'attack', ref: a, mine,
-        icon: mine ? '⚔' : '🛡',
+        icon: mine ? 'attack' : 'fort',
         troops: a.troops,
         name: mine
           ? (a.target >= 0 ? Game.players[a.target].name : 'Unclaimed land')
@@ -1127,7 +1159,7 @@ const UI = {
       const mine = b.attacker === Game.me;
       items.push({
         kind: 'boat', ref: b, mine,
-        icon: mine ? '⛵' : '🚤',
+        icon: mine ? 'boat' : 'boat-enemy',
         troops: b.troops,
         name: mine
           ? (b.target >= 0 ? Game.players[b.target].name : 'Unclaimed land')
@@ -1152,7 +1184,7 @@ const UI = {
       if (!chip) {
         chip = document.createElement('div');
         chip.innerHTML =
-          `<span class="frontIcon">${it.icon}</span>` +
+          `<span class="frontIcon">${iconHtml(it.icon)}</span>` +
           `<span class="frontTroops"></span>` +
           `<span class="frontName">${escapeHtml(it.name)}</span>`;
         chip._troopsEl = chip.querySelector('.frontTroops');
@@ -1245,7 +1277,7 @@ const UI = {
         row.className = 'nukeAlertRow';
         const owner = Game.players[m.ownerId];
         row.innerHTML =
-          `<span class="nukeAlertText">🛰 MIRV incoming from ${escapeHtml(owner ? owner.name : 'unknown')}!</span>` +
+          `<span class="nukeAlertText">${iconHtml('mirv')} MIRV incoming from ${escapeHtml(owner ? owner.name : 'unknown')}!</span>` +
           `<span class="nukeAlertTime"></span>`;
         row._timeEl = row.querySelector('.nukeAlertTime');
         // Jumps to the real aim tile (m.dst), not m.to — m.to is now the
@@ -1268,7 +1300,7 @@ const UI = {
         row = document.createElement('div');
         row.className = 'nukeAlertRow';
         const owner = Game.players[n.ownerId];
-        const what = n.nukeType === 'hydrogenbomb' ? '💥 Hydrogen Bomb' : '☢ Nuke';
+        const what = n.nukeType === 'hydrogenbomb' ? iconHtml('hbomb') + ' Hydrogen Bomb' : iconHtml('nuke') + ' Nuke';
         row.innerHTML =
           `<span class="nukeAlertText">${what} incoming from ${escapeHtml(owner ? owner.name : 'unknown')}!</span>` +
           `<span class="nukeAlertTime"></span>`;

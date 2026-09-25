@@ -25,14 +25,14 @@
   <button data-gold="500000">+500k gold</button>
   <button data-gold="5000000">+5M gold</button>
   <button id="debugFastForward">Skip to mid-game</button>
-  <button id="debugNukeAtom">☢ Debug Nuke</button>
-  <button id="debugNukeHydrogen">💥 Debug H-Bomb</button>
-  <button id="debugPeace">🤝 Debug Peace Offer</button>
+  <button id="debugNukeAtom"><img class="ic" src="assets/icons/nuke.svg" alt="" draggable="false"> Debug Nuke</button>
+  <button id="debugNukeHydrogen"><img class="ic" src="assets/icons/hbomb.svg" alt="" draggable="false"> Debug H-Bomb</button>
+  <button id="debugPeace"><img class="ic" src="assets/icons/ally.svg" alt="" draggable="false"> Debug Peace Offer</button>
 </div>
 
 <!-- Singleplayer only (UI.update hides it on a networked transport): pauses
      LocalServer's turn pump. Toggled by click or the P key. -->
-<button id="pauseBtn" class="hidden" type="button" title="Pause (P)">❚❚ Pause</button>
+<button id="pauseBtn" class="hidden" type="button" title="Pause (P)"><img class="ic" src="assets/icons/pause.svg" alt="" draggable="false"> Pause</button>
 
 <div id="hoverPanel" class="hidden">
   <div id="hpTop">
@@ -53,7 +53,7 @@
     <span id="hpPopMax"></span>
   </div>
   <div id="hpGoldRow">
-    <span class="hpIcon">🪙</span>
+    <span class="hpIcon"><img class="ic" src="assets/icons/gold.svg" alt="" draggable="false"></span>
     <span id="hpGoldValue"></span>
     <span id="hpGoldRate"></span>
   </div>
@@ -103,7 +103,7 @@
         <span id="troopValue">0</span><span id="popBarSep">/</span><span id="troopCap">0</span>
       </div>
     </div>
-    <div id="goldChip"><span class="hpIcon">🪙</span><span id="goldValue">0</span></div>
+    <div id="goldChip"><span class="hpIcon"><img class="ic" src="assets/icons/gold.svg" alt="" draggable="false"></span><span id="goldValue">0</span></div>
   </div>
   <div id="ratioRow">
     <span id="ratioLabel"><span id="ratioValue">20%</span> <span id="ratioTroops"></span></span>
