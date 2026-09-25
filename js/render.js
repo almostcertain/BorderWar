@@ -43,6 +43,44 @@ const Render = {
     this.ctx = canvas.getContext('2d');
     this.resize();
     window.addEventListener('resize', () => this.resize());
+    this.loadIcons();
+  },
+
+  // --- Map icons ---------------------------------------------------------------
+  // Bespoke SVG icons (assets/icons/, previewed by assets/icons/preview.html)
+  // in place of emoji on the map. Emoji looked different on every platform,
+  // and in Firefox on Windows each one is layered gradient art rasterised on
+  // the CPU every time it's drawn: a 2026-09-24 profile had the emoji in the
+  // name labels at 70% of main-thread time (~19 fps). Each icon is rasterised
+  // once per whole-pixel size into its own small canvas and stamped with
+  // drawImage from then on, which every browser does cheaply.
+  ICON_NAMES: ['ally', 'teammate', 'target', 'traitor', 'embargo', 'expiring'],
+  iconImages: null,
+  iconCache: new Map(),
+
+  loadIcons() {
+    this.iconImages = {};
+    for (const name of this.ICON_NAMES) {
+      const img = new Image();
+      img.src = 'assets/icons/' + name + '.svg';
+      this.iconImages[name] = img;
+    }
+  },
+
+  // The pre-rendered icon at `size` device pixels, or null until its SVG has
+  // loaded (callers just skip drawing it for those first frames).
+  icon(name, size) {
+    const px = Math.max(4, Math.round(size));
+    const key = name + ':' + px;
+    let c = this.iconCache.get(key);
+    if (c) return c;
+    const img = this.iconImages && this.iconImages[name];
+    if (!img || !img.complete || !img.naturalWidth) return null;
+    c = document.createElement('canvas');
+    c.width = c.height = px;
+    c.getContext('2d').drawImage(img, 0, 0, px, px);
+    this.iconCache.set(key, c);
+    return c;
   },
 
   resize() {
@@ -2109,18 +2147,31 @@ const Render = {
       const troops = formatCountTight(p.troops);
       // Diplomacy is legible straight off the map: who you have a pact with,
       // and who has just broken one and is worth attacking while it lasts.
-      // 🚫: trade with you is blocked, by either side's embargo.
+      // Icons (see icon()) sit in front of the name, in this order:
+      //   target    marked as a target by us or an ally (ticket #30)
+      //   teammate  on our team (issue #31) — permanent, unlike an alliance
+      //   ally      allied with us
+      //   traitor   recently broke a pact
+      //   embargo   trade with us is blocked, by either side's embargo
       const noTrade = !p.isTribe && Game.me >= 0 && p.id !== Game.me && !Game.canTrade(Game.me, p.id);
-      // 👥: a teammate (issue #31) — permanent, unlike an alliance.
-      // 🎯: marked as a target by us or an ally (ticket #30).
-      const name = (marked && marked.has(p.id) ? '🎯 ' : '') +
-                   (Game.onSameTeam(Game.me, p.id) ? '👥 ' : Game.areAllied(Game.me, p.id) ? '🤝 ' : '') +
-                   (Game.isTraitor(p) ? '🗡 ' : '') +
-                   (noTrade ? '🚫 ' : '') + p.name;
+      const icons = this.labelIcons || (this.labelIcons = []);
+      icons.length = 0;
+      if (marked && marked.has(p.id)) icons.push('target');
+      if (Game.onSameTeam(Game.me, p.id)) icons.push('teammate');
+      else if (Game.areAllied(Game.me, p.id)) icons.push('ally');
+      if (Game.isTraitor(p)) icons.push('traitor');
+      if (noTrade) icons.push('embargo');
+
+      // Icons scale with the font, so the whole name line does too and the
+      // shrink-to-fit below stays a single proportional step.
       ctx.font = '600 ' + font.toFixed(1) + 'px system-ui, sans-serif';
-      const widest = Math.max(ctx.measureText(name).width, ctx.measureText(troops).width);
+      const iconStep = icons.length ? 1.3 : 0;   // icon (1.05em) + gap (0.25em), in ems
+      const nameW = ctx.measureText(p.name).width + icons.length * iconStep * font;
+      const widest = Math.max(nameW, ctx.measureText(troops).width);
+      let scale = 1;
       if (widest > boxW * 0.92) {
-        font *= boxW * 0.92 / widest;         // shrink to fit rather than overflow
+        scale = boxW * 0.92 / widest;         // shrink to fit rather than overflow
+        font *= scale;
         if (font < minFont) continue;
       }
 
@@ -2128,9 +2179,19 @@ const Render = {
       ctx.strokeStyle = 'rgba(0,0,0,0.7)';
       ctx.fillStyle = '#ffffff';
 
+      const nameY = py - font * 0.55;
+      let x = px - nameW * scale / 2;
+      const iconSize = font * 1.05;
+      for (const name of icons) {
+        const img = this.icon(name, iconSize);
+        if (img) ctx.drawImage(img, Math.round(x), Math.round(nameY - img.height / 2));
+        x += iconStep * font;
+      }
       ctx.font = '600 ' + font.toFixed(1) + 'px system-ui, sans-serif';
-      ctx.strokeText(name, px, py - font * 0.55);
-      ctx.fillText(name, px, py - font * 0.55);
+      ctx.textAlign = 'left';
+      ctx.strokeText(p.name, x, nameY);
+      ctx.fillText(p.name, x, nameY);
+      ctx.textAlign = 'center';
 
       ctx.font = font.toFixed(1) + 'px system-ui, sans-serif';
       ctx.strokeText(troops, px, py + font * 0.6);
@@ -2145,9 +2206,9 @@ const Render = {
 
   // Pulsing badges above the nations you have a diplomatic decision pending
   // with, so they can be spotted on the map and not just in the banner:
-  //   gold 🤝    a nation is offering YOU peace; the ring drains over the offer's 20s
-  //   orange ⏳  an alliance of yours ends within ALLIANCE_EXPIRY_BADGE seconds and
-  //              you have not yet agreed to renew it; the ring drains over that span
+  //   gold, ally icon       a nation is offering YOU peace; the ring drains over the offer's 20s
+  //   orange, expiring icon an alliance of yours ends within ALLIANCE_EXPIRY_BADGE seconds and
+  //                         you have not yet agreed to renew it; the ring drains over that span
   // Screen-space sized, so they stay readable zoomed out; each sits above the
   // nation's name when one is drawn.
   drawDiploBadges() {
@@ -2159,7 +2220,7 @@ const Render = {
     for (const req of Game.requests) {
       if (req.to !== Game.me) continue;
       badges.push({
-        id: req.from, glyph: '🤝', color: '#ffd65a', halo: '255,214,90',
+        id: req.from, icon: 'ally', color: '#ffd65a', halo: '255,214,90',
         left: (Game.ALLIANCE_REQUEST_DURATION - (Game.elapsed - req.createdAt)) / Game.ALLIANCE_REQUEST_DURATION
       });
     }
@@ -2168,7 +2229,7 @@ const Render = {
       const remaining = al.expiresAt - Game.elapsed;
       if (remaining > this.ALLIANCE_EXPIRY_BADGE || Game.agreedToExtend(al, Game.me)) continue;
       badges.push({
-        id: al.a === Game.me ? al.b : al.a, glyph: '⏳', color: '#ff8a4c', halo: '255,138,76',
+        id: al.a === Game.me ? al.b : al.a, icon: 'expiring', color: '#ff8a4c', halo: '255,138,76',
         left: remaining / this.ALLIANCE_EXPIRY_BADGE
       });
     }
@@ -2208,11 +2269,8 @@ const Render = {
       ctx.lineCap = 'round';
       ctx.stroke();
 
-      ctx.font = (r * 1.1).toFixed(1) + 'px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(b.glyph, px, cy + dpr);
+      const img = this.icon(b.icon, r * 1.15);
+      if (img) ctx.drawImage(img, Math.round(px - img.width / 2), Math.round(cy - img.height / 2));
       ctx.restore();
     }
   }
