@@ -4,7 +4,7 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #4a6b8a;
+  background: #0b1220;
   color: #e6edf7;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-user-select: none;
@@ -866,7 +866,7 @@ html, body {
 #overlay {
   position: fixed;
   inset: 0;
-  background: rgba(6, 10, 20, 1);
+  background: rgba(56, 80, 104, 1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1030,13 +1030,13 @@ html, body {
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: transparent;
-  color: inherit;
-  opacity: 0.45;
+  color: #fff;
+  opacity: 0.75;
   cursor: pointer;
 }
 
 .modeTab.active {
-  opacity: 0.85;
+  opacity: 1;
   background: #1c2740;
   border-color: rgba(61, 125, 255, 0.6);
 }
