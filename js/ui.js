@@ -28,6 +28,7 @@ function ordinal(n) {
 const UI = {
   ratio: 0.2, // kept equal to DEFAULT_RATIO
   lastLeaderboard: 0,
+  lbOpenTeams: new Set(), // team ids expanded in the leaderboard; collapsed by default
   diplo: null,        // the offer currently on the banner, if any
   dismissed: new Set(),
 
@@ -99,6 +100,18 @@ const UI = {
     // the server here.
     document.getElementById('desyncBanner').addEventListener('click', () => {
       document.getElementById('desyncBanner').classList.add('hidden');
+    });
+
+    // Delegated rather than bound per-row: the leaderboard's innerHTML is
+    // rewritten wholesale every 500ms (see update()), which would drop
+    // per-row listeners as fast as they were attached.
+    document.getElementById('leaderboard').addEventListener('click', e => {
+      const row = e.target.closest('.lbTeamRow');
+      if (!row) return;
+      const team = row.dataset.team;
+      if (this.lbOpenTeams.has(team)) this.lbOpenTeams.delete(team);
+      else this.lbOpenTeams.add(team);
+      this.renderLeaderboard();
     });
 
     this.setupBuildBar();
@@ -984,50 +997,77 @@ const UI = {
     const now = performance.now();
     if (now - this.lastLeaderboard < 500) return;
     this.lastLeaderboard = now;
+    this.renderLeaderboard();
+  },
 
+  playerRowHtml(p) {
+    const pct = (p.tiles.size / GameMap.landTiles * 100).toFixed(1);
+    const c = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
+    const mark = (p.isBot ? iconHtml('bot') : '') +
+                 (Game.onSameTeam(Game.me, p.id) ? iconHtml('teammate')
+                   : Game.areAllied(Game.me, p.id) ? iconHtml('ally') : '') +
+                 (Game.isTraitor(p) ? iconHtml('traitor') : '') +
+                 (p.isDisconnected ? iconHtml('disconnected') : '');
+    return `<div class="lbRow${p.id === Game.me ? ' me' : ''}">
+      <div class="lbSwatch" style="background:${c}"></div>
+      <div class="lbName">${escapeHtml(p.name)}</div>
+      <div class="lbMark">${mark}</div>
+      <div class="lbGold">${formatGold(p.gold)}</div>
+      <div class="lbPct">${pct}%</div>
+    </div>`;
+  },
+
+  // FFA: a flat list of the top 6 players by tile count, always expanded —
+  // there's no team tier above them to collapse into.
+  flatLeaderboardHtml() {
     const ranked = Game.players
       .filter(p => p.alive && p.tiles.size > 0)
       .sort((a, b) => b.tiles.size - a.tiles.size)
       .slice(0, 6);
-
-    document.getElementById('leaderboard').innerHTML = this.teamStandingsHtml() + ranked.map(p => {
-      const pct = (p.tiles.size / GameMap.landTiles * 100).toFixed(1);
-      const c = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
-      const mark = (p.isBot ? iconHtml('bot') : '') +
-                   (Game.onSameTeam(Game.me, p.id) ? iconHtml('teammate')
-                     : Game.areAllied(Game.me, p.id) ? iconHtml('ally') : '') +
-                   (Game.isTraitor(p) ? iconHtml('traitor') : '') +
-                   (p.isDisconnected ? iconHtml('disconnected') : '');
-      return `<div class="lbRow${p.id === Game.me ? ' me' : ''}">
-        <div class="lbSwatch" style="background:${c}"></div>
-        <div class="lbName">${escapeHtml(p.name)}</div>
-        <div class="lbMark">${mark}</div>
-        <div class="lbGold">${formatGold(p.gold)}</div>
-        <div class="lbPct">${pct}%</div>
-      </div>`;
-    }).join('');
+    return ranked.map(p => this.playerRowHtml(p)).join('');
   },
 
-  // Issue #31: in a team game, one row per team (largest first) above the
-  // player rows, with your own team highlighted. Empty in FFA.
-  teamStandingsHtml() {
-    if (!Game.isTeamGame()) return '';
+  // Team games: one row per team (largest first), collapsed by default.
+  // Clicking a team row (see setup()'s delegated listener) expands its full
+  // roster underneath; while collapsed, only your own row still shows there
+  // so you can track yourself without expanding your team every time.
+  teamLeaderboardHtml() {
     const mine = Game.teamOf(Game.me);
     const rows = Game.teams
       .map((t, i) => ({ t, i, tiles: Game.teamTiles(t) }))
       .filter(r => r.tiles > 0)
       .sort((a, b) => b.tiles - a.tiles);
+
     return rows.map(r => {
       const c = Teams.baseColor(r.t, r.i);
       const pct = (r.tiles / GameMap.landTiles * 100).toFixed(1);
-      return `<div class="lbRow${r.t === mine ? ' me' : ''}">
+      const open = this.lbOpenTeams.has(r.t);
+      const teamRow = `<div class="lbRow lbTeamRow${r.t === mine ? ' me' : ''}" data-team="${r.t}">
+        <div class="lbCaret${open ? ' open' : ''}">&#9656;</div>
         <div class="lbSwatch" style="background:rgb(${c[0]},${c[1]},${c[2]})"></div>
         <div class="lbName">Team ${escapeHtml(r.t)}</div>
         <div class="lbMark">${iconHtml('teammate')}</div>
         <div class="lbGold"></div>
         <div class="lbPct">${pct}%</div>
       </div>`;
+
+      const members = Game.players
+        .filter(p => p.alive && p.tiles.size > 0 && Game.teamOf(p.id) === r.t)
+        .sort((a, b) => b.tiles.size - a.tiles.size);
+
+      // Collapsed: just your own row, at the same indent as the full roster,
+      // so it doesn't jump position when the team opens or closes.
+      const shown = open ? members : members.filter(p => p.id === Game.me);
+      const childrenHtml = shown.length
+        ? `<div class="lbChildren">${shown.map(p => this.playerRowHtml(p)).join('')}</div>` : '';
+
+      return teamRow + childrenHtml;
     }).join('');
+  },
+
+  renderLeaderboard() {
+    document.getElementById('leaderboard').innerHTML = Game.isTeamGame()
+      ? this.teamLeaderboardHtml() : this.flatLeaderboardHtml();
   },
 
   // Cost, count and affordability, plus the hint line under the bar — which is
