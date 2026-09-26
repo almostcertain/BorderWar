@@ -382,9 +382,6 @@ const Render = {
     // adaptive zoom in centerOnMap() on large/high-res screens.
     const maxScale = Math.max(60, Math.min(window.innerWidth, window.innerHeight) / 8);
     this.cam.scale = Math.max(minScale, Math.min(maxScale, this.cam.scale));
-    // Cached for drawStructures' range-ring zoom cutoff — recomputing the
-    // same map-fit/viewport ratio there would just duplicate this.
-    this._minScale = minScale;
   },
 
   screenToTile(sx, sy) {
@@ -601,17 +598,8 @@ const Render = {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
 
-    // Range rings cost real GPU fill time once a lot of forts/SAMs share the
-    // screen — which happens exactly when zoomed out far enough to see a big
-    // chunk of a nation's territory, i.e. close to the map-fit view. At that
-    // zoom the rings are also thin and cluttered rather than informative, so
-    // skip both passes entirely below ~2x the map-fit scale (this._minScale,
-    // cached by clampCamera). Closer zoom — where a player is actually
-    // eyeing a specific front — is unaffected.
-    const showRanges = this.cam.scale > this._minScale * 2;
-
     // First pass: draw protection radii for all built forts, behind everything.
-    if (showRanges) for (const b of Game.buildings.values()) {
+    for (const b of Game.buildings.values()) {
       if (b.type !== 'fort' || !b.built) continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
@@ -635,7 +623,7 @@ const Render = {
     // after an upgrade — see its own comment) instead of Fort's fixed
     // fortRange(), and a solid rather than dashed ring so the two structures'
     // protection zones stay visually distinct even where they overlap.
-    if (showRanges) for (const b of Game.buildings.values()) {
+    for (const b of Game.buildings.values()) {
       if (b.type !== 'sam' || !b.built) continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
@@ -2126,20 +2114,6 @@ const Render = {
     }
   },
 
-  // Hard cap on how many nation/tribe labels actually get their name +
-  // troop count drawn in one frame. Below MAX_DRAWN_LABELS this changes
-  // nothing — every qualifying label still draws exactly as before. Past it
-  // (a large-map match once enough nations have grown past minFont at once),
-  // the biggest MAX_DRAWN_LABELS by tile count win the strokeText/fillText
-  // calls, which is where the real cost is: stroked text is expensive to
-  // rasterize, and unlike the position sweep (computeLabelSlice, spread over
-  // frames) this draw pass has always run in full every single frame, so
-  // going from "a few dozen labels big enough to show" to "hundreds" turned
-  // it into hundreds of full text draws a frame with no ceiling. Purely
-  // cosmetic — which labels get cut is not sim state, and the smallest
-  // nations are the ones a player is least likely to be looking for anyway.
-  MAX_DRAWN_LABELS: 80,
-
   drawLabels() {
     this.stepLabels();
 
@@ -2150,12 +2124,6 @@ const Render = {
 
     const meP = Game.players[Game.me];
     const marked = meP ? Game.transitiveTargets(meP) : null;
-
-    // First pass over this.labels is cheap (bounds + arithmetic, no canvas
-    // text ops yet) — gather every label that would actually draw, then cap
-    // the expensive pass below to the biggest MAX_DRAWN_LABELS of those.
-    const candidates = this._labelCandidates || (this._labelCandidates = []);
-    candidates.length = 0;
     for (const L of this.labels) {
       const p = Game.players[L.id];
       L.font = 0;                        // 0 = no name drawn; drawDiploBadges reads it
@@ -2173,17 +2141,6 @@ const Render = {
       const minFont = 9 * this.dpr;
       let font = Math.min(22 * this.dpr, areaSpan * 0.24, boxH * 0.30);
       if (font < minFont) continue;
-      candidates.push({ L, p, px, py, boxW, font, minFont });
-    }
-
-    if (candidates.length > this.MAX_DRAWN_LABELS) {
-      candidates.sort((a, b) => b.L.count - a.L.count);
-      candidates.length = this.MAX_DRAWN_LABELS;
-    }
-
-    for (const entry of candidates) {
-      const { L, p, px, py, boxW, minFont } = entry;
-      let font = entry.font;
 
       // Troops at home — the same figure the bar shows, and the one that
       // actually defends, so a nation that has emptied itself reads as soft.

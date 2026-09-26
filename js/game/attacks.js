@@ -332,7 +332,6 @@ Object.assign(Game, {
     // identical size don't advance in lockstep with each other.
     const borderTiles = a.border.size + this.frontRand(a, 5);
     let progress = this.ATTACK_TICK_BUDGET;
-    let tilesThisCall = 0;
 
     let guard = 20000;
     while (guard-- > 0) {
@@ -345,13 +344,6 @@ Object.assign(Game, {
       // tile costs, and only a SECOND tile this same tick is gated on budget
       // actually remaining.
       if (progress <= 0) break;
-
-      // ATTACK_TILE_BUDGET_PER_TICK is shared across every attack stepped
-      // this tick, not just this one — see its own comment. Checked only
-      // once this call has already taken its first tile, so the "at least
-      // one tile a tick" guarantee just above holds regardless of how many
-      // other fronts already spent the shared pool before this one's turn.
-      if (tilesThisCall > 0 && this._attackTilesThisTick >= this.ATTACK_TILE_BUDGET_PER_TICK) break;
 
       // OpenFront's own top-of-loop test (`if (troopCount < 1) { attack.delete() }`).
       // A front runs out of troops here and nowhere else — see the tile-cost
@@ -444,8 +436,6 @@ Object.assign(Game, {
       }
 
       this.setOwner(tile, a.attacker);
-      tilesThisCall++;
-      this._attackTilesThisTick++;
 
       // No lower bound on purpose: the tile just taken was the defender's, so
       // a size of 0 means it was their last. Skipping that case stranded the

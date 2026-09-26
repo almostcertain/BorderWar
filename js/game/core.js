@@ -887,9 +887,6 @@ const Game = {
     this._seaPathSearchesThisTick = 0;
     this._seaPathNodesThisTick = 0;
     this._coastPathMemo.clear();
-    // See ATTACK_TILE_BUDGET_PER_TICK (combat.js): bounds total tiles
-    // conquered across every active attack this tick.
-    this._attackTilesThisTick = 0;
     this._inTick = true;
 
     for (const p of this.players) {

@@ -4,13 +4,13 @@
     "js/map.js": "3244b02f9b38d14474d99375a3bab4c40b15d6fcc1a4c57936b3ff4872b84b9d",
     "js/fx.js": "3deb08ca132e6773feb5be6d20089f236352130f08ed2ac75b038232dc99935b",
     "js/game/shared.js": "74a69abba301cabe4eb7642285a048fb4fda8d5ac40e5d86179d188a1cacba87",
-    "js/game/core.js": "07bf96b7eeeedf5ed7885b068b9acb7262311b2b408e605fac37bc23c124ca12",
+    "js/game/core.js": "6e67669a59607f0d907d2bd168cd0bd643eeb1dd9c80ee3703f6187d4e9d44c0",
     "js/game/structures.js": "2f0d4a077902f1724117dca5288a170492ddab3647629614be4d1d77d52f78a5",
     "js/game/economy.js": "58814fc41c32a268c7bb049ba41f569310b20091f8a0bfe952833f683d818c60",
-    "js/game/diplomacy.js": "2d8ea1c186912abaff0f4ea4e44b167e5669bbb71b8b3ab7c423547b4c0ac591",
+    "js/game/diplomacy.js": "440fb0365788e746718431908a3bac3c039438fef39af8505778c741c425779d",
     "js/game/teams.js": "2562f21a3273e45d7cbbb78af11a244ddb39e1e6ca0d58a4e173d8ed95fdc9ae",
-    "js/game/attacks.js": "329bc3003b9f1e7b7188f786af9909806de25d182a3f5670f37b30c485195c3f",
-    "js/game/combat.js": "2f3221a59e3d56a47b046724c9d4f0c345a2d4a296b4a2a2b0227eb7571071ee",
+    "js/game/attacks.js": "0d9b5ba7c1acf1d7dcc8ba430b84fdf878083407ffa79dfa2d0cce10a793f65b",
+    "js/game/combat.js": "c8b9c3981855775f32a20c537663d03ccee206da07588053de0a6c3d0883386b",
     "js/game/annex.js": "d71864a03fd9a8b2d1616e43f58f0b3b3dc07d3924070acb77b91fbe5936e564",
     "js/game/seapath.js": "b8328436e517f6281dfb9a127e212f45a54137f36994ffff3a639492faa93881",
     "js/game/naval.js": "a67a6b589a09a909c1e14cb9891d569c477a49de3aca1ee7e3a4ca24d7eceb4e",
@@ -19,14 +19,14 @@
     "js/game/warships.js": "665f16c5435709711fa0c5ae9893cbd704f36e136de90b4716729e27c3037915",
     "js/game/nukes.js": "44d3d7668c639ce8a745ed396e825e04abeeac8957d6eb89e7d9bbd52d80b5c4",
     "js/game/sam.js": "384eae315d2a611b09750f5b167425e3076f28196b1b2c0308979a42eacafdc4",
-    "js/net/protocol.js": "246014ffea956fbc378d190876413ab15a1ecb4d00455154039595b2f418ef1e",
-    "js/net/executor.js": "7782c33f97816a1a57f8896d1fb8e29a756dd6a63c706460a045d7c43f92e152",
+    "js/net/protocol.js": "9d4fd61b2f71b1ec5d83956d2d4632aae9d0df0f37d4d1704e631552da639012",
+    "js/net/executor.js": "9cd24202b33bb55a8034273631ecc90d059026d5572319f09014f2c2efc9990a",
     "js/net/hash.js": "7917f510e3c01fc8da81b2203ae4285d4b85553d1fd057b3b3d334458d2489bc",
     "js/net/runner.js": "2a6e4f6edf6ac090a1b5ac3c8366b020b8162146b0a911bb5925d793208a7e08",
     "js/net/localserver.js": "403433da3baedfdb608d0b46bf3b7a6cdaa5e87393d362604bfa3807f451d653",
     "js/net/transport.js": "dfebde4cf7fab402a687e2da149e4ec612641f8bc02e0fcd032915c490d79ef9",
     "js/net/worldmap.js": "89d417233dc89ce447e60f1fe5ba3b9a881688de8d3b107fc08927d03cc60deb",
-    "js/ai.js": "fce23dfc6ed63ff17188877f661a68fc520a5ead4ef869135ebd167aa14b7a31"
+    "js/ai.js": "b0b95ace6dea13a6cdaa8e8bac2e5dea3047e71447b6d54c6c396118de9e8b74"
   },
   "scenario": {
     "name": "small-67890",
@@ -520,7 +520,7 @@
   ],
   "digest": {
     "ownerFNV": 3550974093,
-    "stateSHA256": "0f029bd1af5ddfe466a1994542632d638287f6dd8632cac2bf28be36fb4801cc"
+    "stateSHA256": "aaa8a8b1b311e0c397beb8273ccff7930d8080c466334dd8be5966fb8582e8f9"
   },
   "simulationTicks": 3052,
   "coverage": {

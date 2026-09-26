@@ -54,33 +54,6 @@ Object.assign(Game, {
   // `a.progress` across ticks for this reason.
   ATTACK_TICK_BUDGET: 1,
 
-  // ATTACK_TICK_BUDGET already bounds a single front to roughly one tile's
-  // worth of progress a tick — except a WIDE front, where attackTickFraction's
-  // own border-width divisor lets it buy many cheap tiles (open neutral land
-  // especially) out of that same one-unit budget. With dozens of fronts
-  // active at once — the packed opening minutes of a large lobby, well before
-  // anyone has built a fort or a boat — that multiplies into real cost:
-  // measured on the large map with 82 bots/400 tribes, stepAttack alone
-  // conquered ~1,775 tiles/tick (≈15.8ms) for the whole opening land-grab, on
-  // top of the tick's other phases. This caps total tiles conquered by ALL
-  // attacks combined in one tick, the same "budget the actual cost driver,
-  // not the call count" fix already applied to sea-path search (see
-  // SEA_PATH_NODE_BUDGET_PER_TICK) — cost here is near-perfectly linear in
-  // tiles conquered (~0.0088ms/tile, negligible fixed overhead), so this is a
-  // direct, predictable ceiling on stepAttack's per-tick cost (~3.5ms at this
-  // value) rather than an indirect one.
-  //
-  // Deliberately checked only for a front's SECOND tile onward (see
-  // stepAttack) — every front with troops and contact still always gets at
-  // least one tile of progress this tick regardless of the shared budget,
-  // preserving the guarantee ATTACK_TICK_BUDGET's own comment documents.
-  // Once the pool is spent, fronts later in this tick's iteration order (see
-  // core.js's tick()) simply stop at their first tile instead of their usual
-  // few, and pick back up next tick — like sea-path budgeting, this trades a
-  // few ticks of slower conquest during the most crowded stretch of a match
-  // for a bounded per-tick cost, never a stalled front.
-  ATTACK_TILE_BUDGET_PER_TICK: 400,
-
   // Terra nullius' own cost/speed constants (Config.ts's TERRA_NULLIUS_*):
   // attackTickFraction's unclaimed-land branch is `within(COST_SCALE*tileCost
   // /attackTroops, MIN, MAX) / (borderSize*2)` — inversely proportional to
