@@ -521,7 +521,7 @@ const UI = {
     // readable before you decide whether to fight them. The per-second rate
     // is dropped here since it's the same formula for every nation and adds
     // nothing a rival doesn't already know.
-    document.getElementById('hpGoldValue').textContent = formatGold(p.gold);
+    document.getElementById('hpGoldValue').textContent = formatGoldTight(p.gold);
   },
 
   // A bot's opinion of the player as a face: its relations entry, banded the

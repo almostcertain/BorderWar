@@ -127,6 +127,15 @@ function formatGold(n) {
   return (n / 1e6).toFixed(2) + 'M';
 }
 
+// Same scale as formatGold, without the decimal digit — for the hover panel,
+// which is glanced at from a distance and doesn't need the extra precision.
+function formatGoldTight(n) {
+  n = Math.max(0, n);
+  if (n < 1000) return String(Math.floor(n));
+  if (n < 1e6) return Math.round(n / 1000) + 'k';
+  return Math.round(n / 1e6) + 'M';
+}
+
 function mulberry32(seed) {
   return function () {
     seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
