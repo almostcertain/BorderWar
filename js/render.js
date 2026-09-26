@@ -693,6 +693,7 @@ const Render = {
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.lineWidth = line;
+    g.lineJoin = 'round';
     g.strokeStyle = 'rgba(0, 0, 0, 0.85)';
     g.fillStyle = '#ffe9a8';
     g.strokeText(text, c.width / 2, c.height / 2);
@@ -1350,6 +1351,7 @@ const Render = {
       const font = Math.max(13 * this.dpr, Math.min(19 * this.dpr, s * 1.6));
       ctx.font = '600 ' + font.toFixed(1) + 'px system-ui, sans-serif';
       ctx.lineWidth = Math.max(2.5, font * 0.34);
+      ctx.lineJoin = 'round';
       ctx.strokeStyle = 'rgba(0,0,0,0.8)';
       ctx.fillStyle = colour;
       const text = formatCountTight(a.troops);
@@ -2043,6 +2045,7 @@ const Render = {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.lineWidth = Math.max(2.5, font * 0.3);
+      ctx.lineJoin = 'round';
       ctx.strokeStyle = `rgba(0, 0, 0, ${(alpha * 0.85).toFixed(3)})`;
       ctx.fillStyle = `rgba(255, 233, 168, ${alpha.toFixed(3)})`;
       // Rounded to the nearest thousand rather than formatGold's exact
@@ -2086,6 +2089,7 @@ const Render = {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.lineWidth = Math.max(3, font * 0.25);
+      ctx.lineJoin = 'round';
       ctx.strokeStyle = `rgba(0, 0, 0, ${(alpha * 0.9).toFixed(3)})`;
       ctx.fillStyle = `rgba(255, 214, 90, ${alpha.toFixed(3)})`;
       const text = '+' + formatGold(g.amount);
@@ -2275,6 +2279,7 @@ const Render = {
     const cx = w / 2, cy = pad + font * 1.3;
     g.textBaseline = 'middle';
     g.lineWidth = Math.max(2, font * 0.2);
+    g.lineJoin = 'round';
     g.strokeStyle = 'rgba(0,0,0,0.7)';
     g.fillStyle = '#ffffff';
 
