@@ -833,16 +833,19 @@ html, body {
   justify-content: center;
   padding: 24px;
   z-index: 10;
+  overflow-y: auto;
 }
 
 .hidden { display: none !important; }
 
 .panel {
   max-width: 340px;
+  width: 100%;
   text-align: center;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
+  margin: auto;
 }
 
 .panel h1 { font-size: 28px; letter-spacing: 0.02em; }
@@ -1002,7 +1005,30 @@ html, body {
 .modeBody {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
+}
+
+/* Two related fields share a row instead of each claiming its own —
+   the biggest single cut to the panel's vertical footprint. Falls back
+   to stacked on narrow screens so labels/selects never get squeezed. */
+.optRow2 {
+  display: flex;
+  gap: 10px;
+}
+
+.optRow2 > label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.optRow2 > label select,
+.optRow2 > label input[type="number"] {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .panel input[type="text"] {

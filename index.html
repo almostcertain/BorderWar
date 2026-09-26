@@ -149,32 +149,36 @@
     </div>
 
     <div id="spMode" class="modeBody hidden">
-      <label>Map
-        <select id="mapType">
-          <option value="world" selected>The World</option>
-          <option value="procedural">Procedural</option>
-        </select>
-      </label>
-      <label id="mapSizeRow" class="hidden">Map Size
-        <select id="mapSize">
-          <option value="small">Small</option>
-          <option value="medium" selected>Medium</option>
-          <option value="large">Large</option>
-        </select>
-      </label>
-      <label>Difficulty
-        <select id="difficulty">
-          <option value="easy">Easy</option>
-          <option value="medium" selected>Medium</option>
-          <option value="hard">Hard</option>
-        </select>
-      </label>
-      <label>Mode
-        <select id="gameMode">
-          <option value="ffa" selected>Free for All</option>
-          <option value="team">Teams</option>
-        </select>
-      </label>
+      <div class="optRow2">
+        <label>Map
+          <select id="mapType">
+            <option value="world" selected>The World</option>
+            <option value="procedural">Procedural</option>
+          </select>
+        </label>
+        <label id="mapSizeRow" class="hidden">Map Size
+          <select id="mapSize">
+            <option value="small">Small</option>
+            <option value="medium" selected>Medium</option>
+            <option value="large">Large</option>
+          </select>
+        </label>
+      </div>
+      <div class="optRow2">
+        <label>Difficulty
+          <select id="difficulty">
+            <option value="easy">Easy</option>
+            <option value="medium" selected>Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+        </label>
+        <label>Mode
+          <select id="gameMode">
+            <option value="ffa" selected>Free for All</option>
+            <option value="team">Teams</option>
+          </select>
+        </label>
+      </div>
       <label id="playerTeamsRow" class="hidden">Teams
         <select id="playerTeams">
           <option value="2" selected>2 teams</option>
@@ -189,38 +193,44 @@
           <option value="Humans Vs Nations">Humans vs Nations</option>
         </select>
       </label>
-      <label>Bots <input id="botCount" type="number" min="2" max="100" value="82"></label>
-      <label>Tribes <input id="tribeCount" type="number" min="0" max="400" value="400"></label>
+      <div class="optRow2">
+        <label>Bots <input id="botCount" type="number" min="2" max="100" value="82"></label>
+        <label>Tribes <input id="tribeCount" type="number" min="0" max="400" value="400"></label>
+      </div>
       <button id="startBtn">Start Game</button>
     </div>
 
     <div id="hostMode" class="modeBody hidden">
-      <label>Map
-        <select id="hostMapType">
-          <option value="world" selected>The World</option>
-          <option value="procedural">Procedural</option>
-        </select>
-      </label>
-      <label id="hostMapSizeRow" class="hidden">Map Size
-        <select id="hostMapSize">
-          <option value="small">Small</option>
-          <option value="medium" selected>Medium</option>
-          <option value="large">Large</option>
-        </select>
-      </label>
-      <label>Difficulty
-        <select id="hostDifficulty">
-          <option value="easy">Easy</option>
-          <option value="medium" selected>Medium</option>
-          <option value="hard">Hard</option>
-        </select>
-      </label>
-      <label>Mode
-        <select id="hostGameMode">
-          <option value="ffa" selected>Free for All</option>
-          <option value="team">Teams</option>
-        </select>
-      </label>
+      <div class="optRow2">
+        <label>Map
+          <select id="hostMapType">
+            <option value="world" selected>The World</option>
+            <option value="procedural">Procedural</option>
+          </select>
+        </label>
+        <label id="hostMapSizeRow" class="hidden">Map Size
+          <select id="hostMapSize">
+            <option value="small">Small</option>
+            <option value="medium" selected>Medium</option>
+            <option value="large">Large</option>
+          </select>
+        </label>
+      </div>
+      <div class="optRow2">
+        <label>Difficulty
+          <select id="hostDifficulty">
+            <option value="easy">Easy</option>
+            <option value="medium" selected>Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+        </label>
+        <label>Mode
+          <select id="hostGameMode">
+            <option value="ffa" selected>Free for All</option>
+            <option value="team">Teams</option>
+          </select>
+        </label>
+      </div>
       <label id="hostPlayerTeamsRow" class="hidden">Teams
         <select id="hostPlayerTeams">
           <option value="2" selected>2 teams</option>
@@ -235,8 +245,10 @@
           <option value="Humans Vs Nations">Humans vs Nations</option>
         </select>
       </label>
-      <label>Bots <input id="hostBotCount" type="number" min="0" max="100" value="82"></label>
-      <label>Tribes <input id="hostTribeCount" type="number" min="0" max="400" value="400"></label>
+      <div class="optRow2">
+        <label>Bots <input id="hostBotCount" type="number" min="0" max="100" value="82"></label>
+        <label>Tribes <input id="hostTribeCount" type="number" min="0" max="400" value="400"></label>
+      </div>
       <label class="checkboxLabel"><input id="hostPublic" type="checkbox"> Public (visible in lobby browser)</label>
       <button id="hostCreateBtn">Create Lobby</button>
 
