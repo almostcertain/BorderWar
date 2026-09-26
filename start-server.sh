@@ -15,8 +15,8 @@ fi
 
 osascript <<EOF
 tell application "Terminal"
-  do script "cd \"$DIR/server\" && node index.js"
-  set custom title of front window to "BorderWar Server"
+  set serverTab to do script "cd \"$DIR/server\" && node index.js"
+  set custom title of serverTab to "BorderWar Server"
 end tell
 EOF
 
@@ -25,8 +25,8 @@ sleep 3
 
 osascript <<EOF
 tell application "Terminal"
-  do script "cloudflared tunnel --url http://localhost:$PORT"
-  set custom title of front window to "BorderWar Tunnel"
+  set tunnelTab to do script "cloudflared tunnel --url http://localhost:$PORT"
+  set custom title of tunnelTab to "BorderWar Tunnel"
 end tell
 EOF
 
