@@ -501,8 +501,6 @@ const UI = {
       (!p.isTribe && p.id !== Game.me && Game.me >= 0 && !Game.canTrade(Game.me, p.id) ? ' ' + iconHtml('embargo') + ' No trade' : '');
     if (subEl._html !== sub) { subEl._html = sub; subEl.innerHTML = sub; }
     this.updateBotFace(p);
-    document.getElementById('hpTiles').textContent =
-      p.tiles.size.toLocaleString() + ' (' + (p.tiles.size / GameMap.landTiles * 100).toFixed(1) + '%)';
 
     // Same reading as the player's own bar: home reserve against cap, with the
     // marching slice stacked on top so a fully-committed nation still shows as
@@ -520,10 +518,10 @@ const UI = {
 
     // Treasuries are public in OpenFront — its leaderboard carries a gold
     // column for every nation — so what a rival can afford is meant to be
-    // readable before you decide whether to fight them.
+    // readable before you decide whether to fight them. The per-second rate
+    // is dropped here since it's the same formula for every nation and adds
+    // nothing a rival doesn't already know.
     document.getElementById('hpGoldValue').textContent = formatGold(p.gold);
-    document.getElementById('hpGoldRate').textContent =
-      '+' + formatGold(Game.goldPerSecond(p)) + '/s';
   },
 
   // A bot's opinion of the player as a face: its relations entry, banded the
