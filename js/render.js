@@ -184,8 +184,18 @@ const Render = {
     // (wallCounts.has), matching what a tap here would actually be able to
     // take (enclosedPocketsOf/UI.onTap accept any touching wall, not just a
     // dominant one).
+    //
+    // It also has to agree with enclosedPocketsOf on the mainland-vs-fragment
+    // rule (game/annex.js's 2026-09-21 fix): a mixed wall never takes a
+    // nation's largest piece, only a fragment. Skipping that check here used
+    // to make this walk see a mixed-wall mainland as annexable while
+    // enclosedPocketsOf (correctly) refused it — for a tribe wedged between
+    // several neighbours, that meant hovering it took the gold-pocket branch
+    // below, enclosedPocketsOf came back empty, and nothing got painted at
+    // all instead of falling back to the plain wash.
     const found = id !== Game.me ? Game.enclosedRegion(UI.hoverTile, new Map(), 1) : null;
-    const region = found && found.wallCounts.has(Game.me) ? found : null;
+    const isMainland = found && found.wallCounts.size > 1 && found.tiles.length >= Game.largestLandPiece(id);
+    const region = found && !isMainland && found.wallCounts.has(Game.me) ? found : null;
     if (region) {
       const c = this.packed(255, 215, 60, 130);
       for (const r of Game.enclosedPocketsOf(id, Game.me)) for (const t of r) px[t] = c;
