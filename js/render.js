@@ -118,7 +118,7 @@ const Render = {
 
     // Unclaimed ground, one tone per terrain: grassy plains, dun highland,
     // bare grey mountain.
-    const water = this.packed(18, 34, 60);
+    const water = this.packed(74, 107, 138);
     const bare = [this.packed(78, 94, 72), this.packed(104, 96, 66), this.packed(122, 120, 114)];
     this.terrain = new Uint32Array(w * h);
     for (let i = 0; i < w * h; i++) {
@@ -442,7 +442,7 @@ const Render = {
     const ctx = this.ctx;
     this.clampCamera();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#060a14';
+    ctx.fillStyle = '#4a6b8a';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     const s = this.cam.scale * this.dpr;
