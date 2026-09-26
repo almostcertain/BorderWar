@@ -83,8 +83,19 @@ const Render = {
     return c;
   },
 
+  // Low graphics: draw at one canvas pixel per CSS pixel even on a Retina /
+  // HiDPI screen. That is a quarter of the pixels to fill, blend and upload
+  // every frame, which is what a weak integrated GPU (e.g. a 2017 MacBook's
+  // Iris 640) runs out of first. Everything on the map is sized off this.dpr,
+  // so it all scales down together; text is just a little softer.
+  lowRes: false,
+  setLowRes(on) {
+    this.lowRes = !!on;
+    if (this.canvas) this.resize();
+  },
+
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = this.lowRes ? 1 : Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = Math.floor(window.innerWidth * dpr);
     this.canvas.height = Math.floor(window.innerHeight * dpr);
     this.dpr = dpr;
@@ -99,6 +110,11 @@ const Render = {
     this.image = this.tileCtx.createImageData(w, h);
     this.pixels = new Uint32Array(this.image.data.buffer);
     this.qHead = this.qTail = 0;   // a previous match's pending reveal is meaningless here
+    // Sprites are keyed by player id, and ids (and their colours) are reused
+    // by the next match.
+    this.labelSprites.clear();
+    this.structSprites.clear();
+    this.structSpriteR = -1;
 
     // Unclaimed ground, one tone per terrain: grassy plains, dun highland,
     // bare grey mountain.
@@ -490,6 +506,201 @@ const Render = {
     return font * 0.66 * 2;   // doubled: at map-fit zoom the old size read as barely a dot
   },
 
+  // A structure's disc and glyph, drawn centred on (px, py) with radius r.
+  // Used to fill the sprite cache (structureSprite) and, while the zoom is
+  // still moving, to draw straight onto the map.
+  paintStructureIcon(ctx, type, owner, built, px, py, r) {
+    const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
+    // Disc is a dimmed tone of the owner's own colour — the same shade the
+    // territory fill uses on flat ground — rather than a fixed dark navy, so
+    // the city reads as part of that nation's land, not a generic marker.
+    // It's fully opaque (no alpha) so the hover overlay, which is drawn
+    // beneath structures each frame, never shows through and brightens it.
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgb(${(c[0] * 0.62) | 0}, ${(c[1] * 0.62) | 0}, ${(c[2] * 0.62) | 0})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+    ctx.lineWidth = Math.max(1.5, r * 0.18);
+    ctx.stroke();
+
+    const def = Game.unitDef(type);
+    if (def) {
+      // Under construction: the icon sits dimmed so a finished structure
+      // still reads as the visually "solid" one at a glance.
+      ctx.globalAlpha = built ? 1 : 0.45;
+      // Hand-drawn glyphs rather than the unit's emoji: colour emoji carry
+      // their own built-in colours and ignore fillStyle, so on platforms
+      // with a colour emoji font the icon rendered washed out against the
+      // disc instead of the solid white this needs to be.
+      ctx.fillStyle = '#ffffff';
+      if (type === 'factory') {
+        // A single low, wide block with a smokestack — deliberately
+        // squatter than the city's skyline so the two read as different
+        // silhouettes even at a glance, not just a different badge.
+        const bodyW = r * 0.95, bodyH = r * 0.5;
+        const bx = px - bodyW / 2, by = py + r * 0.3 - bodyH;
+        ctx.fillRect(bx, by, bodyW, bodyH);
+        const stackW = r * 0.16;
+        ctx.fillRect(px + bodyW * 0.18, by - r * 0.35, stackW, r * 0.35);
+      } else if (type === 'fort') {
+        // Heater-shield silhouette: flat top bar, straight sides down to
+        // mid-height, then angling inward to a point at the bottom.
+        const sw = r * 0.58, top = py - r * 0.52, bot = py + r * 0.7;
+        const mid = top + (bot - top) * 0.48;
+        ctx.beginPath();
+        ctx.moveTo(px - sw, top);
+        ctx.lineTo(px + sw, top);
+        ctx.lineTo(px + sw, mid);
+        ctx.lineTo(px, bot);
+        ctx.lineTo(px - sw, mid);
+        ctx.closePath();
+        ctx.fill();
+      } else if (type === 'port') {
+        // Anchor glyph, stroked rather than filled like the others (a
+        // ring and a hooked shackle read as hollow shapes) — ring at top,
+        // a stem down through a crossbar (the "stock"), flaring into a
+        // wide fluke at the base. Unmistakably distinct from the blocky
+        // city/factory/fort silhouettes.
+        ctx.lineWidth = Math.max(1.5, r * 0.16);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineCap = 'round';
+
+        const ringR = r * 0.22, ringY = py - r * 0.66;
+        ctx.beginPath();
+        ctx.arc(px, ringY, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const stemTop = ringY + ringR, stemBot = py + r * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(px, stemTop);
+        ctx.lineTo(px, stemBot);
+        ctx.stroke();
+
+        const barW = r * 0.46, barY = py - r * 0.22;
+        ctx.beginPath();
+        ctx.moveTo(px - barW / 2, barY);
+        ctx.lineTo(px + barW / 2, barY);
+        ctx.stroke();
+
+        // Flukes: one wide arc curling up from the base of the stem toward
+        // both sides, like the bottom half of the ring.
+        const flukeR = r * 0.42;
+        ctx.beginPath();
+        ctx.arc(px, stemBot - flukeR, flukeR, Math.PI * 0.12, Math.PI * 0.88);
+        ctx.stroke();
+
+        ctx.lineCap = 'butt';
+      } else if (type === 'silo') {
+        // Missile nose cone atop a squat silo body, unmistakably distinct
+        // from the blocky city/factory silhouettes and the hollow anchor —
+        // a solid filled triangle-plus-rectangle rocket silhouette.
+        const bodyW = r * 0.5, bodyTop = py - r * 0.05, bodyBot = py + r * 0.62;
+        ctx.fillRect(px - bodyW / 2, bodyTop, bodyW, bodyBot - bodyTop);
+        ctx.beginPath();
+        ctx.moveTo(px, py - r * 0.72);
+        ctx.lineTo(px + bodyW / 2, bodyTop);
+        ctx.lineTo(px - bodyW / 2, bodyTop);
+        ctx.closePath();
+        ctx.fill();
+        // Two small fins flaring out from the base.
+        const finW = r * 0.28;
+        ctx.beginPath();
+        ctx.moveTo(px - bodyW / 2, bodyBot - r * 0.2);
+        ctx.lineTo(px - bodyW / 2 - finW, bodyBot);
+        ctx.lineTo(px - bodyW / 2, bodyBot);
+        ctx.closePath();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(px + bodyW / 2, bodyBot - r * 0.2);
+        ctx.lineTo(px + bodyW / 2 + finW, bodyBot);
+        ctx.lineTo(px + bodyW / 2, bodyBot);
+        ctx.closePath();
+        ctx.fill();
+      } else if (type === 'sam') {
+        // A dish (arc) on a short mast, distinct from the Silo's solid
+        // rocket silhouette — this shoots nukes down, it doesn't launch.
+        ctx.lineWidth = Math.max(1.5, r * 0.16);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineCap = 'round';
+        const mastTop = py - r * 0.05, mastBot = py + r * 0.6;
+        ctx.beginPath();
+        ctx.moveTo(px, mastTop);
+        ctx.lineTo(px, mastBot);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(px, mastTop + r * 0.1, r * 0.42, Math.PI * 1.15, Math.PI * 1.85);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+      } else {
+        const bw = r * 0.22, gap = r * 0.12;
+        const heights = [r * 0.5, r * 0.85, r * 0.62];
+        const baseline = py + r * 0.45;
+        let bx = px - (bw * 3 + gap * 2) / 2;
+        for (const h of heights) {
+          ctx.fillRect(bx, baseline - h, bw, h);
+          bx += bw + gap;
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+  },
+
+  // Structure icons are stamped from a per-(type, owner, built) bitmap at the
+  // current icon radius instead of being redrawn from paths every frame (a few
+  // hundred structures cost several ms a frame that way). The radius changes
+  // while zooming, and building a bitmap per structure per frame would cost
+  // more than drawing directly, so sprites are only built once the radius has
+  // held still for STRUCT_SPRITE_SETTLE frames; until then this returns null
+  // and the caller draws directly. A new radius drops the old sprites.
+  STRUCT_SPRITE_SETTLE: 10,
+  STRUCT_TYPE_IDX: { city: 0, factory: 1, fort: 2, port: 3, silo: 4, sam: 5 },
+  structSprites: new Map(),
+  structSpriteR: -1,
+  structSpriteSteady: 0,
+  structureSprite(type, owner, built, r) {
+    if (this.structSpriteSteady < this.STRUCT_SPRITE_SETTLE) return null;
+    const t = this.STRUCT_TYPE_IDX[type];
+    if (t === undefined) return null;
+    const key = ((owner + 1) * 8 + t) * 2 + (built ? 1 : 0);
+    let c = this.structSprites.get(key);
+    if (c) return c;
+    const half = Math.ceil(r * 1.15 + 2);
+    c = document.createElement('canvas');
+    c.width = c.height = half * 2;
+    this.paintStructureIcon(c.getContext('2d'), type, owner, built, half, half, r);
+    this.structSprites.set(key, c);
+    return c;
+  },
+
+  // A structure's level number, outlined, rasterised once per level and
+  // whole-pixel font size. Only a handful of sizes and levels ever occur, so
+  // the cache stays tiny.
+  levelBadges: new Map(),
+  levelBadge(level, font) {
+    const key = level * 1000 + font;
+    let c = this.levelBadges.get(key);
+    if (c) return c;
+    const text = String(level);
+    const line = Math.max(2, font * 0.3);
+    c = document.createElement('canvas');
+    let g = c.getContext('2d');
+    g.font = '700 ' + font + 'px system-ui, sans-serif';
+    c.width = Math.ceil(g.measureText(text).width + line + 4);
+    c.height = Math.ceil(font * 1.3 + line + 4);
+    g = c.getContext('2d');                  // resizing reset the context state
+    g.font = '700 ' + font + 'px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.lineWidth = line;
+    g.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+    g.fillStyle = '#ffe9a8';
+    g.strokeText(text, c.width / 2, c.height / 2);
+    g.fillText(text, c.width / 2, c.height / 2);
+    this.levelBadges.set(key, c);
+    return c;
+  },
+
   // Finds the structure of `type` whose drawn disc a tap (in CSS-pixel client
   // coordinates, same space as screenToTile's input) actually falls near — not
   // just the single tile it happens to be anchored to. The disc reads as a
@@ -641,6 +852,13 @@ const Render = {
     }
 
     const r = this.structureRadius() * this.dpr;
+    if (r !== this.structSpriteR) {
+      this.structSpriteR = r;
+      this.structSpriteSteady = 0;
+      this.structSprites.clear();
+    } else {
+      this.structSpriteSteady++;
+    }
     ctx.lineWidth = Math.max(1.5, r * 0.18);   // reset per frame; the bar below borrows this ctx
     for (const b of Game.buildings.values()) {
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
@@ -648,140 +866,9 @@ const Render = {
       if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
 
       const owner = GameMap.owner[b.tile];
-      const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
-      // Disc is a dimmed tone of the owner's own colour — the same shade the
-      // territory fill uses on flat ground — rather than a fixed dark navy, so
-      // the city reads as part of that nation's land, not a generic marker.
-      // It's fully opaque (no alpha) so the hover overlay, which is drawn
-      // beneath structures each frame, never shows through and brightens it.
-      ctx.beginPath();
-      ctx.arc(px, py, r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgb(${(c[0] * 0.62) | 0}, ${(c[1] * 0.62) | 0}, ${(c[2] * 0.62) | 0})`;
-      ctx.fill();
-      ctx.strokeStyle = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
-      ctx.lineWidth = Math.max(1.5, r * 0.18);
-      ctx.stroke();
-
-      const def = Game.unitDef(b.type);
-      if (def) {
-        // Under construction: the icon sits dimmed so a finished structure
-        // still reads as the visually "solid" one at a glance.
-        ctx.globalAlpha = b.built ? 1 : 0.45;
-        // Hand-drawn glyphs rather than the unit's emoji: colour emoji carry
-        // their own built-in colours and ignore fillStyle, so on platforms
-        // with a colour emoji font the icon rendered washed out against the
-        // disc instead of the solid white this needs to be.
-        ctx.fillStyle = '#ffffff';
-        if (b.type === 'factory') {
-          // A single low, wide block with a smokestack — deliberately
-          // squatter than the city's skyline so the two read as different
-          // silhouettes even at a glance, not just a different badge.
-          const bodyW = r * 0.95, bodyH = r * 0.5;
-          const bx = px - bodyW / 2, by = py + r * 0.3 - bodyH;
-          ctx.fillRect(bx, by, bodyW, bodyH);
-          const stackW = r * 0.16;
-          ctx.fillRect(px + bodyW * 0.18, by - r * 0.35, stackW, r * 0.35);
-        } else if (b.type === 'fort') {
-          // Heater-shield silhouette: flat top bar, straight sides down to
-          // mid-height, then angling inward to a point at the bottom.
-          const sw = r * 0.58, top = py - r * 0.52, bot = py + r * 0.7;
-          const mid = top + (bot - top) * 0.48;
-          ctx.beginPath();
-          ctx.moveTo(px - sw, top);
-          ctx.lineTo(px + sw, top);
-          ctx.lineTo(px + sw, mid);
-          ctx.lineTo(px, bot);
-          ctx.lineTo(px - sw, mid);
-          ctx.closePath();
-          ctx.fill();
-        } else if (b.type === 'port') {
-          // Anchor glyph, stroked rather than filled like the others (a
-          // ring and a hooked shackle read as hollow shapes) — ring at top,
-          // a stem down through a crossbar (the "stock"), flaring into a
-          // wide fluke at the base. Unmistakably distinct from the blocky
-          // city/factory/fort silhouettes.
-          ctx.lineWidth = Math.max(1.5, r * 0.16);
-          ctx.strokeStyle = '#ffffff';
-          ctx.lineCap = 'round';
-
-          const ringR = r * 0.22, ringY = py - r * 0.66;
-          ctx.beginPath();
-          ctx.arc(px, ringY, ringR, 0, Math.PI * 2);
-          ctx.stroke();
-
-          const stemTop = ringY + ringR, stemBot = py + r * 0.5;
-          ctx.beginPath();
-          ctx.moveTo(px, stemTop);
-          ctx.lineTo(px, stemBot);
-          ctx.stroke();
-
-          const barW = r * 0.46, barY = py - r * 0.22;
-          ctx.beginPath();
-          ctx.moveTo(px - barW / 2, barY);
-          ctx.lineTo(px + barW / 2, barY);
-          ctx.stroke();
-
-          // Flukes: one wide arc curling up from the base of the stem toward
-          // both sides, like the bottom half of the ring.
-          const flukeR = r * 0.42;
-          ctx.beginPath();
-          ctx.arc(px, stemBot - flukeR, flukeR, Math.PI * 0.12, Math.PI * 0.88);
-          ctx.stroke();
-
-          ctx.lineCap = 'butt';
-        } else if (b.type === 'silo') {
-          // Missile nose cone atop a squat silo body, unmistakably distinct
-          // from the blocky city/factory silhouettes and the hollow anchor —
-          // a solid filled triangle-plus-rectangle rocket silhouette.
-          const bodyW = r * 0.5, bodyTop = py - r * 0.05, bodyBot = py + r * 0.62;
-          ctx.fillRect(px - bodyW / 2, bodyTop, bodyW, bodyBot - bodyTop);
-          ctx.beginPath();
-          ctx.moveTo(px, py - r * 0.72);
-          ctx.lineTo(px + bodyW / 2, bodyTop);
-          ctx.lineTo(px - bodyW / 2, bodyTop);
-          ctx.closePath();
-          ctx.fill();
-          // Two small fins flaring out from the base.
-          const finW = r * 0.28;
-          ctx.beginPath();
-          ctx.moveTo(px - bodyW / 2, bodyBot - r * 0.2);
-          ctx.lineTo(px - bodyW / 2 - finW, bodyBot);
-          ctx.lineTo(px - bodyW / 2, bodyBot);
-          ctx.closePath();
-          ctx.fill();
-          ctx.beginPath();
-          ctx.moveTo(px + bodyW / 2, bodyBot - r * 0.2);
-          ctx.lineTo(px + bodyW / 2 + finW, bodyBot);
-          ctx.lineTo(px + bodyW / 2, bodyBot);
-          ctx.closePath();
-          ctx.fill();
-        } else if (b.type === 'sam') {
-          // A dish (arc) on a short mast, distinct from the Silo's solid
-          // rocket silhouette — this shoots nukes down, it doesn't launch.
-          ctx.lineWidth = Math.max(1.5, r * 0.16);
-          ctx.strokeStyle = '#ffffff';
-          ctx.lineCap = 'round';
-          const mastTop = py - r * 0.05, mastBot = py + r * 0.6;
-          ctx.beginPath();
-          ctx.moveTo(px, mastTop);
-          ctx.lineTo(px, mastBot);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.arc(px, mastTop + r * 0.1, r * 0.42, Math.PI * 1.15, Math.PI * 1.85);
-          ctx.stroke();
-          ctx.lineCap = 'butt';
-        } else {
-          const bw = r * 0.22, gap = r * 0.12;
-          const heights = [r * 0.5, r * 0.85, r * 0.62];
-          const baseline = py + r * 0.45;
-          let bx = px - (bw * 3 + gap * 2) / 2;
-          for (const h of heights) {
-            ctx.fillRect(bx, baseline - h, bw, h);
-            bx += bw + gap;
-          }
-        }
-        ctx.globalAlpha = 1;
-      }
+      const icon = this.structureSprite(b.type, owner, b.built, r);
+      if (icon) ctx.drawImage(icon, Math.round(px - icon.width / 2), Math.round(py - icon.height / 2));
+      else this.paintStructureIcon(ctx, b.type, owner, b.built, px, py, r);
 
       // One bar reused for both timers: dim blue while a fresh structure
       // stands unfinished, warm gold while a finished one is climbing a
@@ -799,17 +886,14 @@ const Render = {
 
       // Level, above the disc — always shown once built, level 1 included, so
       // a structure's level can be read straight off the map.
+      // Stamped from a cached bitmap (see levelBadge) rather than lettered here:
+      // with a few hundred structures on screen this was the largest block of
+      // text drawing in the frame.
       if (b.built && b.level >= 1) {
-        const badgeFont = Math.max(9 * this.dpr, Math.min(15 * this.dpr, r * 0.6));
-        ctx.font = '700 ' + badgeFont.toFixed(1) + 'px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.lineWidth = Math.max(2, badgeFont * 0.3);
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-        ctx.fillStyle = '#ffe9a8';
+        const badgeFont = Math.round(Math.max(9 * this.dpr, Math.min(15 * this.dpr, r * 0.6)));
+        const img = this.levelBadge(b.level, badgeFont);
         const ly = py - r - badgeFont * 0.85;
-        ctx.strokeText(String(b.level), px, ly);
-        ctx.fillText(String(b.level), px, ly);
+        ctx.drawImage(img, Math.round(px - img.width / 2), Math.round(ly - img.height / 2));
       }
 
       // Charge pips below the disc, one per level — filled = ready to fire,
@@ -2114,13 +2198,128 @@ const Render = {
     }
   },
 
+  // --- Label sprites -----------------------------------------------------------
+  // Each nation's label (icons, name, troop count) is rasterised once into its
+  // own small canvas and stamped with drawImage every frame, instead of being
+  // re-lettered with strokeText/fillText every frame. On the World map several
+  // hundred labels come on screen together early in a match, and outlined canvas
+  // text is slow, especially in Safari: that was the frame-rate drop players saw
+  // "as soon as the names appear". A sprite is redrawn only when what it shows
+  // changes (troop text, icons, name) or its whole-pixel font size does, and at
+  // most LABEL_REDRAW_MAX sprites / LABEL_REDRAW_MS of that work happens per
+  // frame, oldest sprite first; the rest keep showing their previous image
+  // (scaled to the right size) for a frame or two.
+  //
+  // The count cap matters as much as the time budget: the first stamp of a
+  // just-redrawn sprite pays to hand the changed bitmap to the GPU (~0.5ms each
+  // in Chromium at 2x DPR, several times the redraw itself), and that cost lands
+  // in drawImage, outside the time budget. Troop counts change every tick and a
+  // growing nation's font creeps up a pixel at a time, so troop and size
+  // changes wait LABEL_REFRESH_MS since that sprite was last drawn; a new
+  // label, a renamed one or an icon change goes straight into the queue.
+  // See docs/perf-label-rendering.md.
+  LABEL_REDRAW_MS: 2,
+  LABEL_REDRAW_MIN: 2,        // always make at least this much progress per frame
+  LABEL_REDRAW_MAX: 8,
+  LABEL_REFRESH_MS: 500,
+  LABEL_ICON_BITS: [['target', 1], ['teammate', 2], ['ally', 4], ['traitor', 8], ['embargo', 16]],
+  labelSprites: new Map(),    // player id -> sprite (see labelSprite)
+  labelFrame: 0,
+  labelDrawList: [],
+  labelStaleList: [],
+
+  labelSprite(id) {
+    let sp = this.labelSprites.get(id);
+    if (!sp) {
+      sp = { canvas: null, w: 0, h: 0, ox: 0, oy: 0, font: 0, name: null, troops: null, icons: 0,
+             nameEm: 0, troopsEm: 0, measuredName: null, measuredTroops: null,
+             drawnAt: -1, drawnMs: -Infinity, usedAt: 0, px: 0, py: 0, want: 0, wantIcons: 0, wantTroops: '', wantName: '' };
+      this.labelSprites.set(id, sp);
+    }
+    return sp;
+  },
+
+  // Width of `text` in ems at the label's name weight, from one context whose
+  // font is set once — measuring never touches the main canvas's font state.
+  labelEm(text) {
+    if (!this.measureCtx) {
+      this.measureCtx = document.createElement('canvas').getContext('2d');
+      this.measureCtx.font = '600 100px system-ui, sans-serif';
+    }
+    return this.measureCtx.measureText(text).width / 100;
+  },
+
+  // Rasterises `sp` at its wanted whole-pixel font. Layout matches what
+  // drawLabels used to letter directly onto the map: icons then the name on
+  // one line, the troop count centred under it, both outlined in black.
+  renderLabelSprite(sp, now) {
+    const font = sp.want, icons = sp.wantIcons;
+    let nIcons = 0;
+    for (const [, bit] of this.LABEL_ICON_BITS) if (icons & bit) nIcons++;
+    const iconStep = 1.3;                        // icon (1.05em) + gap (0.25em), in ems
+    const nameW = (sp.nameEm + nIcons * iconStep) * font;
+    const troopsW = sp.troopsEm * font;
+    const pad = Math.ceil(font * 0.15 + 2);
+    const w = Math.ceil(Math.max(nameW, troopsW)) + pad * 2;
+    const h = Math.ceil(font * 2.6) + pad * 2;
+
+    let c = sp.canvas;
+    if (!c) c = sp.canvas = document.createElement('canvas');
+    if (c.width < w || c.height < h) {
+      c.width = Math.max(c.width, Math.ceil(w * 1.2));
+      c.height = Math.max(c.height, h);
+    }
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, c.width, c.height);
+
+    const cx = w / 2, cy = pad + font * 1.3;
+    g.textBaseline = 'middle';
+    g.lineWidth = Math.max(2, font * 0.2);
+    g.strokeStyle = 'rgba(0,0,0,0.7)';
+    g.fillStyle = '#ffffff';
+
+    const nameY = cy - font * 0.55;
+    let x = cx - nameW / 2;
+    let missingIcon = false;
+    const iconSize = font * 1.05;
+    for (const [name, bit] of this.LABEL_ICON_BITS) {
+      if (!(icons & bit)) continue;
+      const img = this.icon(name, iconSize);
+      if (img) g.drawImage(img, Math.round(x), Math.round(nameY - img.height / 2));
+      else missingIcon = true;
+      x += iconStep * font;
+    }
+    g.font = '600 ' + font + 'px system-ui, sans-serif';
+    g.textAlign = 'left';
+    g.strokeText(sp.wantName, x, nameY);
+    g.fillText(sp.wantName, x, nameY);
+
+    g.font = font + 'px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.strokeText(sp.wantTroops, cx, cy + font * 0.6);
+    g.fillText(sp.wantTroops, cx, cy + font * 0.6);
+
+    sp.w = w; sp.h = h; sp.ox = cx; sp.oy = cy;
+    sp.font = font;
+    sp.name = sp.wantName;
+    sp.troops = sp.wantTroops;
+    // An icon whose SVG hasn't loaded yet leaves the sprite marked stale, so it
+    // is redrawn once the image arrives.
+    sp.icons = missingIcon ? -1 : icons;
+    sp.drawnAt = this.labelFrame;
+    sp.drawnMs = now;
+  },
+
   drawLabels() {
     this.stepLabels();
+    const frame = ++this.labelFrame;
+    const now = performance.now();
 
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    const draws = this.labelDrawList, stale = this.labelStaleList;
+    draws.length = 0;
+    stale.length = 0;
 
     const meP = Game.players[Game.me];
     const marked = meP ? Game.transitiveTargets(meP) : null;
@@ -2154,49 +2353,75 @@ const Render = {
       //   traitor   recently broke a pact
       //   embargo   trade with us is blocked, by either side's embargo
       const noTrade = !p.isTribe && Game.me >= 0 && p.id !== Game.me && !Game.canTrade(Game.me, p.id);
-      const icons = this.labelIcons || (this.labelIcons = []);
-      icons.length = 0;
-      if (marked && marked.has(p.id)) icons.push('target');
-      if (Game.onSameTeam(Game.me, p.id)) icons.push('teammate');
-      else if (Game.areAllied(Game.me, p.id)) icons.push('ally');
-      if (Game.isTraitor(p)) icons.push('traitor');
-      if (noTrade) icons.push('embargo');
+      let icons = 0, nIcons = 0;
+      if (marked && marked.has(p.id)) { icons |= 1; nIcons++; }
+      if (Game.onSameTeam(Game.me, p.id)) { icons |= 2; nIcons++; }
+      else if (Game.areAllied(Game.me, p.id)) { icons |= 4; nIcons++; }
+      if (Game.isTraitor(p)) { icons |= 8; nIcons++; }
+      if (noTrade) { icons |= 16; nIcons++; }
+
+      const sp = this.labelSprite(p.id);
+      if (sp.measuredName !== p.name) { sp.measuredName = p.name; sp.nameEm = this.labelEm(p.name); }
+      if (sp.measuredTroops !== troops) { sp.measuredTroops = troops; sp.troopsEm = this.labelEm(troops); }
 
       // Icons scale with the font, so the whole name line does too and the
       // shrink-to-fit below stays a single proportional step.
-      ctx.font = '600 ' + font.toFixed(1) + 'px system-ui, sans-serif';
-      const iconStep = icons.length ? 1.3 : 0;   // icon (1.05em) + gap (0.25em), in ems
-      const nameW = ctx.measureText(p.name).width + icons.length * iconStep * font;
-      const widest = Math.max(nameW, ctx.measureText(troops).width);
-      let scale = 1;
+      const nameW = (sp.nameEm + nIcons * 1.3) * font;   // icon (1.05em) + gap (0.25em), in ems
+      const widest = Math.max(nameW, sp.troopsEm * font);
       if (widest > boxW * 0.92) {
-        scale = boxW * 0.92 / widest;         // shrink to fit rather than overflow
-        font *= scale;
+        font *= boxW * 0.92 / widest;         // shrink to fit rather than overflow
         if (font < minFont) continue;
       }
+      // Whole device pixels, so a settled sprite is stamped 1:1 and stays crisp.
+      font = Math.round(font);
 
-      ctx.lineWidth = Math.max(2, font * 0.2);
-      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-      ctx.fillStyle = '#ffffff';
-
-      const nameY = py - font * 0.55;
-      let x = px - nameW * scale / 2;
-      const iconSize = font * 1.05;
-      for (const name of icons) {
-        const img = this.icon(name, iconSize);
-        if (img) ctx.drawImage(img, Math.round(x), Math.round(nameY - img.height / 2));
-        x += iconStep * font;
-      }
-      ctx.font = '600 ' + font.toFixed(1) + 'px system-ui, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.strokeText(p.name, x, nameY);
-      ctx.fillText(p.name, x, nameY);
-      ctx.textAlign = 'center';
-
-      ctx.font = font.toFixed(1) + 'px system-ui, sans-serif';
-      ctx.strokeText(troops, px, py + font * 0.6);
-      ctx.fillText(troops, px, py + font * 0.6);
+      sp.want = font;
+      sp.wantIcons = icons;
+      sp.wantTroops = troops;
+      sp.wantName = p.name;
+      sp.px = px;
+      sp.py = py;
+      sp.usedAt = frame;
+      draws.push(sp);
+      // A size or troop change can wait for the refresh interval: in the
+      // meantime the old sprite is stamped scaled to the new size, which is all
+      // a nation growing a pixel (or a zoom step) needs.
+      if (!sp.canvas || sp.icons !== icons || sp.name !== p.name ||
+          ((sp.font !== font || sp.troops !== troops) && now - sp.drawnMs >= this.LABEL_REFRESH_MS)) stale.push(sp);
       L.font = font;
+    }
+
+    // Redraw what changed, longest-stale first (never-drawn sprites sort ahead
+    // of everything), until this frame's budget runs out.
+    if (stale.length) {
+      stale.sort((a, b) => a.drawnAt - b.drawnAt);
+      const until = now + this.LABEL_REDRAW_MS;
+      const n = Math.min(stale.length, this.LABEL_REDRAW_MAX);
+      for (let k = 0; k < n; k++) {
+        if (k >= this.LABEL_REDRAW_MIN && performance.now() > until) break;
+        this.renderLabelSprite(stale[k], now);
+      }
+    }
+
+    // A sprite still waiting its turn is shown at its old size scaled to the
+    // new one; smoothing is switched off for the tile blit, so turn it back on.
+    ctx.imageSmoothingEnabled = true;
+    for (const sp of draws) {
+      if (!sp.canvas) continue;
+      const k = sp.want / sp.font;
+      if (k === 1) {
+        ctx.drawImage(sp.canvas, 0, 0, sp.w, sp.h, Math.round(sp.px - sp.ox), Math.round(sp.py - sp.oy), sp.w, sp.h);
+      } else {
+        ctx.drawImage(sp.canvas, 0, 0, sp.w, sp.h, sp.px - sp.ox * k, sp.py - sp.oy * k, sp.w * k, sp.h * k);
+      }
+    }
+
+    // Drop sprites for nations that haven't been on screen for a while (dead,
+    // or panned away), so the cache tracks what is actually being looked at.
+    if (frame % 300 === 0) {
+      for (const [id, sp] of this.labelSprites) {
+        if (frame - sp.usedAt > 600) this.labelSprites.delete(id);
+      }
     }
   },
 

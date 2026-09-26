@@ -1027,6 +1027,8 @@ html, body {
 }
 
 #nameRow input { margin-left: 6px; width: 180px; }
+#lowGfxRow { font-size: 12px; opacity: 0.8; cursor: pointer; }
+#lowGfxRow input { margin: 0 4px 0 0; vertical-align: middle; }
 
 .lobbyLabel {
   font-size: 12px;

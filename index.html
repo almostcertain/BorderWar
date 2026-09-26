@@ -125,6 +125,9 @@
          same Transport/onConnect/onServerMessage pipeline with local:false;
          see js/main.js's "Multiplayer lobby" section. -->
     <label id="nameRow">Name <input id="playerName" type="text" maxlength="20" placeholder="You" autocomplete="off" spellcheck="false"></label>
+    <label id="lowGfxRow" title="Draws the map at standard resolution instead of Retina/HiDPI. Much faster on older laptops; slightly softer text.">
+      <input id="lowGfx" type="checkbox"> Low graphics (faster on older computers)
+    </label>
 
     <!-- Issue: main menu redesign — the open rotating lobby (#12) is the
          primary call to action, so it gets its own hero card with a single

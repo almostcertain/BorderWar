@@ -1534,6 +1534,16 @@ const UI = {
     let savedName = '';
     try { savedName = localStorage.getItem('borderwar_username') || ''; } catch (e) { /* ignore */ }
     if (savedName) document.getElementById('playerName').value = savedName;
+
+    // Low graphics is a per-device choice, so it lives in this browser's
+    // storage and applies the moment it is ticked.
+    const lowGfx = document.getElementById('lowGfx');
+    try { lowGfx.checked = localStorage.getItem('borderwar_lowgfx') === '1'; } catch (e) { /* ignore */ }
+    Render.setLowRes(lowGfx.checked);
+    lowGfx.addEventListener('change', () => {
+      Render.setLowRes(lowGfx.checked);
+      try { localStorage.setItem('borderwar_lowgfx', lowGfx.checked ? '1' : '0'); } catch (e) { /* ignore */ }
+    });
   },
 
   // The one name field on the main menu, shared by singleplayer, host and
