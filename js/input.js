@@ -51,7 +51,7 @@ const Input = {
   // not the sim tick — panning is a rendering concern and must stay smooth
   // regardless of turn cadence.
   updateKeyPan(dtSeconds) {
-    if (this.keys.size === 0 || !Game.running) return;
+    if (this.keys.size === 0) return;
     const panDist = this.PAN_SPEED * dtSeconds / Render.cam.scale;
     if (this.keys.has('KeyA')) Render.cam.x -= panDist;
     if (this.keys.has('KeyD')) Render.cam.x += panDist;
