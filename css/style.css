@@ -195,11 +195,28 @@ html, body {
 /* One chip per active attack or boat touching the player, in either
    direction. Pushes and boats the player launched carry an X to retreat
    them; incoming attacks and boats read as defenses and have none — there is
-   nothing to cancel about someone else's army. */
+   nothing to cancel about someone else's army.
+   Floated above #hud's own gradient panel instead of laid out inside it: an
+   in-flow row here grew that panel taller every time a fight was active, and
+   its solid background sat behind chips that already carry their own. As an
+   overlay, chips float directly over the map and the panel underneath never
+   changes size, whether there are zero fronts or a screenful of them. The
+   row itself ignores clicks so gaps between chips still reach the map;
+   individual chips opt back in below. */
 #frontsRow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  padding: 0 12px 6px;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  pointer-events: none;
+}
+
+#frontsRow .frontChip, #frontsRow .frontClose {
+  pointer-events: auto;
 }
 
 .frontChip {
