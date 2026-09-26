@@ -12,6 +12,12 @@ const Input = {
   // into a drag, short enough that it does not feel like the game ignored you.
   LONG_PRESS_MS: 800,
 
+  // WASD pan / up-down arrow zoom, held keys only — see keys below and
+  // updateKeyPan(), which main.js's loop() calls once per frame.
+  keys: new Set(),
+  PAN_SPEED: 600,   // tiles/sec at scale 1, i.e. screen-independent map speed
+  ZOOM_SPEED: 1.6,  // multiplier per second
+
   setup(canvas) {
     canvas.addEventListener('pointerdown', e => this.onDown(e));
     canvas.addEventListener('pointermove', e => this.onMove(e));
@@ -26,6 +32,34 @@ const Input = {
       if (UI.cancelPlacing()) return;
       this.openMenu(e.clientX, e.clientY);
     });
+    window.addEventListener('keydown', e => this.onKeyDown(e));
+    window.addEventListener('keyup', e => this.keys.delete(e.code));
+    // A held key stops repeating (and panning) the instant focus leaves the
+    // window — alt-tabbing away with W held would otherwise pan forever.
+    window.addEventListener('blur', () => this.keys.clear());
+  },
+
+  onKeyDown(e) {
+    const tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (this.PAN_KEYS.has(e.code)) this.keys.add(e.code);
+  },
+
+  PAN_KEYS: new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown']),
+
+  // Called once per rendered frame from main.js's loop(). Real wall-clock dt,
+  // not the sim tick — panning is a rendering concern and must stay smooth
+  // regardless of turn cadence.
+  updateKeyPan(dtSeconds) {
+    if (this.keys.size === 0 || !Game.running) return;
+    const panDist = this.PAN_SPEED * dtSeconds / Render.cam.scale;
+    if (this.keys.has('KeyA')) Render.cam.x -= panDist;
+    if (this.keys.has('KeyD')) Render.cam.x += panDist;
+    if (this.keys.has('KeyW')) Render.cam.y -= panDist;
+    if (this.keys.has('KeyS')) Render.cam.y += panDist;
+    const zoomFactor = Math.pow(this.ZOOM_SPEED, dtSeconds);
+    if (this.keys.has('ArrowUp')) Render.cam.scale *= zoomFactor;
+    if (this.keys.has('ArrowDown')) Render.cam.scale /= zoomFactor;
   },
 
   // Desktop-only nation inspector: a mouse resting over any owned land — your

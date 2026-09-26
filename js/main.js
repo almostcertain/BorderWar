@@ -487,9 +487,16 @@
   // signal that lets the server emit the next one (see LocalServer.turnComplete
   // — it is what stops singleplayer running away from itself, and what makes
   // the debug burst client-paced).
+  let lastPanFrameAt = 0;
+
   function loop(now) {
     requestAnimationFrame(loop);
     if (!Render.tileCanvas) return;
+
+    // Clamped so a tab-switch's huge gap doesn't fling the camera on return.
+    const panDt = lastPanFrameAt ? Math.min(0.1, (now - lastPanFrameAt) / 1000) : 0;
+    lastPanFrameAt = now;
+    Input.updateKeyPan(panDt);
 
     const budgetEnd = performance.now() + SIM_BUDGET_MS;
     while (Runner.pendingTurns() > 0 && performance.now() < budgetEnd) {
