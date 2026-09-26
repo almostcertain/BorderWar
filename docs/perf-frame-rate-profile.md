@@ -151,3 +151,93 @@ Real frame pacing and GPU time. Those need a check in a normal browser
 window at the player's actual resolution. If the game is slow on a high-DPI
 or 4K screen but not at 1280×720, fill cost (option 3, and the full-screen
 map `drawImage`) is the likely cause, not JavaScript.
+
+## Fort/SAM range rings below map-fit zoom (2026-09-25)
+
+Follow-up to option 3: the off-screen cull was already in (above), but a
+nation's own forts/SAMs are still all on-screen at once at any zoom close to
+the map-fit view, and the translucent fill+dashed stroke on each one is real
+GPU cost at that count. `Render.drawStructures()` now skips both range-ring
+passes entirely while `cam.scale` is within 2x of the map-fit scale
+(`Render._minScale`, cached by `clampCamera()` each frame) — closer zoom,
+where a player is actually looking at a specific front, is unaffected.
+Render-only; no sim change, no golden impact.
+
+## Land-combat tile budget (2026-09-25)
+
+Headless sim profiling (`node tools/sim-profile.js <ticks> large 12345 <bots>
+<tribes>`) found the actual reported hitching on a large-map match: not
+rendering, and not gated by any built structure — `stepAttack` (land-combat
+resolution) alone, present from tick 1.
+
+| Lobby | mean tick | `stepAttack` |
+|---|---|---|
+| 8 bots / 12 tribes | 2.3 ms | 1.7 ms/tick |
+| 50 bots / 40 tribes | 12.4 ms | 9.2 ms/tick |
+| 82 bots / 400 tribes (the documented default World lobby) | 23.6 ms | 15.8 ms/tick |
+
+Cause: `ATTACK_TICK_BUDGET` bounds a single front to ~1 tile's worth of
+progress a tick, but `attackTickFraction`'s border-width divisor lets a WIDE
+front (open neutral land especially) buy many cheap tiles out of that same
+budget. With dozens of fronts active at once — the packed opening minutes of
+a large lobby, well before anyone has a fort or a boat — that multiplies
+into real cost. Measured cost is close to perfectly linear in tiles
+conquered (~0.0088 ms/tile, negligible fixed overhead): 82 bots/400 tribes
+conquered ~1,775 tiles/tick on average during the opening rush.
+
+Fix (`ATTACK_TILE_BUDGET_PER_TICK` in `js/game/combat.js`, checked in
+`js/game/attacks.js`'s `stepAttack`): caps total tiles conquered by every
+active attack combined in one tick at 400, the same "budget the actual cost
+driver, not the call count" shape already used for sea-path search. Checked
+only from a front's *second* tile onward, so the existing "every front with
+troops and contact gets at least one tile of progress a tick" guarantee
+(see `ATTACK_TICK_BUDGET`'s own comment) still holds regardless of the
+shared pool. Once the pool is spent, fronts later in that tick's iteration
+order just stop at their first tile and pick up again next tick.
+
+82 bots/400 tribes, large map, first 600 ticks:
+
+| | before | after |
+|---|---|---|
+| mean / p50 tick | 23.6 / 21.5 ms | 7.85 / 7.27 ms |
+| `stepAttack` | 15.8 ms/tick | 4.3 ms/tick |
+
+400 tiles/tick was chosen as a moderate cap (~4x reduction) rather than one
+tight enough to force every tick under the 8 ms sim budget on its own —
+other same-tick phases (`checkAnnexations`, `AI.update`, etc., out of scope
+here) already cost ~7.8 ms during this window, and a cap tight enough to
+absorb that too (~150 tiles/tick) would make land conquest during a crowded
+opening noticeably — 5-10x — slower to resolve, not just smoother.
+
+Verified against the 8-bot/12-tribe population every recorded golden
+scenario uses: `small-*` never reaches 400 tiles/tick (max 256-309, cap never
+engages, sim output byte-identical). `medium-*`/`large-12345`/`world-12345`
+*do* cross it even at that population (max ~412-419/tick), so this is a real,
+intended sim change for those — goldens re-recorded.
+
+Also fixed in the same re-record: the manifest baked into every golden file
+was already stale before this change — `js/net/protocol.js` and
+`js/net/executor.js`'s recorded hashes didn't match the content committed
+alongside them at the last re-record (`4373548`), so `compare` has been
+throwing a manifest-mismatch error (not a real sim divergence) since that
+commit. Re-recording for the change above also corrected it.
+
+## Label draw cap (2026-09-25)
+
+Separate render finding, reported directly: perf on a large-map match got
+noticeably worse specifically once nation/tribe names started appearing —
+`drawLabels()` gates each label on a minimum font size (`minFont`, tied to
+how much territory that nation holds on screen), so early on most labels are
+skipped before any canvas text call happens. Once enough nations grow past
+that threshold at once, the loop starts calling `strokeText`/`fillText` (name
++ troop count, stroked text is expensive to rasterize) for every one of
+them, every frame, with no cap — unlike the label *position* sweep
+(`computeLabelSlice`), which was already paced one nation per frame, the
+*draw* pass has always run in full every frame.
+
+Fix: `Render.MAX_DRAWN_LABELS` (80) caps how many labels actually reach the
+text-drawing pass per frame, keeping the largest by tile count when there
+are more qualifying candidates than that. Below the cap nothing changes.
+Render-only; no sim change, no golden impact. Not yet measured in a real
+browser (no browser pane in this environment) — worth confirming in-game
+that 80 is the right number rather than just directionally correct.
