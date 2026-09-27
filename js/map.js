@@ -139,16 +139,25 @@ const GameMap = {
   },
 
   // The strait between twin continents: a centre line that meanders a little
-  // down the middle of the map, per row, and a fixed half-width. Wide enough
-  // to always read as open sea and force a naval crossing, narrow enough not
-  // to eat into either continent's half.
+  // down the middle of the map, per row, and a half-width that varies by seed
+  // so twin maps aren't all split by the same channel width — some seeds get
+  // a narrow crossing, others a wide sea between the two continents. Still
+  // wide enough to always read as open sea and force a naval crossing, and
+  // capped well short of eating into either continent's half.
+  // Integer hash of the seed only, like mapLayout/rangeShape — this runs in
+  // the sim, so it must not touch Game.rng.
   straitShape(width, height, seed, scale) {
+    let x = Math.imul((seed | 0) ^ 0x27D4EB2F, 0x85EBCA6B);
+    x ^= x >>> 15; x = Math.imul(x, 0xC2B2AE35); x ^= x >>> 13;
+    const r = (x >>> 0) / 4294967296;
+    const halfWidth = Math.max(3, width * (0.015 * (0.6 + r * 1.2)));
+
     const mid = new Float32Array(height);
     const sway = width * 0.04;
     for (let y = 0; y < height; y++) {
       mid[y] = width / 2 + (Noise.fractal(y * scale, 0.5, seed + 333, 3) - 0.5) * 2 * sway;
     }
-    return { mid, halfWidth: Math.max(3, width * 0.015) };
+    return { mid, halfWidth };
   },
 
   // Per-seed character of the terrain: which way the ranges run, how tightly
@@ -372,7 +381,7 @@ const GameMap = {
   // strong it is at the shoreline itself, as a fraction of this seed's own
   // roughness spread. Fixed tile counts, not map-fraction — the same coastal
   // strip width regardless of map size, like shoreDist's own bands.
-  COAST_CLEAR_TILES: 10,
+  COAST_CLEAR_TILES: 16,
   COAST_PENALTY_STRENGTH: 0.75,
 
   // Tile-distance from each land tile to the nearest water, capped at
