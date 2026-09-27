@@ -1,4 +1,21 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "includeGitInstructions": true
+  "includeGitInstructions": true,
+  "permissions": {
+    "allow": [
+      "mcp__Claude_Browser__read_console_messages",
+      "mcp__Claude_Browser__find",
+      "mcp__Claude_Browser__read_network_requests",
+      "mcp__Claude_Browser__read_page",
+      "mcp__Claude_Browser__get_page_text",
+      "mcp__Claude_Browser__tabs_context",
+      "mcp__Claude_Browser__preview_list",
+      "mcp__Claude_Browser__preview_logs",
+      "Bash(node tools/sim-harness.js compare)",
+      "Bash(gh project item-list *)",
+      "Bash(gh project view *)",
+      "Bash(gh project field-list *)",
+      "Bash(shasum *)"
+    ]
+  }
 }

@@ -33,6 +33,7 @@ Every client runs the same simulation from the same seed and inputs, so the sim 
 - If it fails and the change wasn't meant to alter the sim, it's a bug. Fix it.
 - If the change is meant to alter sim behaviour, run `node tools/sim-harness.js record` to re-record, and say in the commit message that goldens were re-recorded and why.
 - Never re-record just to make a failing compare pass.
+- The harness hashes the sim source files, so any byte change to them (even a comment) fails `compare`. Don't make cosmetic edits to sim files.
 
 ## Verifying changes
 
@@ -44,7 +45,22 @@ For anything visible in the game, start the `borderwar` preview (`.claude/launch
 
 - Simulation logic goes in the module for its subsystem under `js/game/` (`combat.js`, `structures.js`, `nukes.js`, and so on). Don't grow `core.js` with subsystem logic.
 - Rendering goes in `render.js`; input and UI go in `input.js`, `ui.js` and `radial.js`.
-- Networking is `js/net/` on the client and `server/` on the host. Read `docs/multiplayer-architecture.md` before changing either.
+- Networking is `js/net/` on the client and `server/` on the host. Before changing either, read the Quick reference at the top of `docs/multiplayer-architecture.md`, then only the sections you need. Task IDs cited in code (`MP-3.4`, `§9 Phase 1`) are in `docs/multiplayer-build-log.md`.
+- Finished project records live in `docs/archive/`. Old comments citing `docs/game-split-*.md` mean `docs/archive/game-split-*.md`.
+
+### Module map
+
+Use it to jump to the right file; grep for the method name rather than reading big files whole.
+
+- `js/game/` (sim, one `Game` object extended per file): `shared.js` globals and helpers · `core.js` state, init, spawn phase, tick order, `Game.det` float wrappers · `structures.js` UNITS table, build/upgrade · `economy.js` population, gold · `diplomacy.js` alliances, relations · `attacks.js` attack lifecycle, conquest frontier · `combat.js` attack math, forts, terrain · `annex.js` · `seapath.js` water A* · `naval.js` boats, invasions · `rail.js` · `trade.js` · `warships.js` · `nukes.js` · `sam.js`
+- `js/ai.js` (sim): bots. Diplomacy and donations near the top, then strategic savings, `economy` (build choices), nukes and retaliation, build-site pickers, then attack targeting.
+- `js/map.js` (sim): map generation, world-map loading, terrain, rivers, spawns. `js/noise.js`: seeded noise.
+- `js/render.js`: canvas drawing: tiles and territory reveal, camera, structures and icons, placement previews, fronts, boats, labels.
+- `js/ui.js`: DOM panels: build bar, hover panel, `onTap` (click actions), leaderboard, alerts, banners, end screen, lobby screens.
+- `js/input.js` mouse, keys, touch · `js/radial.js` right-click nation menu · `js/fx.js` client-only effects · `js/main.js` boot, game loop, multiplayer lobby wiring.
+- `js/net/`: `protocol.js` intent shapes and validation · `executor.js` intent to sim (the only mutation path) · `runner.js` turn queue · `transport.js` · `localserver.js` · `hash.js` state digest · `worldmap.js` world map fetch.
+- `server/`: `index.js` HTTP and WS · `gamemanager.js` · `gameserver.js` lobby and turn loop · `client.js` · `log.js`.
+- `tools/`: `sim-harness.js` goldens · `sim-profile.js` headless tick profiler.
 
 ## Communication
 
