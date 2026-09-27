@@ -423,6 +423,7 @@ Object.assign(Game, {
     from.troops -= amount;
     to.troops += amount;
     from.lastDonationAt.set(toId, this.elapsed);
+    Fx.donationToast(toId, fromId, 'troops', amount);
     if (amount >= this.minDonationForRelation(toId)) {
       this.adjustRelation(to, fromId, 50);
     }
@@ -467,6 +468,7 @@ Object.assign(Game, {
     from.gold -= amount;
     to.gold += amount;
     from.lastDonationAt.set(toId, this.elapsed);
+    Fx.donationToast(toId, fromId, 'gold', amount);
     const bump = this.goldRelationUpdate(amount);
     if (bump > 0) this.adjustRelation(to, fromId, bump);
     return true;

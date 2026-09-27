@@ -49,12 +49,24 @@ const Fx = {
   // lifetime per list. Kills are rare, so it needs no cap.
   killPopups: [],
 
+  // Seconds a donation-received toast stays on screen before it's gone,
+  // fading out over the same span (ticket #36). Not tile-anchored like the
+  // popups above — a donation has no map location the recipient is
+  // necessarily looking at, so this is a HUD toast instead (see
+  // UI.updateDonationAlert), and just needs a lifetime to age against.
+  DONATION_TOAST_LIFETIME: 3,
+
+  // { toId, fromId, kind ('gold'|'troops'), amount, born } — same
+  // append-in-order/prune-from-front contract as the popup lists.
+  donationToasts: [],
+
   // Called from Game.init. Effects are per-match, same as everything they
   // decorate; carrying a previous match's popups into a new map would draw
   // them over unrelated tiles.
   reset() {
     this.goldPopups.length = 0;
     this.killPopups.length = 0;
+    this.donationToasts.length = 0;
   },
 
   // Record the spoils of eliminating a nation/tribe/player over `tile`. Called
@@ -70,6 +82,26 @@ const Fx = {
 
   pruneKills(now) {
     const list = this.killPopups, life = this.KILL_POPUP_LIFETIME;
+    let i = 0;
+    while (i < list.length && now - list[i].born >= life) i++;
+    if (i > 0) list.splice(0, i);
+  },
+
+  // Record a donation landing on `toId` from `fromId` (ticket #36). Called
+  // unconditionally by Game.donateGold/donateTroops for every recipient;
+  // UI.updateDonationAlert filters to Game.me the same way drawGoldPopups
+  // filters goldPopups.
+  donationToast(toId, fromId, kind, amount) {
+    const born = Game.elapsed;
+    const list = this.donationToasts, life = this.DONATION_TOAST_LIFETIME;
+    let i = 0;
+    while (i < list.length && born - list[i].born >= life) i++;
+    if (i > 0) list.splice(0, i);
+    list.push({ toId, fromId, kind, amount, born });
+  },
+
+  pruneDonations(now) {
+    const list = this.donationToasts, life = this.DONATION_TOAST_LIFETIME;
     let i = 0;
     while (i < list.length && now - list[i].born >= life) i++;
     if (i > 0) list.splice(0, i);

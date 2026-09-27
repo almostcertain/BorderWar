@@ -988,6 +988,7 @@ const UI = {
     }
 
     this.updateNukeAlert();
+    this.updateDonationAlert();
     this.updateBanner();
     this.updateBuildBar(me);
     this.updateFronts();
@@ -1354,6 +1355,39 @@ const UI = {
     for (const row of next.values()) if (row.parentNode !== el) el.appendChild(row);
     el.classList.toggle('hidden', next.size === 0);
     this._nukeRowByRef = next.size ? next : null;
+  },
+
+  // Ticket #36: a toast whenever a teammate donates gold or troops to you.
+  // Fx.donationToasts is pushed unconditionally by Game.donateGold/
+  // donateTroops for every recipient (see Fx's own file comment on the
+  // sim/Fx contract); this filters to Game.me and ages rows out on its own,
+  // same one-row-per-event diffing as updateNukeAlert but keyed to a fixed
+  // lifetime instead of "while the threat exists".
+  updateDonationAlert() {
+    const el = document.getElementById('donationAlert');
+    const prev = this._donationRowByRef || new Map();
+    const next = new Map();
+    const life = Fx.DONATION_TOAST_LIFETIME;
+
+    for (const d of Fx.donationToasts) {
+      if (d.toId !== Game.me) continue;
+      if (Game.elapsed - d.born >= life) continue;
+      let row = prev.get(d);
+      if (!row) {
+        const from = Game.players[d.fromId];
+        const what = d.kind === 'gold' ? formatGold(d.amount) + ' gold' : Math.round(d.amount) + ' troops';
+        row = document.createElement('div');
+        row.className = 'donationAlertRow';
+        row.innerHTML =
+          `<span class="donationAlertText">${iconHtml(d.kind)} +${what} from ${escapeHtml(from ? from.name : 'ally')}</span>`;
+      }
+      next.set(d, row);
+    }
+
+    for (const [ref, row] of prev) if (!next.has(ref)) row.remove();
+    for (const row of next.values()) if (row.parentNode !== el) el.appendChild(row);
+    el.classList.toggle('hidden', next.size === 0);
+    this._donationRowByRef = next.size ? next : null;
   },
 
   // Whether a nuke will hit land this client's player owns: its target tile is
