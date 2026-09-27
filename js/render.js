@@ -1893,10 +1893,21 @@ const Render = {
 
       // Warhead as a plain filled disc at the tip — orientation-free, so no
       // tangent/angle computation needed unlike the old rocket silhouette.
+      // It flashes in flight (wall-clock pulse, same idea as drawNukeTarget's
+      // ring, so it's fine to run off performance.now() here in render.js)
+      // by brightening toward white so it reads against its own owner colour
+      // rather than blending into it.
+      const flash = 0.5 + 0.5 * Math.sin(performance.now() / 90);
       ctx.beginPath();
       ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.fillStyle = colour;
       ctx.fill();
+      ctx.globalAlpha = 0.55 * flash;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(px, py, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
     }
   },
 
