@@ -190,15 +190,16 @@ Object.assign(Game, {
   // large empire. Uses nbuf so the abuf enclosedRegion walks on can't
   // clobber it mid-scan.
   //
-  // Mainland vs cut-off piece (2026-09-21 fix). Real OpenFront holds the two
-  // to different standards: a fragment falls to any wall, mixed or not, but a
-  // nation's mainland (its largest connected piece) only falls when exactly
-  // ONE other player walls it in — `surroundedBySamePlayer`. Without that, a
-  // landlocked nation ringed by two or three neighbours was swallowed whole by
-  // whichever touched it most, on the sweep and on a tap or bot alike, which
-  // read as nations being annexed far too easily. The single-wall rule is
-  // applied here rather than behind requireDominant so the hover cue, the
-  // tap, the bots and the sweep all agree.
+  // Mainland vs cut-off piece (2026-09-27 fix, see #39). A fragment falls to
+  // any wall, mixed or single-owner, but a nation's entire mainland (its
+  // largest connected piece) never falls to a bare geometric ring alone,
+  // regardless of how many players contribute to that ring — annexation is a
+  // "your remaining scrap is swallowed" rule, not a way to end a fully alive
+  // nation with zero combat. Earlier this only guarded a MIXED wall
+  // (`wallCounts.size > 1`), so a single neighbour whose land happened to
+  // fully encircle another nation's mainland could take the whole thing
+  // instantly — no invasion, no troop loss, just geometry. The guard now
+  // applies unconditionally so both wall shapes agree.
   //
   // `sweep` (checkAnnexations only) is an AnnexSweep shared across every
   // player's scan in one sweep: components are judged from its cache, and
@@ -218,12 +219,10 @@ Object.assign(Game, {
         if (GameMap.owner[j] !== targetId || seen.has(j)) continue;
         const found = this.enclosedRegion(j, seen, ++run);
         if (!found) continue;
-        if (found.wallCounts.size > 1) {
-          // Mixed wall: fine for a fragment, never for the mainland. Only pay
-          // for the largest-piece scan once a pocket has actually passed.
-          if (biggest < 0) biggest = this.largestLandPiece(targetId);
-          if (found.tiles.length >= biggest) continue;
-        }
+        // Fine for a fragment, never for the mainland. Only pay for the
+        // largest-piece scan once a pocket has actually passed.
+        if (biggest < 0) biggest = this.largestLandPiece(targetId);
+        if (found.tiles.length >= biggest) continue;
         if (requireDominant && this.dominantWaller(found.wallCounts) !== byPlayerId) continue;
         regions.push(found.tiles);
       }
@@ -245,11 +244,9 @@ Object.assign(Game, {
         const verdict = sweep.accepted.get(comp);
         if (!verdict) continue;
         if (requireDominant && this.dominantWaller(verdict.wallCounts) !== me.id) continue;
-        if (verdict.wallCounts.size > 1) {
-          let biggest = sweep.largest.get(targetId);
-          if (biggest === undefined) { biggest = this.largestLandPiece(targetId); sweep.largest.set(targetId, biggest); }
-          if (verdict.size >= biggest) continue;
-        }
+        let biggest = sweep.largest.get(targetId);
+        if (biggest === undefined) { biggest = this.largestLandPiece(targetId); sweep.largest.set(targetId, biggest); }
+        if (verdict.size >= biggest) continue;
         regions.push(this.enclosedRegion(j, new Map(), 1).tiles);
       }
     }
