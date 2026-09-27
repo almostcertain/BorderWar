@@ -368,22 +368,83 @@ const GameMap = {
   HIGHLAND_SHARE: 0.26,
   MOUNTAIN_SHARE: 0.10,
 
+  // How far inland (in tiles) the coastal penalty below fades out, and how
+  // strong it is at the shoreline itself, as a fraction of this seed's own
+  // roughness spread. Fixed tile counts, not map-fraction — the same coastal
+  // strip width regardless of map size, like shoreDist's own bands.
+  COAST_CLEAR_TILES: 10,
+  COAST_PENALTY_STRENGTH: 0.75,
+
+  // Tile-distance from each land tile to the nearest water, capped at
+  // COAST_CLEAR_TILES (past that the penalty in classifyTerrain is zero
+  // either way). Same multi-source BFS as computeShoreDist, mirrored onto
+  // land. Left at 0 (unset) for any tile the BFS doesn't reach within the cap.
+  computeCoastDist() {
+    const size = this.width * this.height;
+    const dist = this._coastDist = new Uint8Array(size);
+    const queue = this._queue, nb = new Int32Array(4);
+    let head = 0, tail = 0;
+
+    for (let i = 0; i < size; i++) {
+      if (this.owner[i] === WATER) continue;
+      const n = this.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        if (this.owner[nb[k]] === WATER) { dist[i] = 1; queue[tail++] = i; break; }
+      }
+    }
+
+    while (head < tail) {
+      const i = queue[head++];
+      const d = dist[i];
+      if (d >= this.COAST_CLEAR_TILES) continue;
+      const n = this.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (this.owner[j] !== WATER && dist[j] === 0) { dist[j] = d + 1; queue[tail++] = j; }
+      }
+    }
+  },
+
   classifyTerrain() {
     const size = this.width * this.height;
     this.terrain = new Uint8Array(size);
+    if (!this.landTiles) return;
+
+    // Roughness alone scatters its peaks evenly across a landmass, including
+    // right on the shoreline — real ranges sit inland, with open low ground
+    // at the coast for landings and ports. computeCoastDist lets the scoring
+    // below push each tile's rank down near the water before classifying.
+    this.computeCoastDist();
+    const coastDist = this._coastDist;
 
     // Percentiles off a sample — sorting every land tile on an XL map is far
     // more work than the answer needs. Off `roughness`, not `elevation`: see
     // its comment in generate() — using elevation here is what produced one
-    // contiguous highland/mountain mass instead of scattered ranges.
-    const sample = [];
+    // contiguous highland/mountain mass instead of scattered ranges. This
+    // first pass also finds the sample's spread, so the coastal penalty is
+    // scaled to this seed's own roughness range rather than a hardcoded
+    // constant — the noise's absolute range wanders by seed just like
+    // elevation's does.
+    const indices = [];
     const stride = Math.max(1, Math.floor(this.landTiles / 20000));
-    let seen = 0;
+    let seen = 0, lo = Infinity, hi = -Infinity;
     for (let i = 0; i < size; i++) {
       if (this.owner[i] === WATER) continue;
-      if (seen++ % stride === 0) sample.push(this.roughness[i]);
+      const r = this.roughness[i];
+      if (r < lo) lo = r;
+      if (r > hi) hi = r;
+      if (seen++ % stride === 0) indices.push(i);
     }
-    if (!sample.length) return;
+    if (!indices.length) return;
+    const spread = hi - lo;
+
+    const scoreAt = i => {
+      const d = coastDist[i];
+      if (d === 0) return this.roughness[i];
+      return this.roughness[i] - spread * this.COAST_PENALTY_STRENGTH * (1 - d / this.COAST_CLEAR_TILES);
+    };
+
+    const sample = indices.map(scoreAt);
     sample.sort((a, b) => a - b);
     const at = f => sample[Math.min(sample.length - 1, Math.floor(sample.length * f))];
     const mountainAt = at(1 - this.MOUNTAIN_SHARE);
@@ -391,8 +452,8 @@ const GameMap = {
 
     for (let i = 0; i < size; i++) {
       if (this.owner[i] === WATER) continue;
-      const r = this.roughness[i];
-      this.terrain[i] = r >= mountainAt ? MOUNTAIN : (r >= highlandAt ? HIGHLAND : PLAINS);
+      const s = scoreAt(i);
+      this.terrain[i] = s >= mountainAt ? MOUNTAIN : (s >= highlandAt ? HIGHLAND : PLAINS);
     }
   },
 
