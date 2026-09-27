@@ -31,7 +31,7 @@ Every client runs the same simulation from the same seed and inputs, so the sim 
 
 - Run `compare` after any change to sim code. Render- or UI-only changes don't need it.
 - If it fails and the change wasn't meant to alter the sim, it's a bug. Fix it.
-- If the change is meant to alter sim behaviour, run `node tools/sim-harness.js record` to re-record, and say in the commit message that goldens were re-recorded and why.
+- If the change is meant to alter sim behaviour, `compare` will fail — that's expected. Don't re-record on your own; tell the user compare is failing because the sim changed on purpose, and only run `node tools/sim-harness.js record` when they explicitly ask you to. When you do re-record, say in the commit message that goldens were re-recorded and why.
 - Never re-record just to make a failing compare pass.
 - The harness hashes the sim source files, so any byte change to them (even a comment) fails `compare`. Don't make cosmetic edits to sim files.
 
