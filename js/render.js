@@ -1840,17 +1840,9 @@ const Render = {
       // `from` instead of just sitting at it. A no-op for every other nuke
       // type, whose born is never later than the current tick.
       const t = Math.max(0, Math.min(1, (Game.renderElapsed - n.born) / n.duration));
-      const arc = Math.sin(Math.PI * t);
-      // Arc height scales with the trip's own length (in tile-space) so a
-      // short hop between neighbouring Silos doesn't rocket absurdly high
-      // relative to how far it's actually travelling.
-      const dist = Math.hypot(n.to.x - n.from.x, n.to.y - n.from.y);
-      const arcHeight = Math.min(dist * 0.35, 40);
-
-      // arcHeight is in tile-space units, same as from/to, so it scales to
-      // pixels uniformly with everything else below via the shared `* s`.
-      const tx = n.from.x + (n.to.x - n.from.x) * t;
-      const ty = n.from.y + (n.to.y - n.from.y) * t - arc * arcHeight;
+      // Same arc the sim's SAM check uses (Game.nukeArcPos), so the drawn
+      // warhead is exactly where interception thinks it is.
+      const { x: tx, y: ty } = Game.nukeArcPos(n, t);
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -30 || py < -30 || px > cw + 30 || py > ch + 30) continue;
@@ -1879,9 +1871,8 @@ const Render = {
       ctx.beginPath();
       for (let i = 0; i <= steps; i++) {
         const u = t * i / steps;
-        const ua = Math.sin(Math.PI * u);
-        const ux = n.from.x + (n.to.x - n.from.x) * u + 0.5;
-        const uy = n.from.y + (n.to.y - n.from.y) * u - ua * arcHeight + 0.5;
+        const p = Game.nukeArcPos(n, u);
+        const ux = p.x + 0.5, uy = p.y + 0.5;
         if (i === 0) ctx.moveTo(ux, uy); else ctx.lineTo(ux, uy);
       }
       ctx.lineWidth = Math.max(1, this.dpr) / s;

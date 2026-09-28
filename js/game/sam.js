@@ -136,8 +136,7 @@ Object.assign(Game, {
       for (const n of this.nukes) {
         if (n.ownerId === ownerId || this.areAllied(ownerId, n.ownerId)) continue;
         const u = Math.max(0, Math.min(1, (this.elapsed - n.born) / n.duration));
-        const x = n.from.x + (n.to.x - n.from.x) * u;
-        const y = n.from.y + (n.to.y - n.from.y) * u;
+        const { x, y } = this.nukeArcPos(n, u);
         const dx = x - samX, dy = y - samY;
         if (dx * dx + dy * dy > rangeSq) continue;
         candidates.push({ nuke: n, x, y, score: this.samTargetScore(b, n) });

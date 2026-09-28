@@ -2,6 +2,21 @@
 // Extends the Game singleton declared in game/core.js. Move-only split of the
 // former js/game.js; see docs/game-split-plan.md.
 Object.assign(Game, {
+  // Where a nuke actually is at progress t (0..1), in tile space, including
+  // the visual arc. Shared by stepSAMs (interception) and render.js
+  // (drawing) so a nuke is shot down exactly when it is SEEN to cross a SAM
+  // ring (ticket #35). The arc uses Bhaskara's sin(pi*t) approximation —
+  // only +, *, / so it is bit-identical on every engine (Math.sin is not).
+  nukeArcPos(n, t) {
+    const dist = this.det.hypot(n.to.x - n.from.x, n.to.y - n.from.y);
+    const k = t * (1 - t);
+    const arc = 16 * k / (5 - 4 * k);
+    return {
+      x: n.from.x + (n.to.x - n.from.x) * t,
+      y: n.from.y + (n.to.y - n.from.y) * t - arc * Math.min(dist * 0.35, 40),
+    };
+  },
+
   // --- Missile Silo & Nukes -----------------------------------------------
   // Ported against OpenFront's real MissileSiloExecution/NukeExecution/
   // Config.ts source (github.com/openfrontio/OpenFrontIO), not guessed — see
