@@ -1732,6 +1732,13 @@ const UI = {
       seedInput.value = String(Math.floor(Math.random() * 1e9));
       this.refreshMapPreview(prefix);
     });
+    // Draw whenever the preview comes into view, however it got there (tab
+    // switch, Map select, the browser restoring the form on load): a hidden
+    // canvas has no size, and gains one the moment it is shown.
+    if (typeof ResizeObserver === 'function') {
+      const canvas = document.getElementById(this.mapGenId(prefix, 'mapPreview'));
+      new ResizeObserver(() => { if (canvas.clientWidth > 0) this.refreshMapPreview(prefix); }).observe(canvas);
+    }
   },
 
   // {mapGen, seed} for gameStartInfo.config. An empty or invalid seed box
@@ -1756,14 +1763,26 @@ const UI = {
   },
 
   drawMapPreview(prefix) {
-    const box = document.getElementById(this.mapGenId(prefix, 'mapGenBox'));
-    if (!box || box.classList.contains('hidden') || box.offsetParent === null) return;
+    const canvas = document.getElementById(this.mapGenId(prefix, 'mapPreview'));
+    const note = document.getElementById(this.mapGenId(prefix, 'mapPreviewNote'));
+    // Hidden (no size): the ResizeObserver in setupMapGen draws it once shown.
+    if (!canvas || canvas.clientWidth === 0) return;
     const gen = this.getMapGenConfig(prefix);
+    // Resizes (and repeat refreshes) with nothing changed keep the drawing.
+    const key = gen.seed + JSON.stringify(gen.mapGen);
+    this._previewKeys = this._previewKeys || {};
+    if (this._previewKeys[prefix] === key) return;
     const w = this.MAP_PREVIEW_W, h = this.MAP_PREVIEW_H;
     const map = Object.create(GameMap);
-    map.generate(w, h, gen.seed >>> 0, gen.mapGen);
+    try {
+      map.generate(w, h, gen.seed >>> 0, gen.mapGen);
+    } catch (e) {
+      console.error('[map preview]', e);
+      note.textContent = 'Preview unavailable';
+      return;
+    }
+    this._previewKeys[prefix] = key;
 
-    const canvas = document.getElementById(this.mapGenId(prefix, 'mapPreview'));
     const ctx = canvas.getContext('2d');
     const img = ctx.createImageData(w, h);
     // render.js's unclaimed-ground tones: water, plains, highland, mountain.
@@ -1776,7 +1795,7 @@ const UI = {
 
     const names = this.MAP_GEN_LABELS.landform[1];
     const lm = map.landmasses.filter(l => l.size >= 400).length;
-    document.getElementById(this.mapGenId(prefix, 'mapPreviewNote')).textContent =
+    note.textContent =
       (gen.mapGen.landform === 'random' ? 'Random: ' : '') + names[map.layout] +
       (lm > 1 ? ' · ' + lm + ' landmasses' : '');
   },

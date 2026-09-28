@@ -114,6 +114,9 @@
     // would sit at their static HTML values (9/16) instead of World's actual
     // defaults until the player touches the dropdown themselves.
     applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes, prefix);
+    // Browsers can restore the select's last value on reload or back/forward
+    // after this runs, without a change event; re-sync once the page shows.
+    window.addEventListener('pageshow', () => applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes, prefix));
   }
   bindMapType(mapTypeSelect, document.getElementById('mapSizeRow'), sizeSelect, botInput, tribeInput, '');
   bindMapType(document.getElementById('hostMapType'), document.getElementById('hostMapSizeRow'),
