@@ -1555,10 +1555,10 @@ const Render = {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
     const dots = this._boatDots || (this._boatDots = this.buildBoatDots());
-    // Overall radius on screen, in pixels — slightly larger than the old
-    // arrow icon's own [4,10]*dpr clamp — split across BOAT_DOT_RADIUS dots
-    // so the whole cluster scales as one shape.
-    const size = Math.max(5 * this.dpr, Math.min(13 * this.dpr, s * 1.05));
+    // Overall radius on screen, in pixels, split across BOAT_DOT_RADIUS dots
+    // so the whole cluster scales as one shape. The floor is kept small so
+    // boats don't dwarf the map when zoomed out.
+    const size = Math.max(2.5 * this.dpr, Math.min(13 * this.dpr, s * 1.05));
     const unit = size / this.BOAT_DOT_RADIUS;
 
     for (const b of Game.boats) {
