@@ -475,6 +475,8 @@ const Game = {
         // TribeExecution's per-tribe rolls (see TribeAI.rollTraits), drawn here
         // from the seeded rng so every client rolls the same values.
         tribeTraits: isTribe ? TribeAI.rollTraits() : null,
+        // A Nation's AiAttackBehavior rolls (see AI.rollTraits).
+        aiTraits: isBot ? AI.rollTraits() : null,
         // Naval targeting runs a BFS instead of a map scan, so it thinks on a
         // deliberately coarser cadence than nextThink's land decisions.
         nextNavalThink: 5 + this.rng() * 10,

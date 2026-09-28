@@ -14,8 +14,9 @@ const AI = {
   //
   //   thinkMult / navalMult  scale the gap between land / naval decisions —
   //                          Easy reacts slowly, Hard reacts quickly.
-  //   attackRatio            share of troops a fresh nation-vs-nation strike
-  //                          commits; neutralRatio is the same for free land.
+  //   (How much a strike commits is not a difficulty knob: like OpenFront,
+  //   every nation waits for its rolled trigger fill and sends everything
+  //   above its rolled reserve — see rollTraits.)
   //   confusion              1-in-n chance an alliance answer is a coin flip
   //                          instead of a decision; 0 = never confused.
   //   betrayHelpless         betray an ally whose army is under 1/n of ours.
@@ -39,7 +40,6 @@ const AI = {
   PROFILES: {
     easy: {
       thinkMult: 1.6, navalMult: 1.6,
-      attackRatio: 0.4, neutralRatio: 0.3,
       confusion: 10,
       betrayHelpless: 20, betrayOpportunist: false,
       nukes: false, nukeChance: 0, hydrogenChance: 4, mirvChance: 0, retaliateChance: 0,
@@ -47,7 +47,6 @@ const AI = {
     },
     medium: {
       thinkMult: 1, navalMult: 1,
-      attackRatio: 0.55, neutralRatio: 0.35,
       confusion: 20,
       betrayHelpless: 10, betrayOpportunist: true,
       nukes: true, nukeChance: 8, hydrogenChance: 4, mirvChance: 6, retaliateChance: 2,
@@ -55,12 +54,31 @@ const AI = {
     },
     hard: {
       thinkMult: 0.7, navalMult: 0.7,
-      attackRatio: 0.65, neutralRatio: 0.45,
       confusion: 0,
       betrayHelpless: 5, betrayOpportunist: true,
       nukes: true, nukeChance: 5, hydrogenChance: 3, mirvChance: 4, retaliateChance: 1,
       embargoLiftAt: 50
     }
+  },
+
+  // AiAttackBehavior's per-nation rolls, the same ones TribeAI uses: hold
+  // fire until troops reach `trigger` of the cap, then send everything above
+  // `reserve` (or above `expand` for free land). That keeps a nation near the
+  // ~42% growth peak instead of repeatedly spending itself down below it.
+  rollTraits() {
+    const r = (lo, hi) => lo + Math.floor(Game.rng() * (hi - lo + 1));
+    return {
+      trigger: r(50, 60) / 100,
+      reserve: r(30, 40) / 100,
+      expand: r(10, 20) / 100
+    };
+  },
+
+  // Troops a fresh strike commits: everything above the rolled floor.
+  sendAmount(p, target) {
+    const tr = p.aiTraits;
+    const keep = Game.maxTroops(p) * (target === NEUTRAL ? tr.expand : tr.reserve);
+    return Math.floor(p.troops - keep);
   },
 
   profile() {
@@ -88,7 +106,7 @@ const AI = {
   // nation-vs-nation opener — enough to keep pressuring it, not enough to
   // erase its border in one hit — mirroring TRIBE_SKIRMISH_RATIO's existing
   // reasoning for the already-atWar case just below.
-  TRIBE_ATTACK_RATIO: 0.35,   // vs. the normal 0.55 for a fresh nation-vs-nation attack
+  TRIBE_ATTACK_RATIO: 0.35,   // vs. everything above the reserve for a fresh nation attack
 
   // Real OpenFront's own AI gives Tribes no special targeting priority (its
   // only Tribe-specific rule is the neutral-tile toll discount and the
@@ -1049,14 +1067,14 @@ const AI = {
   // tribeAttackActive/atWar block below and restore the single line
   // `if (Game.attacks.some(a => a.attacker === p.id)) return;` right after
   // the p.tiles.size check.
-  TRIBE_SKIRMISH_RATIO: 0.2,   // vs. the normal 0.55 for a fresh nation attack
+  TRIBE_SKIRMISH_RATIO: 0.2,   // vs. everything above the reserve for a fresh nation attack
 
   // Unclaimed land (#26). think() used to score NEUTRAL as `contact * 1.4`
   // against every nation front, so a small leftover pocket (a nuke crater, a
   // strip a war skipped past) lost to any real border forever, and while a
   // war was in flight it wasn't scored at all. Free land is now claimed
   // before any player target is weighed: whenever p borders it and has no
-  // grab already running. A fresh grab commits the profile's neutralRatio;
+  // grab already running. A fresh grab commits everything above the expand floor;
   // one opened alongside a running war is a side column like a Tribe
   // skirmish, sized small so it can't gut the main front. Leftover troops
   // walk home when the pocket runs out (stepAttack), so over-committing to
@@ -1082,7 +1100,7 @@ const AI = {
   RETREAT_DEFENDER_EDGE: 1.5,
   // After retreating from someone, think()/navalScore treat them as a much
   // poorer target for a while. Without this the bot's troops get back in two
-  // seconds and the very next think() relaunches at the same border at 55%,
+  // seconds and the very next think() relaunches at the same border at full strength,
   // paying the 25% malus over and over for the same lost fight.
   RETREAT_COOLDOWN: 60,
   RETREAT_PENALTY: 0.15,
@@ -1217,7 +1235,7 @@ const AI = {
 
   think(p) {
     if (p.tiles.size === 0) return;
-    if (p.troops < Game.maxTroops(p) * 0.35) return;
+    if (p.troops < Game.maxTroops(p) * p.aiTraits.trigger) return;
 
     const myAttacks = Game.attacks.filter(a => a.attacker === p.id);
     const targets = this.borderTargets(p);
@@ -1225,8 +1243,8 @@ const AI = {
 
     // Free land first (#26). See NEUTRAL_SKIRMISH_RATIO.
     if (targets.has(NEUTRAL) && !myAttacks.some(a => a.target === NEUTRAL)) {
-      const ratio = myAttacks.length > 0 ? this.NEUTRAL_SKIRMISH_RATIO : this.profile().neutralRatio;
-      if (Game.launchAttack(p.id, NEUTRAL, Math.floor(p.troops * ratio))) return;
+      const n = myAttacks.length > 0 ? Math.floor(p.troops * this.NEUTRAL_SKIRMISH_RATIO) : this.sendAmount(p, NEUTRAL);
+      if (n >= 1 && Game.launchAttack(p.id, NEUTRAL, n)) return;
     }
 
     if (this.assistAllies(p, targets, myAttacks)) return;
@@ -1271,10 +1289,10 @@ const AI = {
 
     if (best === null) return;
     if (this.annexIfEnclosed(p, best)) return;
-    const prof = this.profile();
-    const ratio = atWar ? this.TRIBE_SKIRMISH_RATIO
-      : (best === NEUTRAL ? prof.neutralRatio : (Game.players[best].isTribe ? this.TRIBE_ATTACK_RATIO : prof.attackRatio));
-    Game.launchAttack(p.id, best, Math.floor(p.troops * ratio));
+    const n = atWar ? Math.floor(p.troops * this.TRIBE_SKIRMISH_RATIO)
+      : (best !== NEUTRAL && Game.players[best].isTribe ? Math.floor(p.troops * this.TRIBE_ATTACK_RATIO)
+      : this.sendAmount(p, best));
+    if (n >= 1) Game.launchAttack(p.id, best, n);
   },
 
   // AiAttackBehavior.assistAllies (ticket #30): an ally has marked a target
@@ -1301,7 +1319,8 @@ const AI = {
       for (const id of marks) {
         if (id === p.id || p.allies.has(id) || !targets.has(id)) continue;
         if (myAttacks.some(a => a.target === id)) continue;
-        if (!Game.launchAttack(p.id, id, Math.floor(p.troops * this.profile().attackRatio))) continue;
+        const n = this.sendAmount(p, id);
+        if (n < 1 || !Game.launchAttack(p.id, id, n)) continue;
         if (!teammate) Game.adjustRelation(p, allyId, this.ASSIST_RELATION_COST);
         return true;
       }
