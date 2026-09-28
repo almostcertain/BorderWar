@@ -122,15 +122,17 @@ Object.assign(Game, {
     // upgradable:true, but no per-level effect for it surfaced anywhere in
     // Config.ts/MissileSiloExecution.ts/UnitImpl.ts while porting (unlike
     // City, where a level directly feeds maxTroops) — rather than invent a
-    // fabricated bonus, this is deliberately NOT upgradable here, the same
-    // narrowed-scope call already made for Fort and Warship. Placement is the
+    // fabricated bonus, this was first left NOT upgradable. Ticket #41 found
+    // the effect: UnitImpl gives a Silo the same _missileTimerQueue a SAM
+    // has, capped at its level, so each level is one more missile slot that
+    // reloads on its own SILO_COOLDOWN (see siloFreeSlots). Placement is the
     // ordinary own-land buildBlockReason/build path (territoryBound, exactly
     // like City) — nothing structure-specific to add there. What it actually
     // DOES — hosting nuke launches on a cooldown — lives in the "Missile
     // Silo & Nukes" section below.
     {
       type: 'silo', name: 'Missile Silo', icon: '🚀', hotkey: '6',
-      baseCost: 1000000, maxCost: 1000000, buildTime: 8, upgradable: false, flat: true
+      baseCost: 1000000, maxCost: 1000000, buildTime: 8, upgradable: true, flat: true
     },
     // OpenFront's UnitType.AtomBomb/HydrogenBomb: also flat-cost (see Silo's
     // own comment on the `flat` curve), and `action: true` for the same
@@ -293,8 +295,10 @@ Object.assign(Game, {
       // to always have the slot than to special-case the record shape.
       tradeRejections: 0, lastTradeCheckAt: -Infinity,
       // Silo-only (see "Missile Silo & Nukes"), carried on every building for
-      // the same reason as the Port fields above.
-      lastLaunchAt: -Infinity,
+      // the same reason as the Port fields above. One launch time per missile
+      // slot still reloading, capped at `level` — the Silo's copy of
+      // UnitImpl's _missileTimerQueue, same model as samQueue below.
+      siloQueue: [],
       // SAM-only (see "SAM Launcher & Interceptors"). samQueue holds one
       // timestamp per charge currently reloading — UnitImpl's real
       // _missileTimerQueue — capacity-capped at `level` (isInCooldown there
@@ -401,6 +405,9 @@ Object.assign(Game, {
           };
           b.samQueue.push(this.elapsed);
         }
+        // Same for a Silo: increaseLevel pushes its missile queue too, so the
+        // new slot reloads once before it can fire.
+        if (b.type === 'silo') b.siloQueue.push(this.elapsed);
         b.level++;
         const owner = GameMap.owner[b.tile];
         if (owner < 0) continue;

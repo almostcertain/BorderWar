@@ -1031,9 +1031,10 @@ const Render = {
       // counting down (see Game.stepSAMs). Makes "a level-2 SAM has two
       // separate charges, not one shared cooldown" legible at a glance
       // instead of only inferable from watching it fire twice.
-      if (b.built && b.type === 'sam') {
-        const reloading = b.samQueue.length;
-        const ready = b.level - reloading;
+      // A Silo gets the same pips: its missile slots work the same way (see
+      // Game.siloFreeSlots).
+      if (b.built && (b.type === 'sam' || b.type === 'silo')) {
+        const ready = b.type === 'sam' ? b.level - b.samQueue.length : Game.siloFreeSlots(b);
         const pipR = Math.max(1.5 * this.dpr, r * 0.12);
         const gap = pipR * 2.6;
         // Clear the upgrade progress bar (drawn just above, while

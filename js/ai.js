@@ -582,9 +582,9 @@ const AI = {
       if (tile >= 0) Game.build(p.id, type, tile);
       // No fresh site at all (a small/landlocked/built-out nation) but the
       // type still has room to grow in place — upgrade the weakest one
-      // rather than leaving this cycle's gold unspent. Fort/Silo/Warship/
-      // the bombs are all upgradable:false, so this only ever fires for
-      // City/Factory/Port/SAM, and never fights the branch above for SAM.
+      // rather than leaving this cycle's gold unspent. Fort/Warship/the
+      // bombs are upgradable:false, so this only ever fires for
+      // City/Factory/Port/Silo/SAM, and never fights the branch above for SAM.
       else if (Game.unitDef(type).upgradable) {
         const upgradeTile = this.weakestBuilt(p, type);
         if (upgradeTile >= 0 && Game.canUpgrade(p.id, upgradeTile)) Game.upgrade(p.id, upgradeTile);
@@ -690,7 +690,7 @@ const AI = {
     for (const b of Game.buildings.values()) {
       if (b.type !== 'silo' || !b.built) continue;
       if (GameMap.owner[b.tile] !== p.id) continue;
-      if (Game.elapsed - b.lastLaunchAt >= Game.SILO_COOLDOWN) return true;
+      if (Game.siloFreeSlots(b) > 0) return true;
     }
     return false;
   },

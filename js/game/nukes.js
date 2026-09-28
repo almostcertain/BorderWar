@@ -137,7 +137,7 @@ Object.assign(Game, {
     }
     if (silos.length === 0) return { ok: false, reason: 'Build a Missile Silo first' };
 
-    const ready = silos.filter(s => this.elapsed - s.lastLaunchAt >= this.SILO_COOLDOWN);
+    const ready = silos.filter(s => this.siloFreeSlots(s) > 0);
     if (ready.length === 0) return { ok: false, reason: 'Silo reloading' };
 
     if (p.gold < this.unitCost(p, nukeType)) return { ok: false, reason: 'Not enough gold' };
@@ -232,6 +232,20 @@ Object.assign(Game, {
     }
   },
 
+  // Missile slots this Silo can fire right now: its level minus launches
+  // whose SILO_COOLDOWN hasn't run out yet. UnitImpl.isInCooldown is
+  // `queue.length === level`; this counts instead of pruning so readiness
+  // checks (UI, AI) never write sim state.
+  siloFreeSlots(b) {
+    let reloading = 0;
+    for (const t of b.siloQueue) if (this.elapsed - t < this.SILO_COOLDOWN) reloading++;
+    return Math.max(0, b.level - reloading);
+  },
+  // Spends one slot: drops reloads that have finished, then queues this one.
+  consumeSiloSlot(b) {
+    b.siloQueue = b.siloQueue.filter(t => this.elapsed - t < this.SILO_COOLDOWN);
+    b.siloQueue.push(this.elapsed);
+  },
   // Spawns instantly (matching SpawnExecution, same as buildWarship) at the
   // resolved Silo's tile, flying a straight line to the clicked destination.
   // Puts the launching Silo on cooldown immediately, exactly like
@@ -241,7 +255,7 @@ Object.assign(Game, {
     if (!r.ok) return false;
     const p = this.players[playerId];
     p.gold -= this.unitCost(p, nukeType);
-    r.silo.lastLaunchAt = this.elapsed;
+    this.consumeSiloSlot(r.silo);
 
     const w = GameMap.width;
     const from = { x: r.silo.tile % w, y: (r.silo.tile / w) | 0 };
@@ -597,7 +611,7 @@ Object.assign(Game, {
     if (!r.ok) return false;
     const p = this.players[playerId];
     p.gold -= this.unitCost(p, 'mirv');
-    r.silo.lastLaunchAt = this.elapsed;
+    this.consumeSiloSlot(r.silo);
     this.mirvsLaunched++;
 
     const w = GameMap.width, h = GameMap.height;
