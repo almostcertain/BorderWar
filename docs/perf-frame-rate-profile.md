@@ -168,7 +168,7 @@ measured" question above.
   copies again plus texture allocation in the GPU process. The hover overlay
   added a full 8 MB `putImageData` plus copy on each rebuild.
 - **Fix (render.js, render-only):** the tile and hover layers are drawn from
-  256×256 `ImageBitmap` chunks (`makeLayer` / `drawLayer`). Bitmaps are
+  128×128 `ImageBitmap` chunks (`makeLayer` / `drawLayer`). Bitmaps are
   immutable, so the browser uploads each one once, and only chunks whose
   pixels changed get a new bitmap. Off-screen chunks are skipped. The hover
   overlay now clears, blits and draws only its bounding box. Label sprites
@@ -177,3 +177,10 @@ measured" question above.
   `seaPath`) cause 25–33 ms turns. They made up about half of all turns over
   20 ms, and they are the visible hitches. Fixing them is a sim change (see
   the resumable-search and coarse-grid options above).
+- **Second Firefox profile, after the fix:** ~64 fps, up from ~30. Labels
+  dropped from 2.4 ms to 0.16 ms per frame. The tile layer was still copying
+  ~2.3 ms per frame, because changed tiles were grouped into one bounding box,
+  which on a large map with fronts everywhere covers the whole map and
+  re-uploads every chunk. Changes are now tracked per 128×128 chunk
+  (`markLayerTile` / `flushLayerPuts`), so only chunks that actually contain
+  changed tiles are blitted and re-uploaded.

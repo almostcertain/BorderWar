@@ -185,7 +185,11 @@ const Render = {
   // neighbours, so fractional zoom never opens a hairline seam between chunks.
   // A translucent layer (the hover tint) can't overlap: the shared row and
   // column would be blended twice and show as stripes on the chunk grid.
-  LAYER_CHUNK: 256,
+  //
+  // Changed tiles are tracked per chunk, not as one bounding box: with fronts
+  // all over a large map a single box covered the whole map, so every chunk
+  // was re-blitted and re-uploaded nearly every frame (2026-09-28 profile).
+  LAYER_CHUNK: 128,
 
   makeLayer(canvas, overlap) {
     const C = this.LAYER_CHUNK, w = canvas.width, h = canvas.height, o = overlap ? 1 : 0;
@@ -194,7 +198,7 @@ const Render = {
       for (let cx = 0; cx < layer.cols; cx++) {
         const x = cx * C, y = cy * C;
         layer.chunks.push({ x, y, w: Math.min(C + o, w - x), h: Math.min(C + o, h - y),
-                            bmp: null, dirty: true, pending: false });
+                            bmp: null, dirty: true, pending: false, put: false });
       }
     }
     return layer;
@@ -215,6 +219,33 @@ const Render = {
     const cy0 = Math.max(0, Math.floor((minY - 1) / C)), cy1 = Math.min(layer.rows - 1, Math.floor(maxY / C));
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) layer.chunks[cy * layer.cols + cx].dirty = true;
+    }
+  },
+
+  // Records that tile (x, y) of the layer's canvas image changed: its chunk
+  // needs a blit and a new bitmap, and so do the neighbours whose overlap
+  // row/column contains it.
+  markLayerTile(layer, x, y) {
+    if (!layer) return;
+    const C = this.LAYER_CHUNK, cols = layer.cols, chunks = layer.chunks;
+    const cx = (x / C) | 0, cy = (y / C) | 0, k = cy * cols + cx;
+    const c = chunks[k];
+    c.put = true;
+    c.dirty = true;
+    const left = cx > 0 && x === cx * C, up = cy > 0 && y === cy * C;
+    if (left) chunks[k - 1].dirty = true;
+    if (up) chunks[k - cols].dirty = true;
+    if (left && up) chunks[k - cols - 1].dirty = true;
+  },
+
+  // Blits the chunks markLayerTile flagged from `image` into the canvas.
+  flushLayerPuts(layer, ctx, image) {
+    if (!layer) return;
+    const C = this.LAYER_CHUNK, w = layer.canvas.width, h = layer.canvas.height;
+    for (const c of layer.chunks) {
+      if (!c.put) continue;
+      c.put = false;
+      ctx.putImageData(image, 0, 0, c.x, c.y, Math.min(C, w - c.x), Math.min(C, h - c.y));
     }
   },
 
@@ -514,18 +545,13 @@ const Render = {
   buildTilesIncremental(dirtyTiles) {
     const w = GameMap.width, h = GameMap.height;
     const owner = GameMap.owner, px = this.pixels;
-    let minX = w, minY = h, maxX = -1, maxY = -1;
+    const layer = this.tileLayer;
     for (const i of dirtyTiles) {
       const x = i % w, y = (i / w) | 0;
       this.paintTile(i, x, y, w, h, owner, px);
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+      this.markLayerTile(layer, x, y);
     }
-    if (maxX < 0) return;
-    this.tileCtx.putImageData(this.image, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
-    this.markLayerDirty(this.tileLayer, minX, minY, maxX, maxY);
+    this.flushLayerPuts(layer, this.tileCtx, this.image);
   },
 
   // --- Paced territory reveal ------------------------------------------------
@@ -570,27 +596,22 @@ const Render = {
   },
 
   // Paints every queued tile whose slot has come up (all of them for
-  // Infinity), one bounding-box blit for the lot.
+  // Infinity), then blits just the chunks they fell in.
   releaseTiles(now) {
     const T = this.qTile, TM = this.qTime, tail = this.qTail;
     let head = this.qHead;
     if (head >= tail) return;
     const w = GameMap.width, h = GameMap.height;
     const owner = GameMap.owner, px = this.pixels;
-    let minX = w, minY = h, maxX = -1, maxY = -1;
+    const layer = this.tileLayer;
     while (head < tail && TM[head] <= now) {
       const i = T[head++];
       const x = i % w, y = (i / w) | 0;
       this.paintTile(i, x, y, w, h, owner, px);
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+      this.markLayerTile(layer, x, y);
     }
     this.qHead = head;
-    if (maxX < 0) return;
-    this.tileCtx.putImageData(this.image, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
-    this.markLayerDirty(this.tileLayer, minX, minY, maxX, maxY);
+    this.flushLayerPuts(layer, this.tileCtx, this.image);
   },
 
   // Recenters the view on a tile without touching zoom — used when the
