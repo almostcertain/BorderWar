@@ -516,6 +516,17 @@ const Render = {
     return font * 0.66 * 2;   // doubled: at map-fit zoom the old size read as barely a dot
   },
 
+  // Structure icons give way to dots (drawStructureDots) when zoomed far out:
+  // their radius stops shrinking at the font floor above, so on a big map at
+  // map-fit zoom they carpet whole nations and bury the borders (SAMs are the
+  // exception and always keep their icon). Icons show
+  // at ICON_DOT_SCALE (CSS px per tile) and closer, and always while placing a
+  // build, so you can still see and tap what's already there.
+  ICON_DOT_SCALE: 1.5,
+  structureIconsShown() {
+    return (typeof UI !== 'undefined' && !!UI.placing) || this.cam.scale >= this.ICON_DOT_SCALE;
+  },
+
   // A structure's disc and glyph, drawn centred on (px, py) with radius r.
   // Used to fill the sprite cache (structureSprite) and, while the zoom is
   // still moving, to draw straight onto the map.
@@ -719,6 +730,7 @@ const Render = {
   // its own edge) should count as tapping the structure, exactly as it looks
   // like it should. Picks the closest match when discs overlap.
   findStructureNear(sx, sy, type) {
+    if (type !== 'sam' && !this.structureIconsShown()) return null;   // dots aren't tappable
     const r = this.structureRadius();
     const buffer = r * 1.5;
     const w = GameMap.width;
@@ -815,14 +827,45 @@ const Render = {
     return bestTile;
   },
 
+  // Zoomed-out stand-in for structure icons: a small dot in the owner's
+  // colour, so where things are built still reads without the clutter.
+  drawStructureDots() {
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
+    const d = Math.max(2, Math.round(3 * this.dpr)), h = d / 2, o = Math.max(1, Math.round(this.dpr));
+    for (const b of Game.buildings.values()) {
+      if (b.type === 'sam') continue;   // SAMs keep their full icon (see drawStructures)
+      const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -d || py < -d || px > cw + d || py > ch + d) continue;
+      const owner = GameMap.owner[b.tile];
+      const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
+      const x = Math.round(px - h), y = Math.round(py - h);
+      ctx.fillStyle = 'rgba(8, 14, 26, 0.9)';
+      ctx.fillRect(x - o, y - o, d + o * 2, d + o * 2);
+      ctx.fillStyle = b.built ? `rgb(${c[0]}, ${c[1]}, ${c[2]})` : `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.5)`;
+      ctx.fillRect(x, y, d, d);
+    }
+  },
+
   drawStructures() {
     if (!Game.buildings.size) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
 
+    // Zoomed out, structures shrink to owner-coloured dots, as OpenFront
+    // does, except SAMs: their icon and level stay, since reading air
+    // defence at a glance is a big part of what max zoom-out is for.
+    const iconsShown = this.structureIconsShown();
+    if (!iconsShown) this.drawStructureDots();
+
+    // Fort and SAM ranges only show while placing a build, so they don't
+    // blanket the map the rest of the time.
+    const showRanges = !!UI.placing && UI.placing !== 'debugpeace';
+
     // First pass: draw protection radii for all built forts, behind everything.
     for (const b of Game.buildings.values()) {
-      if (b.type !== 'fort' || !b.built) continue;
+      if (!showRanges || b.type !== 'fort' || !b.built) continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       const rr = Game.fortRange() * s;
@@ -846,7 +889,7 @@ const Render = {
     // fortRange(), and a solid rather than dashed ring so the two structures'
     // protection zones stay visually distinct even where they overlap.
     for (const b of Game.buildings.values()) {
-      if (b.type !== 'sam' || !b.built) continue;
+      if (!showRanges || b.type !== 'sam' || !b.built) continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       const rr = Game.dynamicSamRange(b, Game.renderElapsed) * s;
@@ -872,6 +915,7 @@ const Render = {
     }
     ctx.lineWidth = Math.max(1.5, r * 0.18);   // reset per frame; the bar below borrows this ctx
     for (const b of Game.buildings.values()) {
+      if (!iconsShown && b.type !== 'sam') continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
