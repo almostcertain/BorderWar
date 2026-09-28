@@ -31,13 +31,13 @@ const HEARTBEAT_INTERVAL_MS = 60 * 1000;
 // Issue #12: rotating open lobbies. One rotation entry per map size GameServer
 // cycles through, in order, wrapping — `maxNations` is the total Nation-slot
 // count for that entry (bots + humans never exceeds it; see GameServer._
-// startAutoLobby). large (2000x1000, formerly named xlarge) is deliberately
-// excluded: it's the perf-stress size (see docs/multiplayer-architecture.md's
-// xlarge testing note), not a fit for a pick-up-and-play open lobby. small is
-// excluded too: too cramped for an open game, especially on the multi-landmass
-// landforms a random procedural map can roll.
+// startAutoLobby). small is excluded: too cramped for an open game, especially
+// on the multi-landmass landforms a random procedural map can roll. large has
+// four times medium's area but only twice its slots, so it plays roomier
+// rather than just bigger.
 const AUTO_LOBBY_ROTATION = [
-  { mapSize: 'medium', maxNations: 14, tribes: 24 }
+  { mapSize: 'medium', maxNations: 14, tribes: 24 },
+  { mapSize: 'large', maxNations: 28, tribes: 48 }
 ];
 const AUTO_LOBBY_DIFFICULTY = 'medium';
 
