@@ -33,16 +33,26 @@ const Input = {
       this.openMenu(e.clientX, e.clientY);
     });
     window.addEventListener('keydown', e => this.onKeyDown(e));
-    window.addEventListener('keyup', e => this.keys.delete(e.code));
+    window.addEventListener('keyup', e => {
+      this.keys.delete(e.code);
+      if (e.code === 'Space') Render.setAltView(false);
+    });
     // A held key stops repeating (and panning) the instant focus leaves the
     // window — alt-tabbing away with W held would otherwise pan forever.
-    window.addEventListener('blur', () => this.keys.clear());
+    // Same for Space: the keyup never arrives, so the alt view would stick.
+    window.addEventListener('blur', () => { this.keys.clear(); Render.setAltView(false); });
   },
 
   onKeyDown(e) {
     const tag = e.target && e.target.tagName;
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
     if (this.PAN_KEYS.has(e.code)) this.keys.add(e.code);
+    // Hold Space for the alternate view (Render.setAltView). preventDefault
+    // stops it also clicking whatever button last had focus.
+    if (e.code === 'Space' && Game.running) {
+      e.preventDefault();
+      Render.setAltView(true);
+    }
   },
 
   PAN_KEYS: new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown']),

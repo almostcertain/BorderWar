@@ -120,6 +120,9 @@ const Render = {
     // bare grey mountain.
     const water = this.packed(18, 34, 60);
     const bare = [this.packed(78, 94, 72), this.packed(104, 96, 66), this.packed(122, 120, 114)];
+    this.bareTone = bare;
+    this.altRel = null;   // alt view's relation table is per-match, like the colours below
+    this.altView = false;
     this.terrain = new Uint32Array(w * h);
     for (let i = 0; i < w * h; i++) {
       this.terrain[i] = GameMap.owner[i] === WATER ? water : bare[GameMap.terrain[i]];
@@ -253,6 +256,14 @@ const Render = {
     let color;
     if (o < 0) {
       color = this.terrain[i];
+    } else if (this.altView) {
+      const edge =
+        (x > 0 && owner[i - 1] !== o) ||
+        (x < w - 1 && owner[i + 1] !== o) ||
+        (y > 0 && owner[i - w] !== o) ||
+        (y < h - 1 && owner[i + w] !== o);
+      const rel = this.altRel[o];
+      color = edge ? this.altBorder[rel] : this.altFill[rel][GameMap.terrain[i]];
     } else {
       const edge =
         (x > 0 && owner[i - 1] !== o) ||
@@ -268,6 +279,69 @@ const Render = {
     // but blending rather than overriding keeps it correct either way.
     if (Game.fallout && Game.fallout.size && Game.fallout.has(i)) color = this.tintFallout(color);
     px[i] = color;
+  },
+
+  // --- Alternate view (hold Space), after OpenFront -------------------------
+  // Strips the nation colours off the map: owned land is drawn as bare
+  // terrain under a faint wash, and every border is recoloured by its
+  // relationship to you — self green, ally/teammate yellow, embargo red,
+  // everyone else grey. OpenFront's render-settings: fillAlpha 0.15, the same
+  // four colours. Names, badges and fronts are hidden while it is up (draw()).
+  altView: false,
+  ALT_COLORS: [[0, 255, 0], [255, 255, 0], [128, 128, 128], [255, 0, 0]],
+  ALT_FILL_ALPHA: 0.15,
+  altRelKey: '',
+
+  setAltView(on) {
+    on = !!on;
+    if (on === this.altView || !this.tileCanvas) return;
+    this.altView = on;
+    if (on) this.updateAltRelations(true);
+    else this.repaintAll();
+  },
+
+  // 0 self, 1 ally, 2 neutral, 3 embargo — from Game.me's point of view.
+  altRelationOf(id) {
+    const me = Game.me;
+    if (me < 0) return 2;
+    if (id === me) return 0;
+    if (Game.areAllied(me, id)) return 1;
+    if (Game.hasEmbargoAgainst(me, id) || Game.hasEmbargoAgainst(id, me)) return 3;
+    return 2;
+  },
+
+  // Recomputes everyone's relation and repaints only when one of them
+  // changed (an alliance signed mid-hold, say) — otherwise it is just a
+  // string compare, cheap enough to run every frame.
+  updateAltRelations(force) {
+    const n = Game.players.length;
+    if (!this.altRel || this.altRel.length !== n) this.altRel = new Uint8Array(n);
+    let key = '';
+    for (let p = 0; p < n; p++) key += this.altRelationOf(p);
+    if (!force && key === this.altRelKey) return;
+    this.altRelKey = key;
+    for (let p = 0; p < n; p++) this.altRel[p] = key.charCodeAt(p) - 48;
+    if (!this.altFill) {
+      const a = this.ALT_FILL_ALPHA;
+      this.altFill = [];
+      this.altBorder = new Uint32Array(4);
+      for (let r = 0; r < 4; r++) {
+        const c = this.ALT_COLORS[r];
+        this.altBorder[r] = this.packed(c[0], c[1], c[2]);
+        this.altFill[r] = new Uint32Array(3);
+        for (let t = 0; t < 3; t++) {
+          const b = this.bareTone[t];
+          const mix = (k, sh) => (((b >> sh) & 0xff) * (1 - a) + c[k] * a) | 0;
+          this.altFill[r][t] = this.packed(mix(0, 0), mix(1, 8), mix(2, 16));
+        }
+      }
+    }
+    this.repaintAll();
+  },
+
+  repaintAll() {
+    this.buildTiles();
+    this.qHead = this.qTail = 0;   // everything queued is painted from the live owner now
   },
 
   // Fixed-ratio blend toward FALLOUT_TINT, done in unpacked RGB space and
@@ -422,6 +496,7 @@ const Render = {
     // Captured before the rebuild below consumes the flags, so the hover
     // overlay knows whether ownership moved this frame too.
     const territoryChanged = Game.dirty || Game.dirtyTiles.size > 0;
+    if (this.altView) this.updateAltRelations(false);
     if (Game.dirty) {
       this.buildTiles();
       Game.dirty = false;
@@ -455,9 +530,11 @@ const Render = {
     this.drawRailroads();
     this.drawStructures();
     this.drawPlacement();
-    this.drawLabels();
-    this.drawDiploBadges();
-    this.drawFronts();
+    if (!this.altView) {
+      this.drawLabels();
+      this.drawDiploBadges();
+      this.drawFronts();
+    }
     this.drawBoats();
     this.drawTrains();
     this.drawTradeShips();
