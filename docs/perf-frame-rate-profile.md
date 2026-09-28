@@ -151,3 +151,29 @@ Real frame pacing and GPU time. Those need a check in a normal browser
 window at the player's actual resolution. If the game is slow on a high-DPI
 or 4K screen but not at 1280×720, fill cost (option 3, and the full-screen
 map `drawImage`) is the likely cause, not JavaScript.
+
+## Follow-up: Firefox profile, large map (2026-09-28)
+
+A real Firefox profile (17 s of play on the large map) answered the "not
+measured" question above.
+
+- **Frame rate ~30 fps** (frame interval p50 20 ms, p90 68 ms), yet the page's
+  main thread was 60% idle, averaging 11 ms of work per frame. The bottleneck
+  was Firefox's GPU-process canvas thread, ~80% busy.
+- **Cause: canvas copies.** Firefox copies a CPU-side canvas (anything edited
+  with `putImageData`, or small sprite canvases) to the GPU process on *every*
+  `drawImage`, whether it changed or not. Each frame that meant the whole
+  2000×1000 tile canvas (8 MB) plus every label sprite, costing ~2.4 ms of
+  memcpy for tiles and ~2.4 ms for labels on the main thread, with the same
+  copies again plus texture allocation in the GPU process. The hover overlay
+  added a full 8 MB `putImageData` plus copy on each rebuild.
+- **Fix (render.js, render-only):** the tile and hover layers are drawn from
+  256×256 `ImageBitmap` chunks (`makeLayer` / `drawLayer`). Bitmaps are
+  immutable, so the browser uploads each one once, and only chunks whose
+  pixels changed get a new bitmap. Off-screen chunks are skipped. The hover
+  overlay now clears, blits and draws only its bounding box. Label sprites
+  are stamped from an `ImageBitmap` snapshot taken after each redraw.
+- **Still open (sim):** first-time trade-route searches (`portRoute` →
+  `seaPath`) cause 25–33 ms turns. They made up about half of all turns over
+  20 ms, and they are the visible hitches. Fixing them is a sim change (see
+  the resumable-search and coarse-grid options above).

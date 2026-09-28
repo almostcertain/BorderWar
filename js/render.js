@@ -3,6 +3,8 @@ const Render = {
   ctx: null,
   tileCanvas: null,
   tileCtx: null,
+  tileLayer: null,   // chunked bitmaps of tileCanvas (see makeLayer)
+  hoverLayer: null,
   image: null,
   pixels: null,
   terrain: null,     // Uint32Array of base water/land colours
@@ -112,7 +114,7 @@ const Render = {
     this.qHead = this.qTail = 0;   // a previous match's pending reveal is meaningless here
     // Sprites are keyed by player id, and ids (and their colours) are reused
     // by the next match.
-    this.labelSprites.clear();
+    for (const [id, sp] of this.labelSprites) this.dropLabelSprite(id, sp);
     this.structSprites.clear();
     this.structSpriteR = -1;
 
@@ -158,6 +160,102 @@ const Render = {
     this.hoverImage = this.hoverCtx.createImageData(w, h);
     this.hoverPixels = new Uint32Array(this.hoverImage.data.buffer);
     this.hoverBuiltFor = -1;
+    this.hoverBox = null;
+
+    if (this.tileLayer) this.disposeLayer(this.tileLayer);
+    if (this.hoverLayer) this.disposeLayer(this.hoverLayer);
+    this.tileLayer = this.makeLayer(this.tileCanvas, true);
+    this.hoverLayer = this.makeLayer(this.hoverCanvas, false);
+  },
+
+  // --- Chunked bitmap layers ---------------------------------------------------
+  // tileCanvas and hoverCanvas are map-sized (8MB each on the large map) and
+  // edited with putImageData, which leaves them as plain CPU canvases. Firefox
+  // hands such a canvas to its GPU process by copying the whole thing on every
+  // drawImage, changed or not: a 2026-09-28 profile on the large map had those
+  // copies (plus the matching texture allocations in the GPU process) as the
+  // main reason the game ran at ~30fps with the main thread 60% idle.
+  //
+  // So each layer is stamped from LAYER_CHUNK-sized ImageBitmaps instead. An
+  // ImageBitmap is immutable, so the browser uploads it once and reuses the
+  // texture; only chunks whose pixels changed get a new one. A chunk waiting on
+  // its new bitmap keeps showing the old one for a frame (or the canvas region
+  // itself before it has any), which the paced reveal already hides.
+  // An opaque layer's bitmaps reach one tile into their right and bottom
+  // neighbours, so fractional zoom never opens a hairline seam between chunks.
+  // A translucent layer (the hover tint) can't overlap: the shared row and
+  // column would be blended twice and show as stripes on the chunk grid.
+  LAYER_CHUNK: 256,
+
+  makeLayer(canvas, overlap) {
+    const C = this.LAYER_CHUNK, w = canvas.width, h = canvas.height, o = overlap ? 1 : 0;
+    const layer = { canvas, cols: Math.ceil(w / C), rows: Math.ceil(h / C), chunks: [], alive: true };
+    for (let cy = 0; cy < layer.rows; cy++) {
+      for (let cx = 0; cx < layer.cols; cx++) {
+        const x = cx * C, y = cy * C;
+        layer.chunks.push({ x, y, w: Math.min(C + o, w - x), h: Math.min(C + o, h - y),
+                            bmp: null, dirty: true, pending: false });
+      }
+    }
+    return layer;
+  },
+
+  disposeLayer(layer) {
+    layer.alive = false;
+    for (const c of layer.chunks) if (c.bmp) { c.bmp.close(); c.bmp = null; }
+  },
+
+  // Flags every chunk whose bitmap covers any of tiles [minX..maxX]x[minY..maxY].
+  // The overlap tile means a change on a chunk's first row/column also
+  // touches the neighbour before it.
+  markLayerDirty(layer, minX, minY, maxX, maxY) {
+    if (!layer) return;
+    const C = this.LAYER_CHUNK;
+    const cx0 = Math.max(0, Math.floor((minX - 1) / C)), cx1 = Math.min(layer.cols - 1, Math.floor(maxX / C));
+    const cy0 = Math.max(0, Math.floor((minY - 1) / C)), cy1 = Math.min(layer.rows - 1, Math.floor(maxY / C));
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) layer.chunks[cy * layer.cols + cx].dirty = true;
+    }
+  },
+
+  // Starts a new bitmap for each dirty chunk not already waiting on one. A
+  // chunk dirtied again while pending stays dirty and goes round once more.
+  refreshLayer(layer) {
+    if (layer.noBitmap) return;
+    for (const c of layer.chunks) {
+      if (!c.dirty || c.pending) continue;
+      c.dirty = false;
+      c.pending = true;
+      let req;
+      try {
+        req = createImageBitmap(layer.canvas, c.x, c.y, c.w, c.h);
+      } catch (e) {
+        layer.noBitmap = true;     // no createImageBitmap: stamp the canvas as before
+        return;
+      }
+      req.then(bmp => {
+        c.pending = false;
+        if (!layer.alive) { bmp.close(); return; }
+        if (c.bmp) c.bmp.close();
+        c.bmp = bmp;
+      }, () => { c.pending = false; layer.noBitmap = true; });
+    }
+  },
+
+  // Draws the layer with its top-left at (ox, oy) in the current transform
+  // (one unit per tile), skipping chunks outside the viewport or `box`.
+  drawLayer(ctx, layer, ox, oy, box) {
+    this.refreshLayer(layer);
+    const s = this.cam.scale * this.dpr;
+    const halfW = this.canvas.width / 2 / s, halfH = this.canvas.height / 2 / s;
+    const vx0 = this.cam.x - halfW, vx1 = this.cam.x + halfW;
+    const vy0 = this.cam.y - halfH, vy1 = this.cam.y + halfH;
+    for (const c of layer.chunks) {
+      if (c.x > vx1 || c.x + c.w < vx0 || c.y > vy1 || c.y + c.h < vy0) continue;
+      if (box && (c.x > box.maxX || c.x + c.w <= box.minX || c.y > box.maxY || c.y + c.h <= box.minY)) continue;
+      if (c.bmp) ctx.drawImage(c.bmp, ox + c.x, oy + c.y);
+      else ctx.drawImage(layer.canvas, c.x, c.y, c.w, c.h, ox + c.x, oy + c.y, c.w, c.h);
+    }
   },
 
   // Rebuilds the hover overlay for whichever nation UI.hoverId names. Only
@@ -166,9 +264,14 @@ const Render = {
   // huge nation costs one Set walk on the change, not one every 16ms.
   buildHoverOverlay(id) {
     const px = this.hoverPixels;
-    px.fill(0);
+    const prev = this.hoverBox;
+    if (prev) {
+      const w = GameMap.width;
+      for (let y = prev.minY; y <= prev.maxY; y++) px.fill(0, y * w + prev.minX, y * w + prev.maxX + 1);
+    }
+    this.hoverBox = null;
     const p = Game.players[id];
-    if (!p) { this.hoverCtx.putImageData(this.hoverImage, 0, 0); return; }
+    if (!p) { this.flushHoverOverlay(prev); return; }
 
     // If the tile actually under the cursor sits in a patch of this nation's
     // land that's fully walled in by ours, tint gold instead of the plain
@@ -201,15 +304,43 @@ const Render = {
     const region = found && !isMainland && found.wallCounts.has(Game.me) ? found : null;
     if (region) {
       const c = this.packed(255, 215, 60, 130);
-      for (const r of Game.enclosedPocketsOf(id, Game.me)) for (const t of r) px[t] = c;
+      for (const r of Game.enclosedPocketsOf(id, Game.me)) this.paintHoverTiles(r, c);
     } else {
       // Low alpha, plain white: brightens whatever colour is already there
       // rather than imposing one of its own, so it reads the same over a
       // vivid Nation and a muted Tribe alike.
       const c = this.packed(255, 255, 255, 60);
-      for (const t of p.tiles) px[t] = c;
+      this.paintHoverTiles(p.tiles, c);
     }
-    this.hoverCtx.putImageData(this.hoverImage, 0, 0);
+    this.flushHoverOverlay(prev);
+  },
+
+  // Paints `tiles` into the hover overlay and grows hoverBox around them.
+  paintHoverTiles(tiles, c) {
+    const px = this.hoverPixels, w = GameMap.width;
+    let b = this.hoverBox;
+    if (!b) b = this.hoverBox = { minX: w, minY: GameMap.height, maxX: -1, maxY: -1 };
+    for (const t of tiles) {
+      px[t] = c;
+      const x = t % w, y = (t / w) | 0;
+      if (x < b.minX) b.minX = x;
+      if (x > b.maxX) b.maxX = x;
+      if (y < b.minY) b.minY = y;
+      if (y > b.maxY) b.maxY = y;
+    }
+    if (b.maxX < 0) this.hoverBox = null;
+  },
+
+  // Blits just the part of the overlay that changed — the old box (now
+  // cleared) and the new one — instead of the whole map-sized image.
+  flushHoverOverlay(prev) {
+    const cur = this.hoverBox;
+    if (!prev && !cur) return;
+    const a = prev || cur, b = cur || prev;
+    const minX = Math.min(a.minX, b.minX), minY = Math.min(a.minY, b.minY);
+    const maxX = Math.max(a.maxX, b.maxX), maxY = Math.max(a.maxY, b.maxY);
+    this.hoverCtx.putImageData(this.hoverImage, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
+    this.markLayerDirty(this.hoverLayer, minX, minY, maxX, maxY);
   },
 
   drawHoverHighlight(territoryChanged, ctx) {
@@ -234,7 +365,7 @@ const Render = {
       this.hoverBuiltForTile = UI.hoverTile;
       this.hoverAnnexAt = now;
     }
-    ctx.drawImage(this.hoverCanvas, -this.cam.x, -this.cam.y);
+    if (this.hoverBox) this.drawLayer(ctx, this.hoverLayer, -this.cam.x, -this.cam.y, this.hoverBox);
   },
 
   // Opens on the whole map, fitted to the viewport with a little breathing
@@ -369,6 +500,7 @@ const Render = {
       }
     }
     this.tileCtx.putImageData(this.image, 0, 0);
+    this.markLayerDirty(this.tileLayer, 0, 0, w - 1, h - 1);
   },
 
   // Recolors just the tiles Game.setOwner touched since the last rebuild
@@ -393,6 +525,7 @@ const Render = {
     }
     if (maxX < 0) return;
     this.tileCtx.putImageData(this.image, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
+    this.markLayerDirty(this.tileLayer, minX, minY, maxX, maxY);
   },
 
   // --- Paced territory reveal ------------------------------------------------
@@ -457,6 +590,7 @@ const Render = {
     this.qHead = head;
     if (maxX < 0) return;
     this.tileCtx.putImageData(this.image, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
+    this.markLayerDirty(this.tileLayer, minX, minY, maxX, maxY);
   },
 
   // Recenters the view on a tile without touching zoom — used when the
@@ -523,7 +657,7 @@ const Render = {
     const s = this.cam.scale * this.dpr;
     ctx.imageSmoothingEnabled = false;
     ctx.setTransform(s, 0, 0, s, this.canvas.width / 2, this.canvas.height / 2);
-    ctx.drawImage(this.tileCanvas, -this.cam.x, -this.cam.y);
+    this.drawLayer(ctx, this.tileLayer, -this.cam.x, -this.cam.y);
     this.drawHoverHighlight(territoryChanged, ctx);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
@@ -2358,6 +2492,7 @@ const Render = {
   LABEL_REDRAW_MIN: 2,        // always make at least this much progress per frame
   LABEL_REDRAW_MAX: 8,
   LABEL_REFRESH_MS: 500,
+  LABEL_UPSCALE_MAX: 1.1,     // stretch an old sprite at most this much before redrawing it
   LABEL_ICON_BITS: [['target', 1], ['teammate', 2], ['ally', 4], ['traitor', 8], ['embargo', 16]],
   labelSprites: new Map(),    // player id -> sprite (see labelSprite)
   labelFrame: 0,
@@ -2369,7 +2504,8 @@ const Render = {
     if (!sp) {
       sp = { canvas: null, w: 0, h: 0, ox: 0, oy: 0, font: 0, name: null, troops: null, icons: 0,
              nameEm: 0, troopsEm: 0, measuredName: null, measuredTroops: null,
-             drawnAt: -1, drawnMs: -Infinity, usedAt: 0, px: 0, py: 0, want: 0, wantIcons: 0, wantTroops: '', wantName: '' };
+             drawnAt: -1, drawnMs: -Infinity, usedAt: 0, px: 0, py: 0, want: 0, wantIcons: 0, wantTroops: '', wantName: '',
+             bmp: null, bmpW: 0, bmpH: 0, bmpOx: 0, bmpOy: 0, bmpFont: 0, bmpGen: 0, bmpFresh: false };
       this.labelSprites.set(id, sp);
     }
     return sp;
@@ -2445,6 +2581,39 @@ const Render = {
     sp.icons = missingIcon ? -1 : icons;
     sp.drawnAt = this.labelFrame;
     sp.drawnMs = now;
+    this.snapshotLabelSprite(sp);
+  },
+
+  // Firefox copies a canvas to its GPU process on every drawImage from it,
+  // changed or not, which with a few hundred labels on screen was ~2ms a
+  // frame of copying (2026-09-28 profile). An ImageBitmap is immutable, so it
+  // is uploaded once and reused; stamp that, and keep stamping the previous
+  // bitmap (with its own size) until the new one resolves.
+  snapshotLabelSprite(sp) {
+    if (this.labelNoBitmap) return;
+    const gen = ++sp.bmpGen;
+    sp.bmpFresh = false;
+    const w = sp.w, h = sp.h, ox = sp.ox, oy = sp.oy, font = sp.font;
+    let req;
+    try {
+      req = createImageBitmap(sp.canvas, 0, 0, w, h);
+    } catch (e) {
+      this.labelNoBitmap = true;
+      return;
+    }
+    req.then(bmp => {
+      if (sp.bmpGen !== gen || sp.dead) { bmp.close(); return; }
+      if (sp.bmp) sp.bmp.close();
+      sp.bmp = bmp;
+      sp.bmpW = w; sp.bmpH = h; sp.bmpOx = ox; sp.bmpOy = oy; sp.bmpFont = font;
+      sp.bmpFresh = true;
+    }, () => { this.labelNoBitmap = true; });
+  },
+
+  dropLabelSprite(id, sp) {
+    sp.dead = true;
+    if (sp.bmp) { sp.bmp.close(); sp.bmp = null; }
+    this.labelSprites.delete(id);
   },
 
   drawLabels() {
@@ -2522,8 +2691,9 @@ const Render = {
       draws.push(sp);
       // A size or troop change can wait for the refresh interval: in the
       // meantime the old sprite is stamped scaled to the new size, which is all
-      // a nation growing a pixel (or a zoom step) needs.
-      if (!sp.canvas || sp.icons !== icons || sp.name !== p.name ||
+      // a nation growing a pixel needs. Growing past LABEL_UPSCALE_MAX (zooming
+      // in) can't wait: an upscaled sprite is visibly blurry.
+      if (!sp.canvas || sp.icons !== icons || sp.name !== p.name || font > sp.font * this.LABEL_UPSCALE_MAX ||
           ((sp.font !== font || sp.troops !== troops) && now - sp.drawnMs >= this.LABEL_REFRESH_MS)) stale.push(sp);
       L.font = font;
     }
@@ -2545,6 +2715,14 @@ const Render = {
     ctx.imageSmoothingEnabled = true;
     for (const sp of draws) {
       if (!sp.canvas) continue;
+      // Until the latest redraw's bitmap arrives, stamp the canvas itself (one
+      // copy, this frame only) rather than the previous, now stale bitmap.
+      if (sp.bmp && sp.bmpFresh) {
+        const k = sp.want / sp.bmpFont, w = sp.bmpW, h = sp.bmpH, ox = sp.bmpOx, oy = sp.bmpOy;
+        if (k === 1) ctx.drawImage(sp.bmp, Math.round(sp.px - ox), Math.round(sp.py - oy));
+        else ctx.drawImage(sp.bmp, 0, 0, w, h, sp.px - ox * k, sp.py - oy * k, w * k, h * k);
+        continue;
+      }
       const k = sp.want / sp.font;
       if (k === 1) {
         ctx.drawImage(sp.canvas, 0, 0, sp.w, sp.h, Math.round(sp.px - sp.ox), Math.round(sp.py - sp.oy), sp.w, sp.h);
@@ -2557,7 +2735,7 @@ const Render = {
     // or panned away), so the cache tracks what is actually being looked at.
     if (frame % 300 === 0) {
       for (const [id, sp] of this.labelSprites) {
-        if (frame - sp.usedAt > 600) this.labelSprites.delete(id);
+        if (frame - sp.usedAt > 600) this.dropLabelSprite(id, sp);
       }
     }
   },
