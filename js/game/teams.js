@@ -33,9 +33,8 @@ const Teams = {
   HUMANS_VS_NATIONS: 'Humans Vs Nations',
 
   // OpenFront's PERCENT_TILES_OWNED_TO_WIN (Config.percentageTilesOwnedToWin,
-  // overtime off). Current upstream uses the same 80 for FFA and teams; this
-  // port's FFA check still uses its own 95% (issue #33 is where that moves),
-  // so only team games use this.
+  // overtime off). Upstream uses the same 80 for FFA and teams; the FFA
+  // check in core.js tick() uses 80 too.
   WIN_PERCENT: 80,
 
   // default-theme.json's teamColors.
