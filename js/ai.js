@@ -1235,7 +1235,9 @@ const AI = {
 
   think(p) {
     if (p.tiles.size === 0) return;
-    if (p.troops < Game.maxTroops(p) * p.aiTraits.trigger) return;
+    // Free land only waits for the reserve fill, not the full trigger: gating
+    // expansion on 50-60% of cap left nations sitting still between grabs.
+    if (p.troops < Game.maxTroops(p) * p.aiTraits.reserve) return;
 
     const myAttacks = Game.attacks.filter(a => a.attacker === p.id);
     const targets = this.borderTargets(p);
@@ -1247,6 +1249,7 @@ const AI = {
       if (n >= 1 && Game.launchAttack(p.id, NEUTRAL, n)) return;
     }
 
+    if (p.troops < Game.maxTroops(p) * p.aiTraits.trigger) return;
     if (this.assistAllies(p, targets, myAttacks)) return;
 
     // Never stack a second attack on the same Tribe — or a second Tribe
