@@ -1595,12 +1595,16 @@ const UI = {
         tabs.forEach((t) => t.classList.toggle('active', t === tab));
         for (const key in bodies) bodies[key].classList.toggle('hidden', key !== tab.dataset.mode);
         this.setLobbyError('');
+        // The preview skips drawing while its panel is hidden.
+        this.refreshMapPreview(tab.dataset.mode === 'host' ? 'host' : '');
       });
     });
 
     document.getElementById('lobbyCode').addEventListener('click', () => this.copyLobbyCode());
     this.bindModeSelect('');
     this.bindModeSelect('host');
+    this.setupMapGen('');
+    this.setupMapGen('host');
 
     // Prefill the shared name field from the last time this browser played.
     let savedName = '';
@@ -1640,8 +1644,12 @@ const UI = {
     const tribes = Math.max(0, Math.min(400, parseInt(document.getElementById('hostTribeCount').value, 10) || 0));
     const difficulty = document.getElementById('hostDifficulty').value;
     const mode = this.getModeConfig('host');
-    return { map: map, mapSize: mapSize, bots: bots, tribes: tribes, difficulty: difficulty,
-      gameMode: mode.gameMode, playerTeams: mode.playerTeams };
+    const gen = this.getMapGenConfig('host');
+    const config = { map: map, mapSize: mapSize, mapGen: gen.mapGen, bots: bots, tribes: tribes,
+      difficulty: difficulty, gameMode: mode.gameMode, playerTeams: mode.playerTeams };
+    // Procedural maps use the preview's seed; World keeps a fresh server seed.
+    if (map === 'procedural') config.seed = gen.seed;
+    return config;
   },
 
   // Issue #31: the Mode/Teams pair on the singleplayer ('') and host ('host')
@@ -1669,6 +1677,108 @@ const UI = {
     const sync = () => document.getElementById(ids.row).classList.toggle('hidden', mode.value !== 'team');
     mode.addEventListener('change', sync);
     sync();
+  },
+
+  // --- Procedural map options -------------------------------------------------
+  //
+  // The knobs under the Map row (Protocol.MAP_GEN, one select each), a live
+  // preview and the seed it was drawn from, built into #mapGenBox /
+  // #hostMapGenBox. main.js shows the box only while Procedural is picked.
+  // The preview runs the real generator on its own small GameMap copy, never
+  // the singleton, and at a fixed small size: shapes are drawn in map
+  // fractions, so they match the chosen size closely (details like rivers and
+  // specks of island differ a little).
+  MAP_GEN_LABELS: {
+    landform: ['Landform', { random: 'Random', continent: 'Continent', twin: 'Twin Continents',
+      continents: 'Continents', archipelago: 'Archipelago', pangaea: 'Pangaea', inland: 'Inland Sea' }],
+    land: ['Land', { normal: 'Normal', scarce: 'Scarce', abundant: 'Abundant' }],
+    terrain: ['Terrain', { normal: 'Normal', flat: 'Flat', rugged: 'Rugged', alpine: 'Alpine' }],
+    rivers: ['Rivers', { normal: 'Normal', none: 'None', few: 'Few', many: 'Many' }],
+    coast: ['Coastline', { normal: 'Normal', smooth: 'Smooth', jagged: 'Jagged' }]
+  },
+  MAP_PREVIEW_W: 400,
+  MAP_PREVIEW_H: 200,
+
+  mapGenId(prefix, name) { return prefix ? prefix + name.charAt(0).toUpperCase() + name.slice(1) : name; },
+
+  setupMapGen(prefix) {
+    const box = document.getElementById(this.mapGenId(prefix, 'mapGenBox'));
+    const select = (key) => {
+      const [label, names] = this.MAP_GEN_LABELS[key];
+      const opts = Protocol.MAP_GEN[key].map(v => '<option value="' + v + '">' + names[v] + '</option>').join('');
+      return '<label>' + label + '<select id="' + this.mapGenId(prefix, 'gen_' + key) + '">' + opts + '</select></label>';
+    };
+    box.innerHTML =
+      '<div class="optRow2">' + select('landform') + select('land') + '</div>' +
+      '<div class="optRow2">' + select('terrain') + select('rivers') + select('coast') + '</div>' +
+      '<div class="mapPreview">' +
+        '<canvas id="' + this.mapGenId(prefix, 'mapPreview') + '" width="' + this.MAP_PREVIEW_W +
+          '" height="' + this.MAP_PREVIEW_H + '"></canvas>' +
+        '<span id="' + this.mapGenId(prefix, 'mapPreviewNote') + '" class="mapPreviewNote"></span>' +
+        '<div class="mapPreviewBar">' +
+          '<label>Seed <input id="' + this.mapGenId(prefix, 'mapSeed') + '" type="number" min="0" max="4294967295"></label>' +
+          '<button type="button" id="' + this.mapGenId(prefix, 'mapReroll') + '">New map</button>' +
+        '</div>' +
+      '</div>';
+
+    const seedInput = document.getElementById(this.mapGenId(prefix, 'mapSeed'));
+    seedInput.value = String(Math.floor(Math.random() * 1e9));
+    for (const key of Object.keys(Protocol.MAP_GEN)) {
+      document.getElementById(this.mapGenId(prefix, 'gen_' + key))
+        .addEventListener('change', () => this.refreshMapPreview(prefix));
+    }
+    seedInput.addEventListener('change', () => this.refreshMapPreview(prefix));
+    document.getElementById(this.mapGenId(prefix, 'mapReroll')).addEventListener('click', () => {
+      seedInput.value = String(Math.floor(Math.random() * 1e9));
+      this.refreshMapPreview(prefix);
+    });
+  },
+
+  // {mapGen, seed} for gameStartInfo.config. An empty or invalid seed box
+  // means a fresh random seed, as before the box existed.
+  getMapGenConfig(prefix) {
+    const mapGen = {};
+    for (const key of Object.keys(Protocol.MAP_GEN)) {
+      mapGen[key] = document.getElementById(this.mapGenId(prefix, 'gen_' + key)).value;
+    }
+    const raw = document.getElementById(this.mapGenId(prefix, 'mapSeed')).value.trim();
+    const n = /^\d+$/.test(raw) ? Number(raw) : NaN;
+    const seed = n <= 0xFFFFFFFF ? n : Math.floor(Math.random() * 1e9);
+    return { mapGen: Protocol.normalizeMapGen(mapGen), seed: seed };
+  },
+
+  // Redraws the preview shortly after the last change; generation takes a
+  // noticeable moment, so a burst of changes only pays for one.
+  refreshMapPreview(prefix) {
+    this._previewTimers = this._previewTimers || {};
+    clearTimeout(this._previewTimers[prefix]);
+    this._previewTimers[prefix] = setTimeout(() => this.drawMapPreview(prefix), 80);
+  },
+
+  drawMapPreview(prefix) {
+    const box = document.getElementById(this.mapGenId(prefix, 'mapGenBox'));
+    if (!box || box.classList.contains('hidden') || box.offsetParent === null) return;
+    const gen = this.getMapGenConfig(prefix);
+    const w = this.MAP_PREVIEW_W, h = this.MAP_PREVIEW_H;
+    const map = Object.create(GameMap);
+    map.generate(w, h, gen.seed >>> 0, gen.mapGen);
+
+    const canvas = document.getElementById(this.mapGenId(prefix, 'mapPreview'));
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(w, h);
+    // render.js's unclaimed-ground tones: water, plains, highland, mountain.
+    const water = [18, 34, 60], ground = [[78, 94, 72], [104, 96, 66], [122, 120, 114]];
+    for (let i = 0; i < w * h; i++) {
+      const c = map.owner[i] === WATER ? water : ground[map.terrain[i]];
+      img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+
+    const names = this.MAP_GEN_LABELS.landform[1];
+    const lm = map.landmasses.filter(l => l.size >= 400).length;
+    document.getElementById(this.mapGenId(prefix, 'mapPreviewNote')).textContent =
+      (gen.mapGen.landform === 'random' ? 'Random: ' : '') + names[map.layout] +
+      (lm > 1 ? ' · ' + lm + ' landmasses' : '');
   },
 
   getJoinInputs() {

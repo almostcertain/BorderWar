@@ -190,6 +190,7 @@ const LocalServer = {
       config: {
         map: opts.map === 'world' ? 'world' : 'procedural',
         mapSize: opts.mapSize || 'medium',
+        mapGen: Protocol.normalizeMapGen(opts.mapGen),
         bots: opts.bots | 0,
         tribes: opts.tribes | 0,
         // Singleplayer only for now: the host lobby sends none, and Game.init

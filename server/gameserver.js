@@ -763,6 +763,8 @@ class GameServer {
         // is the existing procedural generator, never trusted through as-is.
         map: config.map === 'world' ? 'world' : 'procedural',
         mapSize: config.mapSize || 'medium',
+        // The procedural generator's knobs (Protocol.MAP_GEN), whitelisted.
+        mapGen: Protocol.normalizeMapGen(config.mapGen),
         bots: Number.isInteger(config.bots) ? config.bots : 0,
         tribes: Number.isInteger(config.tribes) ? config.tribes : 0,
         // Unknown values fall back to Medium in Game.init as well; whitelisted
@@ -781,7 +783,7 @@ class GameServer {
     const cfg = this.gameStartInfo.config;
     log.info(this._tag, 'started: ' + players.length + ' player' + (players.length === 1 ? '' : 's')
       + (this.clients.size > players.length ? ' + ' + (this.clients.size - players.length) + ' spectator(s)' : '')
-      + ', map ' + cfg.mapSize + ', ' + cfg.bots + ' bots, ' + cfg.tribes + ' tribes, '
+      + ', map ' + (cfg.map === 'world' ? 'world' : cfg.mapSize + ' ' + cfg.mapGen.landform) + ', ' + cfg.bots + ' bots, ' + cfg.tribes + ' tribes, '
       + cfg.difficulty + ' difficulty');
     this._turnIntervalID = setInterval(() => this.endTurn(), Protocol.TURN_INTERVAL_MS);
     // MP-3.4: liveness sweep runs for exactly the ACTIVE-phase lifetime,

@@ -1274,3 +1274,60 @@ html, body {
 #publicLobbyList .lobbyListEmpty:hover {
   background: rgba(255, 255, 255, 0.05);
 }
+
+/* Procedural map options (UI.setupMapGen): knob selects, then a preview of
+   the map those knobs and the seed will generate. */
+.mapGen {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mapGen .optRow2 > label { font-size: 13px; }
+
+.mapPreview canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 2 / 1;
+  border-radius: 6px;
+  background: #12223c;
+  image-rendering: pixelated;
+}
+
+.mapPreview { position: relative; }
+
+.mapPreviewBar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+/* Which landform the preview shows, over its top-left corner. */
+.mapPreviewNote {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(6, 10, 20, 0.7);
+  font-size: 11px;
+  pointer-events: none;
+}
+.mapPreviewNote:empty { display: none; }
+
+.mapPreviewBar input[type="number"] {
+  width: 120px;
+  margin-left: 4px;
+}
+
+.mapPreviewBar button {
+  padding: 4px 10px;
+  font-size: 12px;
+}

@@ -278,8 +278,8 @@ const Game = {
     // `map: 'world'` selects OpenFront's real, baked "World" coastline
     // instead of a procedural one; `mapSize` is meaningless for it (the real
     // map has one fixed resolution, 2000x1000 — the same as MAP_SIZES.large)
-    // and is ignored. Every other value (including none) is the existing
-    // procedural generator, keyed by mapSize as before.
+    // and is ignored. Every other value (including none) is the procedural
+    // generator, keyed by mapSize and shaped by the lobby's mapGen knobs.
     if (config.map === 'world') {
       if (!GameMap.worldData) {
         throw new Error('Game.init: map "world" selected but GameMap.worldData was not preloaded (see js/net/worldmap.js)');
@@ -290,7 +290,7 @@ const Game = {
       const sizeKey = config.mapSize;
       const size = this.MAP_SIZES[sizeKey] || this.MAP_SIZES.medium;
       this.sizeKey = sizeKey in this.MAP_SIZES ? sizeKey : 'medium';
-      GameMap.generate(size.width, size.height, seed);
+      GameMap.generate(size.width, size.height, seed, config.mapGen);
     }
 
     // Player id space: 0..H-1 are humans, one per roster entry (real

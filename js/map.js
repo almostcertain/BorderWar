@@ -13,17 +13,200 @@ const GameMap = {
   shoreDist: null,  // Uint8Array, water tiles only: tile-distance to nearest land
   landTiles: 0,
 
-  // Share of the grid that should end up as playable continent. A fixed sea
-  // level let the noise decide how much land a seed produced, and it varied
-  // 4-5x at the same map size — an Extra Large roll could come out smaller
-  // than a median Large and play like one. Match length follows land area, so
-  // that variance landed straight on pacing.
-  // Kept well clear of the ceiling the radial falloff imposes (~24% of grid).
-  // See findSeaLevel for how the sea level search actually copes with this
-  // target being unreachable on some seeds.
+  // Default share of the grid that should end up as land. A fixed sea level
+  // let the noise decide how much land a seed produced, and it varied 4-5x at
+  // the same map size — an Extra Large roll could come out smaller than a
+  // median Large and play like one. Match length follows land area, so that
+  // variance landed straight on pacing. Each landform scales this (see
+  // landformPlan), and the lobby's Land knob scales it again (LAND_SCALE).
   LAND_FRACTION: 0.40,
 
-  generate(width, height, seed, landFraction) {
+  // --- Generator options -----------------------------------------------------
+  //
+  // The lobby's "Map options" arrive as gameStartInfo.config.mapGen:
+  // { landform, land, terrain, rivers, coast }. Protocol.MAP_GEN whitelists the
+  // same names on the server; resolveGenOptions falls back to the defaults for
+  // anything unrecognised, so a missing or stale config still builds a map.
+  // See docs/procedural-maps.md for what each landform and knob does.
+  LANDFORMS: ['continent', 'twin', 'continents', 'archipelago', 'pangaea', 'inland'],
+  // How often 'random' picks each landform, in LANDFORMS order.
+  LANDFORM_WEIGHTS: [24, 20, 20, 12, 14, 10],
+  LAND_SCALE: { scarce: 0.65, normal: 1, abundant: 1.35 },
+  // [highland share, mountain share] of land; see classifyTerrain.
+  TERRAIN_SHARES: { flat: [0.14, 0.03], normal: [0.26, 0.10], rugged: [0.32, 0.16], alpine: [0.36, 0.24] },
+  // [rivers-per-landmass multiplier, how far upstream a river reaches].
+  RIVER_OPTIONS: { none: [0, 0.04], few: [0.5, 0.06], normal: [1, 0.04], many: [2, 0.022] },
+  // Coastline character: octaves and contrast of the elevation noise, and how
+  // far (as a fraction of map width) the continent outlines are bent.
+  COAST_OPTIONS: {
+    smooth: { octaves: 3, contrast: 2.0, warp: 0.04 },
+    normal: { octaves: 5, contrast: 2.6, warp: 0.10 },
+    jagged: { octaves: 7, contrast: 3.6, warp: 0.22 }
+  },
+
+  // Integer hash of the seed into [0, 1). Map generation runs in the sim, so it
+  // must never touch Game.rng (that would shift every later draw); every
+  // per-seed choice comes from here instead, each with its own `n`.
+  seedHash(seed, n) {
+    let x = Math.imul((seed | 0) ^ Math.imul(n, 0x9E3779B1), 0x85EBCA6B);
+    x ^= x >>> 15; x = Math.imul(x, 0xC2B2AE35); x ^= x >>> 13;
+    return (x >>> 0) / 4294967296;
+  },
+
+  resolveGenOptions(seed, opts) {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    const has = (table, v) => typeof v === 'string' && Object.prototype.hasOwnProperty.call(table, v);
+    let landform = this.LANDFORMS.includes(o.landform) ? o.landform : null;
+    if (!landform) {
+      let total = 0;
+      for (const wt of this.LANDFORM_WEIGHTS) total += wt;
+      let r = this.seedHash(seed, 100) * total;
+      landform = this.LANDFORMS[this.LANDFORMS.length - 1];
+      for (let k = 0; k < this.LANDFORMS.length; k++) {
+        r -= this.LANDFORM_WEIGHTS[k];
+        if (r < 0) { landform = this.LANDFORMS[k]; break; }
+      }
+    }
+    return {
+      landform: landform,
+      land: has(this.LAND_SCALE, o.land) ? o.land : 'normal',
+      terrain: has(this.TERRAIN_SHARES, o.terrain) ? o.terrain : 'normal',
+      rivers: has(this.RIVER_OPTIONS, o.rivers) ? o.rivers : 'normal',
+      coast: has(this.COAST_OPTIONS, o.coast) ? o.coast : 'normal'
+    };
+  },
+
+  // Every landform is built from "plates": seed points that each grow one
+  // landmass under a radial falloff (d = 1 at the plate's radii). With more
+  // than one plate, every tile belongs to its nearest plate, and a strait is
+  // sunk along the borders between them, so the landmasses never fuse and
+  // crossing one always means a naval landing. Plate positions, sizes and
+  // counts are fractions of the map, never tile counts, so the same seed and
+  // options draw the same shapes at every map size (the lobby preview relies
+  // on that).
+  landformPlan(seed, landform, width, height) {
+    const h = n => this.seedHash(seed, 200 + n);
+    const cx = width / 2, cy = height / 2;
+    const plan = {
+      plates: null, land: this.LAND_FRACTION, featureScale: 5,
+      falloffStart: 0.55, falloffStrength: 1.4, edgeStart: 0.9,
+      strait: 0, straitSlope: 8, lakes: 0, innerSea: null
+    };
+    const plate = (x, y, rx, ry, weight) => ({ x, y, rx, ry, weight });
+
+    if (landform === 'continent') {
+      // One central continent, off-centre and out of round by seed.
+      plan.featureScale = 4.2 + h(1) * 1.8;
+      plan.plates = [plate(cx + (h(2) - 0.5) * width * 0.1, cy + (h(3) - 0.5) * height * 0.1,
+        cx * (0.82 + h(4) * 0.3), cy * (0.82 + h(5) * 0.3), 1)];
+    } else if (landform === 'twin') {
+      // Two equal continents facing each other across a strait whose width
+      // varies by seed: some get a narrow crossing, others a real sea.
+      plan.plates = [plate(width / 4, cy, width / 4, cy, 1), plate(width * 3 / 4, cy, width / 4, cy, 1)];
+      plan.strait = width * 0.015 * (0.6 + h(6) * 1.2);
+    } else if (landform === 'continents') {
+      // Three to five continents of uneven size.
+      const count = 3 + Math.floor(h(7) * 3);
+      plan.featureScale = 5 + h(8) * 1.5;
+      plan.plates = this.scatterPlates(seed, count, width, height, 0.16, 0.22, 0.56, 0.75, 0.5);
+      plan.strait = width * 0.012 * (0.7 + h(9) * 1.0);
+    } else if (landform === 'archipelago') {
+      // Many islands, from a few big ones to scattered small ones.
+      const count = 14 + Math.floor(h(10) * 15);
+      plan.featureScale = 8 + h(11) * 3;
+      plan.plates = this.scatterPlates(seed, count, width, height, 0.07, 0.1, 0.7, 0.5, 1.3);
+      plan.land = 0.28;
+      plan.falloffStart = 0.15;
+      plan.falloffStrength = 1.3;
+      plan.strait = width * 0.005 * (0.8 + h(12) * 0.8);
+      plan.straitSlope = 4;
+    } else if (landform === 'pangaea') {
+      // One supercontinent running nearly to the map edges, pocked with
+      // inland seas and lakes.
+      plan.featureScale = 4 + h(13) * 1.5;
+      plan.plates = [plate(cx, cy, cx * 1.05, cy * 1.05, 1)];
+      plan.land = 0.58;
+      plan.falloffStart = 0.72;
+      plan.edgeStart = 0.94;
+      plan.lakes = 0.8 + h(14) * 0.8;
+    } else {
+      // 'inland': a ring of land around a central sea, opened to the ocean by
+      // one channel pointing a seed-chosen way. The direction is a unit vector
+      // from t = tan(angle/2) using only + * / (see rangeShape for why no trig).
+      const t = h(15) * 2 - 1, k = 1 + t * t, flip = h(16) < 0.5 ? -1 : 1;
+      plan.featureScale = 5 + h(17) * 1.2;
+      plan.plates = [plate(cx, cy, cx * 0.95, cy * 0.95, 1)];
+      plan.innerSea = {
+        radius: 0.34 + h(18) * 0.12,
+        dx: flip * (1 - t * t) / k, dy: flip * 2 * t / k,
+        channel: 0.07 + h(19) * 0.05
+      };
+    }
+    return plan;
+  },
+
+  // `count` plates spread over the map by best-candidate sampling (each new
+  // one is the farthest of a dozen tries from those already placed), so they
+  // tile the map loosely instead of clumping. Each plate's radius is a share
+  // of the gap to its nearest neighbour, jittered by `sizeJitter` so they
+  // come out uneven; `weight` sets its share of the land.
+  scatterPlates(seed, count, width, height, marginX, marginY, reach, aspectJitter, sizeJitter) {
+    let n = 300;
+    const next = () => this.seedHash(seed, n++);
+    const x0 = width * marginX, x1 = width * (1 - marginX);
+    const y0 = height * marginY, y1 = height * (1 - marginY);
+    const pts = [];
+    for (let k = 0; k < count; k++) {
+      let bx = 0, by = 0, bestD = -1;
+      for (let tries = k === 0 ? 1 : 12; tries > 0; tries--) {
+        const px = x0 + (x1 - x0) * next(), py = y0 + (y1 - y0) * next();
+        let dmin = Infinity;
+        for (const q of pts) {
+          const dx = px - q.x, dy = py - q.y, d = dx * dx + dy * dy;
+          if (d < dmin) dmin = d;
+        }
+        if (dmin > bestD) { bestD = dmin; bx = px; by = py; }
+      }
+      pts.push({ x: bx, y: by });
+    }
+    return pts.map(p => {
+      let nn = Infinity;
+      for (const q of pts) {
+        if (q === p) continue;
+        const dx = p.x - q.x, dy = p.y - q.y, d = dx * dx + dy * dy;
+        if (d < nn) nn = d;
+      }
+      nn = Math.sqrt(nn);
+      const size = 1 + (next() - 0.5) * sizeJitter;
+      const r = nn * reach * size;
+      return {
+        x: p.x, y: p.y,
+        rx: r * (1 + (next() - 0.5) * aspectJitter), ry: r * (1 + (next() - 0.5) * aspectJitter) * 0.8,
+        weight: size
+      };
+    });
+  },
+
+  // A slowly varying 2D offset, sampled on a coarse grid (read back with
+  // bilinear interpolation, like rangeLowFreq) and applied to the point each
+  // plate's falloff is measured from. It bends continent outlines into
+  // peninsulas and bays, and makes the straits between plates meander.
+  outlineWarp(width, height, seed, amp) {
+    const stride = Math.max(1, Math.round(width / 250));
+    const gw = Math.ceil((width - 1) / stride) + 2, gh = Math.ceil((height - 1) / stride) + 2;
+    const grid = new Float32Array(gw * gh * 2);
+    const f = 2.2 / width, a = amp * width * 2;
+    for (let gy = 0; gy < gh; gy++) {
+      for (let gx = 0; gx < gw; gx++) {
+        const u = gx * stride * f, v = gy * stride * f * 1.6, o = (gy * gw + gx) * 2;
+        grid[o] = (Noise.fractal(u, v, seed + 501, 3) - 0.5) * a;
+        grid[o + 1] = (Noise.fractal(u, v, seed + 502, 3) - 0.5) * a;
+      }
+    }
+    return { stride, gw, grid };
+  },
+
+  generate(width, height, seed, genOptions) {
     this.width = width;
     this.height = height;
     const size = width * height;
@@ -32,17 +215,34 @@ const GameMap = {
     this._region = new Int32Array(size);
     this._queue = new Int32Array(size);
 
-    const scale = 5 / width;
-    const cx = width / 2, cy = height / 2;
+    const opts = this.genOptions = this.resolveGenOptions(seed, genOptions);
+    this.layout = opts.landform;
+    const plan = this.landformPlan(seed, opts.landform, width, height);
+    const coast = this.COAST_OPTIONS[opts.coast];
+    const shares = this.TERRAIN_SHARES[opts.terrain];
+    // 'normal' terrain wanders a little by seed; the named settings don't.
+    const jitter = opts.terrain === 'normal' ? 1 : 0;
+    this.highlandShare = shares[0] + (this.seedHash(seed, 110) - 0.5) * 0.08 * jitter;
+    this.mountainShare = shares[1] + (this.seedHash(seed, 111) - 0.5) * 0.06 * jitter;
+    const rivers = this.RIVER_OPTIONS[opts.rivers];
+    this.riverScale = rivers[0];
+    this.riverShare = rivers[1];
 
-    // Half of all seeds grow one central continent, half grow two facing
-    // continents split by a guaranteed strait (see mapLayout). Both keep the
-    // islands pruneSmallLandmasses leaves around the coasts.
-    this.layout = this.mapLayout(seed);
-    const twin = this.layout === 'twin';
-    // twin: 0 = west half, 1 = east half, 2 = the strait between them.
-    const side = twin ? new Uint8Array(size) : null;
-    const strait = twin ? this.straitShape(width, height, seed, scale) : null;
+    const scale = plan.featureScale / width;
+    const cx = width / 2, cy = height / 2;
+    const plates = plan.plates, P = plates.length;
+    const warp = this.outlineWarp(width, height, seed, coast.warp);
+    // Distance between each pair of plates, for the strait test below.
+    const pairDist = new Float64Array(P * P);
+    for (let a = 0; a < P; a++) {
+      for (let b = 0; b < P; b++) {
+        const dx = plates[a].x - plates[b].x, dy = plates[a].y - plates[b].y;
+        pairDist[a * P + b] = Math.sqrt(dx * dx + dy * dy);
+      }
+    }
+    // Which plate each tile belongs to; P marks the strait between plates.
+    const plateOf = P > 1 ? new Uint8Array(size) : null;
+    const lakeScale = scale * 2.6, inner = plan.innerSea;
 
     // Independent field driving terrain *tier* (plains vs highland vs
     // mountain) — deliberately decoupled from `elevation` below.
@@ -55,71 +255,91 @@ const GameMap = {
     this.roughness = new Float32Array(size);
     const shape = this.rangeShape(seed);
     const low = this.rangeLowFreq(width, height, seed, scale * 1.6, shape);
+    const { stride: ws, gw: wgw, grid: wg } = warp;
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const i = y * width + x;
         // Octave averaging pulls values toward 0.5, so expand contrast back out.
-        let e = (Noise.fractal(x * scale, y * scale * 1.6, seed, 5) - 0.5) * 2.6 + 0.55;
+        let e = (Noise.fractal(x * scale, y * scale * 1.6, seed, coast.octaves) - 0.5) * coast.contrast + 0.55;
 
-        // Radial falloff so the map is an island cluster ringed by ocean.
-        // twin: one falloff per half, centred in it, so each half is shaped
-        // like a smaller copy of the single-continent map.
-        let d;
-        if (twin) {
-          const mid = strait.mid[y];
-          const west = x < mid;
-          side[i] = Math.abs(x - mid) < strait.halfWidth ? 2 : (west ? 0 : 1);
-          const hx = west ? width / 4 : width * 3 / 4;
-          const dx = (x - hx) / (width / 4), dy = (y - cy) / cy;
-          d = Math.sqrt(dx * dx + dy * dy);
+        // Warped sample point for the plate falloff (bilinear read of the grid).
+        const gx = (x / ws) | 0, gy = (y / ws) | 0;
+        const fx = x / ws - gx, fy = y / ws - gy;
+        const o00 = (gy * wgw + gx) * 2, o10 = o00 + 2, o01 = o00 + wgw * 2, o11 = o01 + 2;
+        const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+        const px = x + wg[o00] * w00 + wg[o10] * w10 + wg[o01] * w01 + wg[o11] * w11;
+        const py = y + wg[o00 + 1] * w00 + wg[o10 + 1] * w10 + wg[o01 + 1] * w01 + wg[o11 + 1] * w11;
+
+        // Nearest and second-nearest plate.
+        let a = 0, b = -1, da = Infinity, db = Infinity;
+        for (let k = 0; k < P; k++) {
+          const dx = px - plates[k].x, dy = py - plates[k].y, d = dx * dx + dy * dy;
+          if (d < da) { db = da; b = a; da = d; a = k; } else if (d < db) { db = d; b = k; }
+        }
+        const pl = plates[a];
+        const nx = (px - pl.x) / pl.rx, ny = (py - pl.y) / pl.ry;
+        const d = Math.sqrt(nx * nx + ny * ny);
+        e -= Math.max(0, d - plan.falloffStart) * plan.falloffStrength;
+
+        if (plateOf) {
+          // Distance from the warped point to the border with the next plate
+          // (the perpendicular bisector between the two plate centres).
+          const gap = (db - da) / (2 * pairDist[a * P + b]);
+          plateOf[i] = gap < plan.strait ? P : a;
           // Slope the land down into the strait, so the noise draws a real
           // coast there instead of the strait's hard edge clipping one.
           // Eased (squared) so the slope has no hard start line of its own.
-          const k = Math.max(0, 1 - Math.abs(x - mid) / (strait.halfWidth * 8));
+          const k = Math.max(0, 1 - gap / (plan.strait * plan.straitSlope));
           e -= k * k * 1.2;
-        } else {
-          const dx = (x - cx) / cx, dy = (y - cy) / cy;
-          d = Math.sqrt(dx * dx + dy * dy);
         }
-        e -= Math.max(0, d - 0.55) * 1.4;
+
+        if (inner) {
+          // Central sea: sink everything inside its radius, and cut the channel
+          // out to the ocean along the chosen direction.
+          e -= Math.max(0, inner.radius - d) * 3;
+          const along = nx * inner.dx + ny * inner.dy;
+          if (along > 0) {
+            const across = Math.abs(ny * inner.dx - nx * inner.dy);
+            const k = Math.max(0, 1 - across / inner.channel);
+            e -= k * 1.2;
+          }
+        }
+        if (plan.lakes) {
+          const l = Noise.fractal(x * lakeScale, y * lakeScale * 1.6, seed + 4242, 3);
+          e -= Math.max(0, l - 0.6) * plan.lakes * 4;
+        }
+
+        // Keep open ocean around the map border whatever the plates do. A
+        // rounded square (x^4 + y^4), so land squeezed into a corner doesn't
+        // take on a right-angled coast.
+        const ex = (x - cx) / cx, ey = (y - cy) / cy, ex2 = ex * ex, ey2 = ey * ey;
+        e -= Math.max(0, Math.sqrt(Math.sqrt(ex2 * ex2 + ey2 * ey2)) - plan.edgeStart) * 8;
 
         this.elevation[i] = e;
         this.roughness[i] = this.rangeRoughness(x * scale * 1.6, y * scale * 1.6, seed, shape, low, x, y);
       }
     }
 
-    // Raise or lower the sea until the surviving continent is the size we
-    // want. Measuring the largest landmass rather than raw land above water is
-    // what makes this work: dropping the sea can spawn separate islands that
-    // get pruned away, so only the connected mass is a meaningful target.
-    const target = Math.round(size * (landFraction || this.LAND_FRACTION));
-    let best;
-    if (twin) {
-      // Each half searches its own sea level for half the land, so the two
-      // continents come out the same size instead of whichever half's noise
-      // ran wetter losing out. Then each half's elevation is shifted so one
-      // shared sea level reproduces both results, and the strait is sunk
-      // below anything the search can reach so the continents never fuse.
-      this._side = side;
-      const tW = this.findSeaLevel(Math.round(target / 2), 0);
-      const tE = this.findSeaLevel(Math.round(target / 2), 1);
-      this._side = null;
-      best = (tW + tE) / 2;
-      const shiftW = best - tW, shiftE = best - tE;
-      for (let i = 0; i < size; i++) {
-        const s = side[i];
-        this.elevation[i] = s === 2 ? -10 : this.elevation[i] + (s === 0 ? shiftW : shiftE);
-      }
-    } else {
-      best = this.findSeaLevel(target);
+    // Raise or lower the sea until the land is the size we want.
+    const target = Math.round(size * Math.min(0.7, plan.land * this.LAND_SCALE[opts.land]));
+    if (plateOf) {
+      this.balancePlates(plateOf, plates, target);
+      // Sunk below anything the search can reach, so plates never fuse.
+      for (let i = 0; i < size; i++) if (plateOf[i] === P) this.elevation[i] = -10;
     }
+    // One continent is sized by its main landmass: dropping the sea can spawn
+    // separate islands that get pruned away, so only the connected mass is a
+    // meaningful target. Multi-plate maps count every landmass that survives
+    // pruning, since the land is meant to be spread across them.
+    this._measureKept = P > 1;
+    const best = this.findSeaLevel(target);
 
     this.largestLandmassAt(best);
     this.pruneSmallLandmasses(this.MIN_LANDMASS_TILES);
     // Estuaries turn land into water, which can pinch off a sliver of coast,
     // so landmasses are relabelled and re-pruned after carving.
-    if (this.carveRivers(seed)) {
+    if (this.riverScale > 0 && this.carveRivers(seed)) {
       this._labelRegions();
       this.pruneSmallLandmasses(this.MIN_LANDMASS_TILES);
     }
@@ -129,35 +349,38 @@ const GameMap = {
     return this.landTiles;
   },
 
-  // 'single' (one central continent) or 'twin' (two continents across a
-  // strait), an even split over seeds. Integer hash of the seed only, like
-  // rangeShape — this runs in the sim, so it must not touch Game.rng.
-  mapLayout(seed) {
-    let x = Math.imul((seed | 0) ^ 0x5BD1E995, 0x85EBCA6B);
-    x ^= x >>> 15; x = Math.imul(x, 0xC2B2AE35); x ^= x >>> 13;
-    return (x >>> 0) & 1 ? 'twin' : 'single';
-  },
-
-  // The strait between twin continents: a centre line that meanders a little
-  // down the middle of the map, per row, and a half-width that varies by seed
-  // so twin maps aren't all split by the same channel width — some seeds get
-  // a narrow crossing, others a wide sea between the two continents. Still
-  // wide enough to always read as open sea and force a naval crossing, and
-  // capped well short of eating into either continent's half.
-  // Integer hash of the seed only, like mapLayout/rangeShape — this runs in
-  // the sim, so it must not touch Game.rng.
-  straitShape(width, height, seed, scale) {
-    let x = Math.imul((seed | 0) ^ 0x27D4EB2F, 0x85EBCA6B);
-    x ^= x >>> 15; x = Math.imul(x, 0xC2B2AE35); x ^= x >>> 13;
-    const r = (x >>> 0) / 4294967296;
-    const halfWidth = Math.max(3, width * (0.015 * (0.6 + r * 1.2)));
-
-    const mid = new Float32Array(height);
-    const sway = width * 0.04;
-    for (let y = 0; y < height; y++) {
-      mid[y] = width / 2 + (Noise.fractal(y * scale, 0.5, seed + 333, 3) - 0.5) * 2 * sway;
+  // Gives each plate its share of the land before the global sea level search,
+  // so no plate comes out swamped or bone dry just because its noise ran wetter
+  // or drier. Each plate should cover about the same fraction of its own cell,
+  // scaled by its weight, and its elevation is shifted so the level that
+  // floods all but that fraction lands on one common value. The strait tiles
+  // between plates hide the steps this leaves at the borders. Capped well
+  // short of a full cell, or a plate fills it and its coast is just the
+  // straight strait edge. Percentiles come off a strided sample, like
+  // classifyTerrain's.
+  balancePlates(plateOf, plates, target) {
+    const size = this.width * this.height, P = plates.length;
+    const counts = new Float64Array(P);
+    let total = 0, meanWeight = 0;
+    for (let i = 0; i < size; i++) if (plateOf[i] < P) { counts[plateOf[i]]++; total++; }
+    for (const p of plates) meanWeight += p.weight / P;
+    const shift = new Float32Array(P);
+    for (let k = 0; k < P; k++) {
+      if (!counts[k]) continue;
+      const stride = Math.max(1, Math.floor(counts[k] / 4000));
+      const sample = [];
+      let seen = 0;
+      for (let i = 0; i < size; i++) {
+        if (plateOf[i] === k && seen++ % stride === 0) sample.push(this.elevation[i]);
+      }
+      sample.sort((a, b) => a - b);
+      const share = Math.max(0.05, Math.min(0.6, target / total * plates[k].weight / meanWeight));
+      // The clamp stops a plate that is mostly sea (one squeezed against the
+      // map edge) being lifted until the edge falloff draws its coast square.
+      const s = 0.5 - sample[Math.min(sample.length - 1, Math.floor(sample.length * (1 - share)))];
+      shift[k] = Math.max(-0.35, Math.min(0.25, s));
     }
-    return { mid, halfWidth };
+    for (let i = 0; i < size; i++) if (plateOf[i] < P) this.elevation[i] += shift[plateOf[i]];
   },
 
   // Per-seed character of the terrain: which way the ranges run, how tightly
@@ -265,6 +488,10 @@ const GameMap = {
     this.roughness = new Float32Array(size);
     this._region = new Int32Array(size);
     this._queue = new Int32Array(size);
+    this.genOptions = null;
+    this.layout = 'world';
+    this.highlandShare = this.HIGHLAND_SHARE;
+    this.mountainShare = this.MOUNTAIN_SHARE;
 
     for (let i = 0; i < size; i++) {
       const b = bytes[i];
@@ -321,13 +548,13 @@ const GameMap = {
   // updates one running best-so-far, so the result is never worse than the
   // best single point actually tried.
   //
-  // `side` (twin layout only) restricts the search to one half of the map,
-  // see largestLandmassAt.
-  findSeaLevel(target, side) {
+  // What counts toward `target` is set by `_measureKept` (see generate).
+  findSeaLevel(target) {
     let lo = 0.30, hi = 0.85;
     let bestT = lo, bestDiff = Infinity;
     const consider = t => {
-      const count = this.largestLandmassAt(t, side);
+      const largest = this.largestLandmassAt(t);
+      const count = this._measureKept ? this._keptLand : largest;
       const diff = Math.abs(count - target);
       if (diff < bestDiff) { bestDiff = diff; bestT = t; }
       return count;
@@ -373,9 +600,13 @@ const GameMap = {
   // Share of land at each tier. Fixed proportions rather than fixed elevation
   // cutoffs, for the same reason the sea level is searched rather than fixed:
   // the noise's absolute range wanders by seed, so a hard cutoff would give one
-  // map alpine spines and the next none at all.
+  // map alpine spines and the next none at all. These are the defaults (the
+  // World map uses them); generate() sets highlandShare/mountainShare from the
+  // lobby's Terrain knob.
   HIGHLAND_SHARE: 0.26,
   MOUNTAIN_SHARE: 0.10,
+  highlandShare: 0.26,
+  mountainShare: 0.10,
 
   // How far inland (in tiles) the coastal penalty below fades out, and how
   // strong it is at the shoreline itself, as a fraction of this seed's own
@@ -456,8 +687,8 @@ const GameMap = {
     const sample = indices.map(scoreAt);
     sample.sort((a, b) => a - b);
     const at = f => sample[Math.min(sample.length - 1, Math.floor(sample.length * f))];
-    const mountainAt = at(1 - this.MOUNTAIN_SHARE);
-    const highlandAt = at(1 - this.MOUNTAIN_SHARE - this.HIGHLAND_SHARE);
+    const mountainAt = at(1 - this.mountainShare);
+    const highlandAt = at(1 - this.mountainShare - this.highlandShare);
 
     for (let i = 0; i < size; i++) {
       if (this.owner[i] === WATER) continue;
@@ -486,6 +717,8 @@ const GameMap = {
   RIVER_SLOPE_WEIGHT: 0.5,
   RIVER_MEANDER: 0.15,
   RIVER_SHARE: 0.04,     // a river reaches upstream until its flow drops below this share of its mouth's
+  riverScale: 1,         // rivers per landmass, times the base count (the lobby's Rivers knob)
+  riverShare: 0.04,      // per-map RIVER_SHARE, also set from the Rivers knob
   ESTUARY_SHARE: 0.3,    // only the trunk (this share of mouth flow and up) widens into an estuary
   carveRivers(seed) {
     const w = this.width, h = this.height, size = w * h;
@@ -593,7 +826,7 @@ const GameMap = {
     mouths.sort((a, b) => acc[b] - acc[a] || a - b);
     const chosen = new Map();   // mouth tile -> its flow
     const perLandmass = this.landmasses.map(lm => ({
-      want: lm.size < 4000 ? 0 : lm.size < 20000 ? 1 : 2 + Math.round(Math.sqrt(lm.size) / 250),
+      want: Math.round((lm.size < 4000 ? 0 : lm.size < 20000 ? 1 : 2 + Math.round(Math.sqrt(lm.size) / 250)) * this.riverScale),
       spacing: Math.sqrt(lm.size) * 0.2,
       picked: []
     }));
@@ -620,7 +853,7 @@ const GameMap = {
     for (let k = 0; k < count; k++) {
       const i = order[k];
       const flow = chosen.get(mouth[i]);
-      if (flow === undefined || acc[i] < flow * this.RIVER_SHARE) continue;
+      if (flow === undefined || acc[i] < flow * this.riverShare) continue;
       river[i] = 1;
       dist[i] = down[i] < 0 ? 0 : dist[down[i]] + 1;
     }
@@ -669,20 +902,12 @@ const GameMap = {
   },
 
   // Floods the map at sea level `t` and returns the size of its biggest
-  // connected landmass, leaving `owner` and `_region` set for that threshold.
-  // With `side` given, every tile outside that half of a twin map (`_side`)
-  // counts as water, so each continent can be sized on its own.
-  largestLandmassAt(t, side) {
+  // connected landmass, leaving `owner` and `_region` set for that threshold
+  // (and `_keptLand`, see _labelRegions).
+  largestLandmassAt(t) {
     const size = this.width * this.height;
-    if (side === undefined) {
-      for (let i = 0; i < size; i++) {
-        this.owner[i] = this.elevation[i] > t ? NEUTRAL : WATER;
-      }
-    } else {
-      const s = this._side;
-      for (let i = 0; i < size; i++) {
-        this.owner[i] = s[i] === side && this.elevation[i] > t ? NEUTRAL : WATER;
-      }
+    for (let i = 0; i < size; i++) {
+      this.owner[i] = this.elevation[i] > t ? NEUTRAL : WATER;
     }
     return this._labelRegions();
   },
@@ -720,6 +945,10 @@ const GameMap = {
     }
     this._bestRegion = bestRegion;
     this._regionSizes = sizes;
+    // Land that pruneSmallLandmasses would keep at this threshold.
+    let kept = 0;
+    for (const n of sizes) if (n >= this.MIN_LANDMASS_TILES) kept += n;
+    this._keptLand = kept;
     return bestCount;
   },
 

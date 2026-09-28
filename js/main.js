@@ -81,13 +81,16 @@
   bindSizeDefaults(document.getElementById('hostMapSize'),
     document.getElementById('hostBotCount'), document.getElementById('hostTribeCount'));
 
-  // The "Map Size" row only means anything for the procedural generator — the
-  // real World map has one fixed resolution (js/game/core.js's Game.init).
-  // Hiding it rather than disabling it, so a host who picked World can't be
-  // confused by a size control that would silently do nothing.
-  function applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes) {
+  // The "Map Size" row and the map options box only mean anything for the
+  // procedural generator — the real World map has one fixed resolution
+  // (js/game/core.js's Game.init). Hiding them rather than disabling them, so
+  // a host who picked World can't be confused by controls that would silently
+  // do nothing.
+  function applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes, prefix) {
     const isWorld = mapType.value === 'world';
     sizeRow.classList.toggle('hidden', isWorld);
+    document.getElementById(prefix ? prefix + 'MapGenBox' : 'mapGenBox').classList.toggle('hidden', isWorld);
+    if (!isWorld) UI.refreshMapPreview(prefix);
     if (isWorld) {
       bots.value = WORLD_BOTS;
       tribes.value = WORLD_TRIBES;
@@ -96,9 +99,9 @@
       tribes.value = TRIBES_FOR_SIZE[sizeSelect.value] || 16;
     }
   }
-  function bindMapType(mapType, sizeRow, sizeSelect, bots, tribes) {
+  function bindMapType(mapType, sizeRow, sizeSelect, bots, tribes, prefix) {
     mapType.addEventListener('change', () => {
-      applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes);
+      applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes, prefix);
       if (mapType.value === 'world') {
         // Preload eagerly the moment World is actually chosen, rather than
         // waiting for Start — see js/net/worldmap.js. Failure is surfaced
@@ -110,11 +113,11 @@
     // World is selected by default in index.html, so without this the fields
     // would sit at their static HTML values (9/16) instead of World's actual
     // defaults until the player touches the dropdown themselves.
-    applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes);
+    applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes, prefix);
   }
-  bindMapType(mapTypeSelect, document.getElementById('mapSizeRow'), sizeSelect, botInput, tribeInput);
+  bindMapType(mapTypeSelect, document.getElementById('mapSizeRow'), sizeSelect, botInput, tribeInput, '');
   bindMapType(document.getElementById('hostMapType'), document.getElementById('hostMapSizeRow'),
-    document.getElementById('hostMapSize'), document.getElementById('hostBotCount'), document.getElementById('hostTribeCount'));
+    document.getElementById('hostMapSize'), document.getElementById('hostBotCount'), document.getElementById('hostTribeCount'), 'host');
 
   // World is the default selection in both panels (index.html) — start
   // fetching it immediately rather than waiting for a change event that may
@@ -452,6 +455,8 @@
     const tribes = Math.max(0, Math.min(TRIBE_CAP, parseInt(tribeInput.value, 10) || 0));
     const mapSize = sizeSelect.value;
     const mode = UI.getModeConfig('');
+    const procedural = mapTypeSelect.value !== 'world';
+    const gen = UI.getMapGenConfig('');
 
     // A new match is a new connection. Tearing the old one down first stops a
     // previous match's LocalServer pump from outliving it and emitting turns
@@ -470,9 +475,11 @@
       local: true,
       gameID: 'local',
       username: UI.getPlayerName() || 'You',
-      seed: (Math.random() * 1e9) | 0,
-      map: mapTypeSelect.value === 'world' ? 'world' : 'procedural',
+      // Procedural maps use the seed the options preview was drawn from.
+      seed: procedural ? gen.seed : (Math.random() * 1e9) | 0,
+      map: procedural ? 'procedural' : 'world',
       mapSize: mapSize,
+      mapGen: gen.mapGen,
       bots: bots,
       tribes: tribes,
       difficulty: difficultySelect.value,

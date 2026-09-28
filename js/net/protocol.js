@@ -78,6 +78,30 @@ const Protocol = {
     'silo', 'atombomb', 'hydrogenbomb', 'sam', 'mirv'
   ],
 
+  // The procedural generator's lobby knobs, carried as config.mapGen on
+  // `start_game` and in gameStartInfo (js/map.js's resolveGenOptions reads
+  // them; docs/procedural-maps.md describes each). The first value of each is
+  // the default.
+  MAP_GEN: {
+    landform: ['random', 'continent', 'twin', 'continents', 'archipelago', 'pangaea', 'inland'],
+    land: ['normal', 'scarce', 'abundant'],
+    terrain: ['normal', 'flat', 'rugged', 'alpine'],
+    rivers: ['normal', 'none', 'few', 'many'],
+    coast: ['normal', 'smooth', 'jagged']
+  },
+
+  // A whitelisted copy of `mapGen`: every knob present, anything unknown
+  // replaced by its default, nothing extra passed through.
+  normalizeMapGen(mapGen) {
+    const src = mapGen && typeof mapGen === 'object' ? mapGen : {};
+    const out = {};
+    for (const key of Object.keys(this.MAP_GEN)) {
+      const values = this.MAP_GEN[key];
+      out[key] = values.includes(src[key]) ? src[key] : values[0];
+    }
+    return out;
+  },
+
   // --- Field type vocabulary -------------------------------------------------
   //
   // Each entry is a pure predicate returning null (valid) or a fragment of an
@@ -408,9 +432,9 @@ const Protocol = {
       dir: 'c2s',
       fields: { config: 'obj' },
       notes: 'MP-2.3: the lobby creator asks the server to leave LOBBY and begin '
-        + 'the match. `config` bundles {map, mapSize, bots, tribes} — the host\'s '
+        + 'the match. `config` bundles {map, mapSize, mapGen, seed, bots, tribes} — the host\'s '
         + 'own map/bot/tribe controls (`map` is \'world\' or \'procedural\'; '
-        + '`mapSize` only means anything for the latter) — because v1 has no live '
+        + '`mapSize`, `mapGen` (see MAP_GEN) and `seed` only mean anything for the latter) — because v1 has no live '
         + 'lobby-settings sync to '
         + 'non-host clients (architecture doc §9: "joiners see a read-only '
         + 'roster"), so the simplest correct design is to carry the config here '
