@@ -856,16 +856,12 @@ const Render = {
     // Zoomed out, structures shrink to owner-coloured dots, as OpenFront
     // does, except SAMs: their icon and level stay, since reading air
     // defence at a glance is a big part of what max zoom-out is for.
+    // Range rings follow the same rule: forts' only with icons, SAMs' always.
     const iconsShown = this.structureIconsShown();
-    if (!iconsShown) this.drawStructureDots();
-
-    // Fort and SAM ranges only show while placing a build, so they don't
-    // blanket the map the rest of the time.
-    const showRanges = !!UI.placing && UI.placing !== 'debugpeace';
 
     // First pass: draw protection radii for all built forts, behind everything.
     for (const b of Game.buildings.values()) {
-      if (!showRanges || b.type !== 'fort' || !b.built) continue;
+      if (!iconsShown || b.type !== 'fort' || !b.built) continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       const rr = Game.fortRange() * s;
@@ -889,7 +885,7 @@ const Render = {
     // fortRange(), and a solid rather than dashed ring so the two structures'
     // protection zones stay visually distinct even where they overlap.
     for (const b of Game.buildings.values()) {
-      if (!showRanges || b.type !== 'sam' || !b.built) continue;
+      if (b.type !== 'sam' || !b.built) continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       const rr = Game.dynamicSamRange(b, Game.renderElapsed) * s;
@@ -904,6 +900,8 @@ const Render = {
       ctx.strokeStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.3)`;
       ctx.stroke();
     }
+
+    if (!iconsShown) this.drawStructureDots();   // above the rings, below SAM icons
 
     const r = this.structureRadius() * this.dpr;
     if (r !== this.structSpriteR) {
