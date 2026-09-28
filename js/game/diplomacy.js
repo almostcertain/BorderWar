@@ -49,6 +49,10 @@ Object.assign(Game, {
   provokeByAttack(attacker, target) {
     if (attacker.isTribe || target.isTribe || this.isTraitor(target)) return;
     this.adjustRelation(target, attacker.id, this.ATTACK_RELATION_HIT);
+    this.provokeAllies(attacker, target);
+  },
+
+  provokeAllies(attacker, target) {
     for (const allyId of target.allies) {
       if (allyId !== attacker.id) this.adjustRelation(this.players[allyId], attacker.id, this.ATTACK_ALLY_RELATION_HIT);
     }

@@ -1118,6 +1118,12 @@ const AI = {
       const atk = Game.players[a.attacker];
       if (atk && atk.alive && !atk.isTribe) out.add(a.attacker);
     }
+    // A nuke inbound on p's land is an attack just like an army.
+    for (const n of Game.nukes) {
+      if (n.ownerId === p.id || GameMap.owner[n.dst] !== p.id) continue;
+      const atk = Game.players[n.ownerId];
+      if (atk && atk.alive && !atk.isTribe) out.add(n.ownerId);
+    }
     if (contact) {
       for (const id of contact.keys()) {
         const o = id >= 0 && Game.players[id];

@@ -210,6 +210,9 @@ Object.assign(Game, {
         this.breakAlliance(ownerId, id);
       } else {
         this.adjustRelation(target, ownerId, -100);
+        // A nuke is an attack: the victim's allies cool toward the launcher too.
+        const owner = this.players[ownerId];
+        if (owner && !owner.isTribe && !target.isTribe && !this.isTraitor(target)) this.provokeAllies(owner, target);
       }
     }
   },
@@ -658,6 +661,7 @@ Object.assign(Game, {
     if (this.areAllied(ownerId, targetOwner)) this.breakAlliance(ownerId, targetOwner);
     this.adjustRelation(target, ownerId, -100);
     if (owner) this.adjustRelation(owner, targetOwner, -100);
+    if (owner && !owner.isTribe && !target.isTribe && !this.isTraitor(target)) this.provokeAllies(owner, target);
   },
 
   // MirvExecution.tryGenerateTarget/isOverlapping, ported as a single
