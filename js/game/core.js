@@ -983,12 +983,12 @@ const Game = {
         // just shrinks the total a player needs to own, same as this port's
         // Game.fallout Set. Checked against every player, not just Game.me
         // — the old UI.checkEndGame only ever tested the local human.
-        // Threshold is upstream's PERCENT_TILES_OWNED_TO_WIN (80, same as
+        // Threshold is the win threshold (90, same as
         // Teams.WIN_PERCENT), cross-multiplied like hasWon() (issue #33).
         const tilesNeededDenominator = GameMap.landTiles - this.fallout.size;
         if (tilesNeededDenominator > 0) {
           for (const p of this.players) {
-            if (p.tiles.size * 100 > tilesNeededDenominator * 80) {
+            if (p.tiles.size * 100 > tilesNeededDenominator * 90) {
               this.winnerId = p.id;
               break;
             }
