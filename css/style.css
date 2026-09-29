@@ -1141,8 +1141,6 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #pauseBtn, #hoverPanel
 }
 
 #nameRow input { margin-left: 6px; width: 180px; }
-#lowGfxRow { font-size: 12px; opacity: 0.8; cursor: pointer; }
-#lowGfxRow input { margin: 0 4px 0 0; vertical-align: middle; }
 
 .lobbyLabel {
   font-size: 12px;
@@ -1404,3 +1402,59 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #pauseBtn, #hoverPanel
   #overlay .modeTab { min-width: 0; padding: 12px 6px; font-size: 14px; }
   #licenseFooter { grid-column: 1 / -1; }
 }
+
+/* --- Options (js/options.js) ------------------------------------------------ */
+/* Cog in the top-right corner, above the menu overlay; hidden once a match
+   is running (the overlay is what it opens from). */
+#optionsBtn {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 10px);
+  right: 12px;
+  z-index: 11;
+  padding: 6px;
+  border-radius: 8px;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+body:has(#overlay.hidden) #optionsBtn { display: none; }
+
+#optionsOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 8, 16, 0.6);
+}
+.optionsPanel {
+  background: rgba(14, 24, 42, 0.98);
+  border-radius: 14px;
+  padding: 20px;
+  text-align: left;
+}
+.optionsPanel h2 { margin: 0 0 4px; text-align: center; }
+.optRow { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
+.optRow input[type="checkbox"] { flex: none; margin: 0; }
+.optRow select { margin-left: auto; }
+.optRow small { display: block; font-size: 11px; opacity: 0.6; }
+
+#perfStats {
+  position: fixed;
+  left: 8px;
+  bottom: 6px;
+  z-index: 8;
+  font: 11px/1 ui-monospace, Menlo, monospace;
+  opacity: 0.7;
+  pointer-events: none;
+}
+body:has(#overlay:not(.hidden)) #perfStats { visibility: hidden; }
+
+/* UI scale: only the edge-anchored HUD pieces scale; the radial menu and the
+   canvas are positioned from the cursor and stay as they are. */
+:is(#topbar, #hud, #pauseBtn, #hoverPanel, #debugToggle, #debugPanel) { zoom: var(--ui-scale, 1); }
+
+/* Hide hint bar: a placement refusal (.warn) still shows. */
+body.noHint #hint:not(.warn) { display: none; }

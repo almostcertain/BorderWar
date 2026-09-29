@@ -26,6 +26,7 @@ const MenuBg = (function() {
   const img = octx.createImageData(W, H);
 
   let map = null, owner = null, frontier = [], rng = null;
+  let enabled = true;
   let phase = 'grow', holdLeft = 0, fadeStart = 0, t0 = 0;
 
   function mulberry32(a) {
@@ -112,7 +113,7 @@ const MenuBg = (function() {
   }
 
   function tick() {
-    if (overlay.classList.contains('hidden')) return;
+    if (!enabled || overlay.classList.contains('hidden')) return;
     const now = performance.now();
     if (phase === 'grow') grow();
     else if (phase === 'hold') {
@@ -134,5 +135,12 @@ const MenuBg = (function() {
     console.error('[menu bg]', e);
     view.remove();
   }
-  return {};
+  // Low graphics turns the backdrop off: no timer work, no canvas, and the
+  // overlay falls back to its solid background.
+  function setEnabled(on) {
+    enabled = !!on;
+    view.style.display = enabled ? '' : 'none';
+    overlay.classList.toggle('menuBgOn', enabled && !!map);
+  }
+  return { setEnabled };
 })();

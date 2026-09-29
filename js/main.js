@@ -551,6 +551,7 @@
 
     Render.draw();
     UI.update();
+    Options.perfFrame(now);
     // Called every frame, unconditionally: checkEndGame now also has to
     // notice this client's own defeat the instant it happens, which can be
     // long before Game.winnerId is decided (see its own comment in ui.js).

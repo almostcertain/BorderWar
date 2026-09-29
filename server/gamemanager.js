@@ -314,6 +314,10 @@ class GameManager {
         // own outbound `ping` (Transport handles that independently). Split
         // out from hash/winner below so this case's comment doesn't have to
         // keep disclaiming two unrelated future tasks.
+        //
+        // The echo is only so the client can time the round trip for its
+        // optional ping readout; the client drops it before the sim sees it.
+        try { client.ws.send(JSON.stringify(Protocol.msg.ping())); } catch (e) { /* socket closing */ }
         break;
       case 'hash':
         // MP-4.2: record this client's reported hash for the turn it names;

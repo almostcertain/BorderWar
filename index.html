@@ -111,6 +111,38 @@
   <div id="hint">Tap land to attack · right-click or hold a nation for diplomacy · drag to pan</div>
 </div>
 
+<div id="perfStats" class="hidden"></div>
+
+<button id="optionsBtn" type="button" title="Options" aria-label="Options"><img class="ic" src="assets/icons/cog.svg" alt="" draggable="false"></button>
+
+<div id="optionsOverlay" class="hidden">
+  <div class="panel optionsPanel" role="dialog" aria-label="Options">
+    <h2>Options</h2>
+    <label class="optRow" title="Draws the map at standard resolution instead of Retina/HiDPI and turns off the animated menu background. Much faster on older laptops; slightly softer text.">
+      <input id="optLowGfx" type="checkbox"> <span>Low graphics<small>Faster on older computers; also turns off the menu animation</small></span>
+    </label>
+    <label class="optRow">
+      <input id="optShowPerf" type="checkbox"> <span>Show FPS / ping<small>Ping shows in online games</small></span>
+    </label>
+    <label class="optRow">
+      <input id="optHideHint" type="checkbox"> <span>Hide hint bar<small>Warnings still appear</small></span>
+    </label>
+    <label class="optRow">
+      <input id="optInvertZoom" type="checkbox"> <span>Invert zoom direction<small>Mouse wheel</small></span>
+    </label>
+    <label class="optRow">
+      <span>UI scale</span>
+      <select id="optUiScale">
+        <option value="0.85">Small</option>
+        <option value="1">Normal</option>
+        <option value="1.2">Large</option>
+        <option value="1.4">Extra large</option>
+      </select>
+    </label>
+    <button type="button" id="optionsClose" class="primaryBtn">Done</button>
+  </div>
+</div>
+
 <div id="overlay">
   <div class="panel menuPanel">
     <div class="menuCol menuMain">
@@ -124,10 +156,6 @@
          same Transport/onConnect/onServerMessage pipeline with local:false;
          see js/main.js's "Multiplayer lobby" section. -->
     <label id="nameRow">Name <input id="playerTag" type="text" maxlength="5" placeholder="TAG" title="Optional team tag (2-5 letters or digits). Players with the same tag are put on the same team in team games." autocomplete="off" spellcheck="false" style="width:4.5em;text-transform:uppercase"> <input id="playerName" type="text" maxlength="20" placeholder="You" autocomplete="off" spellcheck="false"></label>
-    <label id="lowGfxRow" title="Draws the map at standard resolution instead of Retina/HiDPI. Much faster on older laptops; slightly softer text.">
-      <input id="lowGfx" type="checkbox"> Low graphics (faster on older computers)
-    </label>
-
     <!-- Issue: main menu redesign — the open rotating lobby (#12) is the
          primary call to action, so it gets its own hero card with a single
          big button, ahead of and visually louder than the Singleplayer/Host/
@@ -353,7 +381,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/nukes', 'game/sam', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'menubg', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/nukes', 'game/sam', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'menubg', 'options', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

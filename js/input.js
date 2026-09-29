@@ -255,7 +255,8 @@ const Input = {
 
   onWheel(e) {
     e.preventDefault();
-    Render.cam.scale *= e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const zoomIn = (e.deltaY < 0) !== Options.get('invertZoom');
+    Render.cam.scale *= zoomIn ? 1.15 : 1 / 1.15;
   },
 
   pinchDistance() {

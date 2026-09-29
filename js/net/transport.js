@@ -105,6 +105,16 @@ const Transport = {
   // ticking against a dead socket.
   _pingIntervalID: null,
 
+  // Client-only latency readout: when the last keepalive went out and the
+  // round trip the server's echo measured (null until the first echo).
+  _pingSentAt: null,
+  rtt: null,
+
+  _sendPing() {
+    this._pingSentAt = performance.now();
+    this.send(Protocol.msg.ping());
+  },
+
   // --- Automatic reconnect (MP-4.1) -------------------------------------------
   //
   // {gameID, username, spectator} from the most recent connectRemote() call —
@@ -496,9 +506,8 @@ const Transport = {
 
       // The 5 s keepalive §6.1 asks for. Server-side, this is what keeps
       // GameServer's lastPing fresh (MP-3.4's disconnect timeout reads it).
-      this._pingIntervalID = setInterval(() => {
-        this.send(Protocol.msg.ping());
-      }, 5000);
+      this._sendPing();
+      this._pingIntervalID = setInterval(() => this._sendPing(), 5000);
 
       if (typeof config.onOpenOnce === 'function') config.onOpenOnce();
       this._emitStatus('open');
@@ -527,6 +536,13 @@ const Transport = {
         this._reconnectAttempts = 0;
       }
 
+      // The server echoes each keepalive; the gap is the round-trip time the
+      // Options "Show FPS / ping" readout displays. Not a sim message.
+      if (msg.type === 'ping') {
+        if (this._pingSentAt !== null) this.rtt = Math.round(performance.now() - this._pingSentAt);
+        return;
+      }
+
       if (this._deliver) this._deliver(msg);
     };
 
@@ -536,6 +552,7 @@ const Transport = {
       // on whatever connection replaced it — e.g. leaving a lobby and hosting again.
       if (this.ws !== ws) return;
       this.connected = false;
+      this.rtt = null;
       if (this._pingIntervalID !== null) {
         clearInterval(this._pingIntervalID);
         this._pingIntervalID = null;
