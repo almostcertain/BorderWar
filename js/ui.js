@@ -1847,11 +1847,26 @@ const UI = {
     const info = document.getElementById('quickJoinInfo');
     const btn = document.getElementById('quickJoinBtn');
     if (!entry) {
+      this._quickJoinEntry = null;
       info.textContent = 'No open game right now — check back shortly.';
       btn.disabled = true;
       this.renderQuickJoinMap(null);
       return;
     }
+    this._quickJoinEntry = entry;
+    this.updateQuickJoinInfo();
+    // The poll only lands every few seconds; tick the countdown locally.
+    if (!this._quickJoinTickID) {
+      this._quickJoinTickID = setInterval(() => this.updateQuickJoinInfo(), 1000);
+    }
+    btn.disabled = !!entry.debugFake;
+    this.renderQuickJoinMap(entry);
+  },
+
+  updateQuickJoinInfo() {
+    const entry = this._quickJoinEntry;
+    const info = document.getElementById('quickJoinInfo');
+    if (!entry || !info) return;
     const mapLabel = String(entry.mapSize || '').replace(/^./, (c) => c.toUpperCase());
     let text = mapLabel + ' map · ' + entry.playerCount + '/' + entry.maxPlayers + ' players';
     if (typeof entry.autoStartAt === 'number') {
@@ -1861,8 +1876,6 @@ const UI = {
       text += ' · be the first in';
     }
     info.textContent = text;
-    btn.disabled = !!entry.debugFake;
-    this.renderQuickJoinMap(entry);
   },
 
   // The open game's map, drawn from the seed the server picked for it. Only
