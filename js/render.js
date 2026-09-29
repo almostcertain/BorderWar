@@ -1867,7 +1867,7 @@ const Render = {
     if (!Game.warships.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, mw = GameMap.width;
-    const r = Math.max(6 * this.dpr, Math.min(16 * this.dpr, s * 0.9));
+    const r = Math.max(7 * this.dpr, Math.min(18 * this.dpr, s * 1.0));
 
     if (UI.selectedWarships.size) {
       for (const w of Game.warships) {
@@ -2042,9 +2042,7 @@ const Render = {
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
 
-      const owner = Game.players[m.ownerId];
-      const col = owner ? owner.color : [255, 255, 255];
-      const colour = `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
+      const colour = '#ff2a2a';
       const radius = Math.max(9 * this.dpr, Math.min(20 * this.dpr, s * 0.65));
 
       const steps = Math.max(2, Math.ceil(t * 24));
@@ -2068,9 +2066,13 @@ const Render = {
       ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.fillStyle = colour;
       ctx.fill();
+      const flash = 0.5 + 0.5 * Math.sin(performance.now() / 90);
+      ctx.globalAlpha = 0.55 * flash;
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.globalAlpha = 0.8;
       ctx.lineWidth = Math.max(1.5, this.dpr);
       ctx.strokeStyle = '#fff';
-      ctx.globalAlpha = 0.8;
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
@@ -2122,9 +2124,7 @@ const Render = {
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -30 || py < -30 || px > cw + 30 || py > ch + 30) continue;
 
-      const owner = Game.players[n.ownerId];
-      const col = owner ? owner.color : [255, 255, 255];
-      const colour = `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
+      const colour = '#ff2a2a';
       const radius = Math.max(6 * this.dpr, Math.min(14 * this.dpr, s * 0.45));
 
       // Contrail: the parabola traced from launch (Silo) up to the nuke's
