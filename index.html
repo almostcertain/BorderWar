@@ -177,6 +177,7 @@
       <button type="button" id="quickJoinDebugBtn" class="linkBtn hidden">Debug: fake open game (new seed)</button>
       <button type="button" id="quickJoinBtn" class="primaryBtn" disabled>Join Open Game</button>
     </div>
+    <div id="buildInfo"></div>
 
     </div>
 
@@ -359,6 +360,9 @@
   // that wasn't on this scheme, so a browser that had already cached it kept
   // serving that copy through every later CSS edit regardless of reload.
   const V = Date.now();
+  fetch('buildinfo.json?v=' + V).then(r => r.ok ? r.json() : Promise.reject())
+    .then(b => { document.getElementById('buildInfo').textContent = 'v' + b.version + (b.commit ? ' · ' + b.commit + (b.dirty ? '+' : '') : ''); })
+    .catch(() => {});
   document.getElementById('mainStyle').href = 'css/style.css?v=' + V;
   // Nested paths work as-is: the entry is just spliced into 'js/<name>.js'.
   // 'game/shared' defines the shared globals before 'game/core' defines Game.

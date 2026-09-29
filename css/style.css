@@ -1416,7 +1416,9 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #pauseBtn, #hoverPanel
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
+  opacity: 0.35;
 }
+#optionsBtn:hover { opacity: 0.8; }
 body:has(#overlay.hidden) #optionsBtn { display: none; }
 
 #optionsOverlay {
@@ -1458,3 +1460,5 @@ body:has(#overlay:not(.hidden)) #perfStats { visibility: hidden; }
 
 /* Hide hint bar: a placement refusal (.warn) still shows. */
 body.noHint #hint:not(.warn) { display: none; }
+
+#buildInfo { margin-top: 10px; font-size: 11px; opacity: 0.5; font-variant-numeric: tabular-nums; }

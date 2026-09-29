@@ -24,6 +24,7 @@ const WebSocket = require('ws');
 const os = require('os');
 const GameManager = require('./gamemanager');
 const log = require('./log');
+const { getBuildInfo } = require('../tools/build-info');
 
 // Not 8123: .claude/launch.json's "borderwar" config already claims 8123 for
 // the plain static dev server used throughout Phase 0/1 browser verification.
@@ -119,9 +120,16 @@ function serveLobbyList(req, res) {
   res.end(body);
 }
 
+// Computed once at startup, so it reflects the commit the server was started on.
+const BUILD_INFO = JSON.stringify(getBuildInfo());
+
 const server = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0];
   if (req.method === 'GET' && urlPath === '/lobbies') return serveLobbyList(req, res);
+  if (req.method === 'GET' && urlPath === '/buildinfo.json') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(BUILD_INFO);
+  }
   return serveStatic(req, res);
 });
 

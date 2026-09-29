@@ -15,6 +15,7 @@ REM in \" gets misparsed as an escaped quote — merging this argument with
 REM whatever follows it and serving the wrong (or no) directory, which is
 REM what produced the 404. Appending "." sidesteps it without changing the
 REM path it resolves to.
+node tools\build-info.js 2>nul
 python -m http.server %PORT% --directory "%~dp0."
 
 pause
