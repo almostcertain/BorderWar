@@ -138,7 +138,15 @@
          there's nothing to click before there's something to join. -->
     <div id="quickJoin">
       <div class="lobbyLabel">Open Game</div>
+      <div id="quickJoinMap" class="mapPreview hidden">
+        <canvas id="quickJoinMapCanvas" width="400" height="200"></canvas>
+        <span id="quickJoinMapNote" class="mapPreviewNote"></span>
+      </div>
       <div id="quickJoinInfo">Looking for an open game…</div>
+      <!-- Dev only: shown when the URL has ?debug. Swaps in a fake open game
+           with a fresh random seed so the map preview can be checked without
+           a server. -->
+      <button type="button" id="quickJoinDebugBtn" class="linkBtn hidden">Debug: fake open game (new seed)</button>
       <button type="button" id="quickJoinBtn" class="primaryBtn" disabled>Join Open Game</button>
     </div>
 
@@ -345,7 +353,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/nukes', 'game/sam', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/nukes', 'game/sam', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'menubg', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>
