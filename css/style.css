@@ -1331,3 +1331,55 @@ html, body {
   padding: 4px 10px;
   font-size: 12px;
 }
+
+/* --- Main menu layout: mobile (vertical, one column) by default; on wide
+   screens the title/name/open-game card sit left and the mode tabs + forms
+   sit right, so the whole menu fits without scrolling. ------------------- */
+
+.menuCol {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+@media (max-width: 599px) {
+  #overlay { padding: 16px; align-items: flex-start; }
+  #overlay .menuPanel { max-width: none; }
+  #nameRow input { width: 60%; }
+}
+
+@media (min-width: 900px) and (min-height: 500px) {
+  #overlay .menuPanel {
+    max-width: 860px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.15fr);
+    column-gap: 28px;
+    align-items: start;
+  }
+  #overlay .menuMain { position: sticky; top: 0; }
+  #overlay .menuMain h1 { font-size: 40px; }
+  #overlay .orDivider {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+  }
+  #overlay .orDivider::before,
+  #overlay .orDivider::after {
+    content: '';
+    flex: 1;
+    width: 1px;
+    margin: 8px 0;
+    background: rgba(255, 255, 255, 0.5);
+  }
+  #overlay .menuModes {
+    padding: 16px;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.12);
+  }
+  #overlay .modeTab { min-width: 0; padding: 12px 6px; font-size: 14px; }
+  #licenseFooter { grid-column: 1 / -1; }
+}

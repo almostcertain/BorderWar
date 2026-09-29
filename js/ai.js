@@ -30,7 +30,7 @@ const AI = {
   //                          MIRV instead — gated by MIRV's own much larger
   //                          treasury requirement, so this mostly matters
   //                          for a bot that has been sitting on a ready Silo
-  //                          for a long time. 0 = never (ticket #28).
+  //                          for a long time. 0 = never.
   //   retaliateChance        1-in-n roll per economy cycle to nuke a nation
   //                          that is actively eating our land (maybeRetaliate);
   //                          0 = never.
@@ -91,50 +91,17 @@ const AI = {
   DISTRUSTFUL: 0,
   FRIENDLY: 50,
 
-  // Kickoff observation (2026-09-10): a fresh, un-atWar nation bordering a
-  // Tribe was committing the full 55% ratio below to its very first strike,
-  // stacked on top of tribePriorityMult()'s up-to-3x score bonus and
-  // tileCost's 30% defender discount for a Tribe target (see
-  // BOT_DEFENDER_LOSS_MULT). That one opening attack was routinely enough to
-  // overrun a meaningful chunk of a Tribe's whole border in a single tick —
-  // long before the Tribe's own slow 5%-troop nibble (TribeAI.think, every
-  // 3-7s) could produce any visible growth of its own. From the player's
-  // seat this reads as "tribes don't expand," because the bordering ones
-  // never get the chance to: they're gone before their own AI cycle would
-  // have shown anything. TRIBE_ATTACK_RATIO gives a fresh strike on a Tribe
-  // the same restrained commit as a neutral-land grab instead of a full
-  // nation-vs-nation opener — enough to keep pressuring it, not enough to
-  // erase its border in one hit — mirroring TRIBE_SKIRMISH_RATIO's existing
-  // reasoning for the already-atWar case just below.
+  // A fresh strike on a Tribe commits the same restrained share as a neutral
+  // grab, not a full nation-vs-nation opener: the full 55% (stacked on the
+  // priority bonus and tileCost's Tribe discount) erased a bordering Tribe's
+  // edge before its own slow AI could show any growth.
   TRIBE_ATTACK_RATIO: 0.35,   // vs. everything above the reserve for a fresh nation attack
 
-  // Real OpenFront's own AI gives Tribes no special targeting priority (its
-  // only Tribe-specific rule is the neutral-tile toll discount and the
-  // human-only 20% defense discount ported into Game.tileCost) — this is a
-  // deliberate gameplay tweak on top of that fidelity, not a port. Without it
-  // Nations treat a weak, isolated Tribe as just another low-density
-  // neighbour, competing on equal footing with juicier, better-defended
-  // rival nations for attention — and since a Tribe's border is usually tiny
-  // next to a real nation-vs-nation front, the `contact` term alone buries it
-  // in that comparison almost every time, early game or late.
-  //
-  // First cut of this (2026-08-18) decayed the bonus all the way to 1x (none)
-  // by 4 minutes in, on the theory that Tribes were purely an early-game land
-  // grab. Verified in-browser that this was wrong on two counts: (1) a bot
-  // locked in a long war only ever re-picks a target when that attack
-  // resolves — measured 7 of 9 bots mid-attack while directly bordering a
-  // live Tribe just 30s into a match — so a Tribe can easily still be sitting
-  // there once the bonus has already expired; (2) with it fully expired,
-  // scoring reverts to raw contact/density where a small-bordered Tribe
-  // almost never outscores an established rival front, so it never gets
-  // picked up even on a free cycle. Fix: the bonus now fades from a strong
-  // kickoff bump down to a small PERMANENT floor instead of down to nothing,
-  // so a lingering Tribe stays a mildly attractive pick for the rest of the
-  // match rather than only the opening minutes. Deliberately not touching the
-  // one-attack-at-a-time gate in think() — interrupting a real war just to
-  // snipe a Tribe would be the "hard priority" behaviour this is explicitly
-  // meant to avoid; it should pick one up as soon as that war frees it up
-  // naturally.
+  // Not an OpenFront port: OpenFront's AI gives Tribes no targeting priority.
+  // Without a bonus, a Tribe's small border loses the `contact` comparison to
+  // any real front. The bonus fades from a kickoff bump to a permanent floor
+  // so a Tribe that outlasts an early war is still a mild pick. See
+  // TRIBE_SKIRMISH_RATIO for how Tribes get attacked mid-war.
   TRIBE_PRIORITY_BONUS: 2,        // up to 3x score at kickoff
   TRIBE_PRIORITY_FLOOR: 0.5,      // never decays below 1.5x, for the rest of the match
   TRIBE_PRIORITY_WINDOW: 240,     // linearly fades from kickoff bonus to the floor over 4 minutes
@@ -248,7 +215,7 @@ const AI = {
     }
   },
 
-  // AiAttackBehavior.donateTroops, ticket #29. Upstream only donates in team
+  // AiAttackBehavior.donateTroops. Upstream only donates in team
   // games ("Only donate in team games" / "Don't donate in public games (To
   // balance HvN)"), and so does this game (Game.donateBlockReason): a
   // Nation reinforcing a teammate or ally that's actively fighting. No
@@ -260,7 +227,12 @@ const AI = {
   // donates, Medium 1-in-4, Hard 1-in-2 (upstream's Impossible tier, always,
   // has no row in this game's three-tier PROFILES — Hard already reacts
   // fastest and it lacks a fourth tier to reuse, so it stops at 1-in-2).
-  DONATE_CHANCE: { easy: 0, medium: 4, hard: 2 },
+  DONATE_CHANCE: { easy: 0, medium: 14, hard: 8 },
+  // After giving, a nation sits out this many seconds (rolled per gift), and
+  // it hands over only a random slice of its spare troops, so a push doesn't
+  // draw a synchronized flood of donations from every ally at once.
+  DONATE_COOLDOWN: [90, 240],
+  DONATE_SHARE: [0.1, 0.45],
   // Fraction of Game.maxTroops(p) this nation always keeps at home — mirrors
   // AiAttackBehavior's own per-nation reserveRatio (a random 30-40% picked at
   // spawn); this game's AI has no per-nation persisted field for that, so a
@@ -272,6 +244,7 @@ const AI = {
     const n = this.DONATE_CHANCE[Game.difficulty];
     if (!n || !this.chance(n)) return;
     if (p.allies.size === 0) return;
+    if (Game.elapsed < (p.nextDonateAt || 0)) return;
 
     // Allies currently fighting — either side of an attack, matching
     // upstream's incomingAttacks().length > 0 || outgoingAttacks().length > 0.
@@ -290,7 +263,9 @@ const AI = {
     const keep = Game.maxTroops(p) * this.DONATE_RESERVE_RATIO;
     const available = p.troops - keep;
     if (available < 1) return;
-    Game.donateTroops(p.id, weakest, available);
+    const [sLo, sHi] = this.DONATE_SHARE, [cLo, cHi] = this.DONATE_COOLDOWN;
+    Game.donateTroops(p.id, weakest, available * (sLo + Game.rng() * (sHi - sLo)));
+    p.nextDonateAt = Game.elapsed + cLo + Game.rng() * (cHi - cLo);
   },
 
   // OpenFront's getAllianceDecision, Medium column throughout bar the
@@ -374,13 +349,10 @@ const AI = {
   // Cost-pooled types (Port/Factory share one price — see their UNITS entry)
   // need special handling here: a straight walk over Game.UNITS tries one
   // member of the pool before the other every single cycle, and building it
-  // immediately doubles the shared price for the rest of this same call —
-  // pricing its sibling out before it ever gets a turn. Left that way, bots
-  // build only whichever pool member happens to come first in Game.UNITS and
-  // never touch the other at all (measured live: 8 Factories / 0 Ports —
-  // see project memory). Picking whichever pool member the bot currently
-  // owns fewer of, instead of a fixed member, makes purchases alternate
-  // between them as the shared price climbs rather than fixating on one.
+  // immediately doubles the shared price for the rest of this same call.
+  // Bots therefore build whichever pool member they own fewer of, so
+  // purchases alternate as the shared price climbs.
+
   // How many separate SAM Launchers to plant for territorial coverage before
   // further spend switches to leveling up the weakest one instead — see
   // economy()'s own comment on why charges (per-structure) matter more past
@@ -398,11 +370,8 @@ const AI = {
   // LINEAR and capped at 250k (see its UNITS entry), and fortSite() finds a
   // fresh border tile essentially forever, so a mature nation buys another
   // Fort every time its treasury crosses 250k and never climbs past it.
-  // Measured headless over a 20-minute, 9-bot large-map match before this
-  // change: 230 Forts for 52.9M gold — 69% of all bot spending — median bot
-  // treasury peaking at 60k against a 1M Silo, and across every seed tried,
-  // zero Silos, zero SAM Launchers and zero nukes launched, ever. Bots
-  // weren't declining to go nuclear; they were structurally incapable of it.
+  // Without a cap, mature bots spent most of their gold on Forts and never
+  // reached a Silo, SAM Launcher or nuke.
   //
   // Two fixes, both here rather than in the cost table (prices are ported
   // from OpenFront's Config.ts and shouldn't be retuned to paper over an AI
@@ -667,12 +636,8 @@ const AI = {
     if (targetTile < 0) return;
 
     const hydrogenWorthy = target.tiles.size > p.tiles.size || target.troops > p.troops;
-    // MIRV (ticket #28): the tier above Hydrogen — only worth its enormous,
-    // ever-rising price (see Game.unitCost's own 'mirv' branch) against a
-    // rival that dwarfs us outright, not merely one that edges us out the
-    // way hydrogenWorthy alone allows. Checked before the Hydrogen/Atom
-    // choice below and returns early on a hit, so a bot that rolls a MIRV
-    // never also fires a second warhead the same cycle.
+    // MIRV: the tier above Hydrogen, only worth its price against a rival that
+    // dwarfs us. Returns early on a hit, so no second warhead the same cycle.
     const mirvWorthy = hydrogenWorthy && target.tiles.size > p.tiles.size * 1.5;
     if (mirvWorthy && p.gold >= Game.unitCost(p, 'mirv') && this.chance(prof.mirvChance)) {
       Game.launchMirv(p.id, targetTile);
@@ -695,14 +660,9 @@ const AI = {
     return false;
   },
 
-  // Last-ditch retaliation (ticket #20). maybeNuke above is opportunistic: a
-  // 1-in-8 roll aimed at whoever we share the LONGEST border with, at their
-  // deepest hardware. A bot being pushed down by one attacker therefore often
-  // sat on a ready Silo and a full treasury — the roll failed, or it fired at
-  // a bigger but quiet neighbour, or it hit a City far behind the lines that
-  // did nothing to slow the push. Measured headless before this: in a
-  // scripted "player pushes a bot" run, one nuke at the pushing player in
-  // ~6 minutes.
+  // Last-ditch retaliation. maybeNuke above is opportunistic and often fires
+  // at a quiet neighbour or a City far behind the lines, so a bot being pushed
+  // down rarely answered its attacker.
   //
   // Triggers when the bot lost at least RETALIATE_LOSS_FRAC of its land
   // (RETALIATE_MIN_LOSS tiles minimum) since its previous economy cycle while
@@ -1041,50 +1001,20 @@ const AI = {
     return depth;
   },
 
-  // Update (2026-08-19): live-tested TRIBE_PRIORITY_BONUS/FLOOR alone and it
-  // still wasn't enough — watched a match at the 5-6 minute mark with a dozen
-  // Tribes still unconquered, all money left on the table. Root cause wasn't
-  // the scoring, it was that scoring never runs at all: most bots by then are
-  // already committed to a nation-vs-nation war, and the one-attack-total gate
-  // (previously `if (Game.attacks.some(a => a.attacker === p.id)) return;`)
-  // means think() bails before it ever compares targets, so a directly-
-  // bordering Tribe can sit there for the entire length of that war.
-  //
-  // The 2026-08-18 note above deliberately left that gate alone, reasoning
-  // that yanking a bot off a real war to chase a Tribe would be the "hard
-  // priority" behaviour the fading bonus was explicitly designed to avoid.
-  // Still agree with that for nation-vs-nation fights. The gap is that
-  // avoiding a hard interrupt doesn't require a single global gate — a bot
-  // can keep its main war attack fully intact and *also* run one small,
-  // separately-funded skirmish against a bordering Tribe, the way a real
-  // nation garrisons its main front while a reserve column mops up a weak
-  // neighbour elsewhere. That's what tribeAttackActive/atWar below implement:
-  // still at most one attack against any given Tribe at a time (no stacking),
-  // and a Tribe skirmish is sized off current reserves at TRIBE_SKIRMISH_RATIO
-  // rather than the normal 55%, so it can't gut the main war's troop pool.
-  //
-  // To reverse this and go back to strict one-attack-total: delete the
-  // tribeAttackActive/atWar block below and restore the single line
-  // `if (Game.attacks.some(a => a.attacker === p.id)) return;` right after
-  // the p.tiles.size check.
+  // Bots run a small, separately-funded skirmish against a bordering Tribe
+  // alongside their main war (tribeAttackActive/atWar): at most one attack per
+  // Tribe, sized off reserves at this ratio so it can't gut the main front.
   TRIBE_SKIRMISH_RATIO: 0.2,   // vs. everything above the reserve for a fresh nation attack
 
-  // Unclaimed land (#26). think() used to score NEUTRAL as `contact * 1.4`
-  // against every nation front, so a small leftover pocket (a nuke crater, a
-  // strip a war skipped past) lost to any real border forever, and while a
-  // war was in flight it wasn't scored at all. Free land is now claimed
-  // before any player target is weighed: whenever p borders it and has no
-  // grab already running. A fresh grab commits everything above the expand floor;
-  // one opened alongside a running war is a side column like a Tribe
-  // skirmish, sized small so it can't gut the main front. Leftover troops
-  // walk home when the pocket runs out (stepAttack), so over-committing to
-  // a small pocket costs nothing. The think() reserve gate still applies.
+  // Unclaimed land is claimed before any player target is weighed, whenever p
+  // borders it and has no grab running. A fresh grab commits everything above
+  // the expand floor; one opened alongside a war is a small side column, like
+  // a Tribe skirmish. Leftover troops walk home when the pocket runs out.
   NEUTRAL_SKIRMISH_RATIO: 0.2,
 
   // --- Cutting losses ------------------------------------------------------
-  // A human watching a push bleed out can hit retreat and get 75% of the
-  // committed troops home (Game.ATTACK_RETREAT_MALUS); a bot used to ride every
-  // failing front down to zero. reviewAttacks gives it the same out.
+  // A human can retreat a failing push and get 75% of the committed troops
+  // home (Game.ATTACK_RETREAT_MALUS); reviewAttacks gives bots the same out.
   //
   // "Failing" is deliberately two conditions, not one: the front is down to
   // RETREAT_REMAINING of the most troops it has ever held, AND the defender's
@@ -1212,12 +1142,10 @@ const AI = {
     for (const id of watch.keys()) if (!live.has(id)) watch.delete(id);
   },
 
-  // Two nations used to open on the same victim within a tick or two of each
-  // other: nothing coordinated their picks, and the first attack draining the
-  // victim's troops made it an even better target for the next bot to think.
-  // For FRESH_FRONT_LOCKOUT seconds after anyone opens a fresh front on t,
-  // no other nation may open one too, giving t a moment to react. Exempt: a
-  // target already hostile to p (hitting back isn't piling on) and traitors.
+  // For FRESH_FRONT_LOCKOUT seconds after anyone opens a fresh front on t, no
+  // other nation may open one too, so nations don't pile onto one victim in a
+  // tick or two. Exempt: a target already hostile to p (hitting back isn't
+  // piling on) and traitors.
   FRESH_FRONT_LOCKOUT: 3,
 
   freshFrontLocked(p, t, hostiles) {
@@ -1243,7 +1171,7 @@ const AI = {
     const targets = this.borderTargets(p);
     if (targets.size === 0) return;
 
-    // Free land first (#26). See NEUTRAL_SKIRMISH_RATIO.
+    // Free land first. See NEUTRAL_SKIRMISH_RATIO.
     if (targets.has(NEUTRAL) && !myAttacks.some(a => a.target === NEUTRAL)) {
       const n = myAttacks.length > 0 ? Math.floor(p.troops * this.NEUTRAL_SKIRMISH_RATIO) : this.sendAmount(p, NEUTRAL);
       if (n >= 1 && Game.launchAttack(p.id, NEUTRAL, n)) return;
@@ -1298,12 +1226,11 @@ const AI = {
     if (n >= 1) Game.launchAttack(p.id, best, n);
   },
 
-  // AiAttackBehavior.assistAllies (ticket #30): an ally has marked a target
-  // (Game.targetPlayer), so go hit it. Upstream only answers an ally it
-  // still feels Friendly toward, and each answer costs 20 of that goodwill,
-  // so an ally can't spam marks forever. A teammate skips the relation gate
-  // (a design call — teammates are permanent here, and team relations would
-  // otherwise decay out of Friendly within ~2 minutes of the match start).
+  // AiAttackBehavior.assistAllies: an ally has marked a target
+  // (Game.targetPlayer), so go hit it. Upstream only answers an ally it still
+  // feels Friendly toward, and each answer costs 20 of that goodwill. A
+  // teammate skips the relation gate (teammates are permanent here, and team
+  // relations would otherwise decay out of Friendly within ~2 minutes).
   //
   // Deliberately ahead of the scoring loop, and ignoring both provocation()
   // and freshFrontLocked(): piling onto one enemy is the whole point of a
@@ -1430,9 +1357,8 @@ const AI = {
       if (bestTile >= 0) candidates.push({ tile: bestTile, target: bestTarget, score: bestTileScore, dist: bestDist });
     }
     if (candidates.length === 0) return;
-    // Free land first (#26): an unclaimed beach within NAVAL_NEUTRAL_RANGE is
-    // tried before any player's. Scored on raw size, a small empty island
-    // lost to every enemy continent in view and sat unclaimed all game.
+    // Free land first: an unclaimed beach within NAVAL_NEUTRAL_RANGE is tried
+    // before any player's.
     const neutralRange = this.navalComfortDist() * this.NAVAL_NEUTRAL_RANGE;
     const tier = c => (c.target === NEUTRAL && c.dist <= neutralRange ? 1 : 0);
     candidates.sort((a, b) => (tier(b) - tier(a)) || (b.score - a.score));

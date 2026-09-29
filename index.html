@@ -112,7 +112,8 @@
 </div>
 
 <div id="overlay">
-  <div class="panel">
+  <div class="panel menuPanel">
+    <div class="menuCol menuMain">
     <h1>BorderWar</h1>
     <p>Expand across the map. Tap neutral land or an enemy nation to send troops along your border.</p>
 
@@ -141,7 +142,11 @@
       <button type="button" id="quickJoinBtn" class="primaryBtn" disabled>Join Open Game</button>
     </div>
 
+    </div>
+
     <div class="orDivider">or</div>
+
+    <div class="menuCol menuModes">
 
     <div id="modeTabs">
       <button type="button" class="modeTab" data-mode="join">Join by code</button>
@@ -286,6 +291,7 @@
     </div>
 
     <div id="lobbyError" class="hidden"></div>
+    </div>
 
     <!-- AGPLv3 attribution (required by OpenFront's license, Section 7):
          BorderWar's sim/economy/AI logic is ported from OpenFront
