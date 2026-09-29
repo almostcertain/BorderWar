@@ -1772,6 +1772,30 @@ const UI = {
     this._previewTimers[prefix] = setTimeout(() => this.drawMapPreview(prefix), 80);
   },
 
+  // Runs the real generator on a throwaway GameMap copy and paints the
+  // unclaimed-ground view onto `canvas` (MAP_PREVIEW_W x _H). Returns the map,
+  // or null if generation threw.
+  paintMap(canvas, seed, mapGen) {
+    const w = this.MAP_PREVIEW_W, h = this.MAP_PREVIEW_H;
+    const map = Object.create(GameMap);
+    try {
+      map.generate(w, h, seed >>> 0, mapGen);
+    } catch (e) {
+      console.error('[map preview]', e);
+      return null;
+    }
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(w, h);
+    // render.js's unclaimed-ground tones: water, plains, highland, mountain.
+    const water = [18, 34, 60], ground = [[78, 94, 72], [104, 96, 66], [122, 120, 114]];
+    for (let i = 0; i < w * h; i++) {
+      const c = map.owner[i] === WATER ? water : ground[map.terrain[i]];
+      img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    return map;
+  },
+
   drawMapPreview(prefix) {
     const canvas = document.getElementById(this.mapGenId(prefix, 'mapPreview'));
     const note = document.getElementById(this.mapGenId(prefix, 'mapPreviewNote'));
@@ -1782,26 +1806,12 @@ const UI = {
     const key = gen.seed + JSON.stringify(gen.mapGen);
     this._previewKeys = this._previewKeys || {};
     if (this._previewKeys[prefix] === key) return;
-    const w = this.MAP_PREVIEW_W, h = this.MAP_PREVIEW_H;
-    const map = Object.create(GameMap);
-    try {
-      map.generate(w, h, gen.seed >>> 0, gen.mapGen);
-    } catch (e) {
-      console.error('[map preview]', e);
+    const map = this.paintMap(canvas, gen.seed, gen.mapGen);
+    if (!map) {
       note.textContent = 'Preview unavailable';
       return;
     }
     this._previewKeys[prefix] = key;
-
-    const ctx = canvas.getContext('2d');
-    const img = ctx.createImageData(w, h);
-    // render.js's unclaimed-ground tones: water, plains, highland, mountain.
-    const water = [18, 34, 60], ground = [[78, 94, 72], [104, 96, 66], [122, 120, 114]];
-    for (let i = 0; i < w * h; i++) {
-      const c = map.owner[i] === WATER ? water : ground[map.terrain[i]];
-      img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
 
     const names = this.MAP_GEN_LABELS.landform[1];
     const lm = map.landmasses.filter(l => l.size >= 400).length;
@@ -1835,6 +1845,7 @@ const UI = {
     if (!entry) {
       info.textContent = 'No open game right now — check back shortly.';
       btn.disabled = true;
+      this.renderQuickJoinMap(null);
       return;
     }
     const mapLabel = String(entry.mapSize || '').replace(/^./, (c) => c.toUpperCase());
@@ -1846,7 +1857,24 @@ const UI = {
       text += ' · be the first in';
     }
     info.textContent = text;
-    btn.disabled = false;
+    btn.disabled = !!entry.debugFake;
+    this.renderQuickJoinMap(entry);
+  },
+
+  // The open game's map, drawn from the seed the server picked for it. Only
+  // repainted when the seed changes (the poll re-renders every 4s).
+  renderQuickJoinMap(entry) {
+    const wrap = document.getElementById('quickJoinMap');
+    const canvas = document.getElementById('quickJoinMapCanvas');
+    if (!entry || typeof entry.seed !== 'number') { wrap.classList.add('hidden'); return; }
+    if (this._quickJoinSeed !== entry.seed) {
+      const map = this.paintMap(canvas, entry.seed, Protocol.normalizeMapGen({}));
+      if (!map) { wrap.classList.add('hidden'); return; }
+      this._quickJoinSeed = entry.seed;
+      const names = this.MAP_GEN_LABELS.landform[1];
+      document.getElementById('quickJoinMapNote').textContent = names[map.layout] || '';
+    }
+    wrap.classList.remove('hidden');
   },
 
   // Issue #9: renders GET /lobbies' result into the Join screen's browser

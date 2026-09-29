@@ -589,6 +589,7 @@ class GameServer {
     if (this.isAutoLobby) {
       lobby.isAuto = true;
       lobby.mapSize = this.autoConfig.mapSize;
+      lobby.seed = this.autoSeed;
       lobby.minPlayers = GameServer.autoLobbyMinPlayers;
       lobby.maxPlayers = this.autoConfig.maxNations;
       lobby.autoStartAt = this._autoStartAt; // null while no countdown is running
@@ -671,7 +672,8 @@ class GameServer {
       mapSize: this.autoConfig.mapSize,
       bots: bots,
       tribes: this.autoConfig.tribes,
-      difficulty: this.autoConfig.difficulty
+      difficulty: this.autoConfig.difficulty,
+      seed: this.autoSeed
     });
   }
 
@@ -685,6 +687,9 @@ class GameServer {
     this.isAutoLobby = true;
     this.isPublic = true;
     this.autoConfig = config;
+    // Picked now, not at start(), so the menu can preview the exact map this
+    // lobby will play (Math.random is fine here: server-side, outside the sim).
+    this.autoSeed = Math.floor(Math.random() * 0x100000000) >>> 0;
     this._onAutoStart = onStart;
   }
 

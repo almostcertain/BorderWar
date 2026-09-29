@@ -157,6 +157,7 @@ class GameManager {
       const entry = { gameID: game.gameID, playerCount: game.clients.size, isAuto: !!game.isAutoLobby };
       if (game.isAutoLobby) {
         entry.mapSize = game.autoConfig.mapSize;
+        entry.seed = game.autoSeed; // lets the menu preview the map
         entry.minPlayers = GameServer.autoLobbyMinPlayers;
         entry.maxPlayers = game.autoConfig.maxNations;
         entry.autoStartAt = game._autoStartAt; // null while no countdown is running

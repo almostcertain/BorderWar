@@ -261,10 +261,26 @@
   let lastLobbyList = [];
   const LOBBY_LIST_POLL_MS = 4000;
 
+  // Dev only (?debug): a fake open game standing in for the server's, so the
+  // menu's map preview can be checked without a running server. Not joinable.
+  let debugLobby = null;
+  const debugBtn = document.getElementById('quickJoinDebugBtn');
+  if (/[?&]debug\b/.test(location.search)) {
+    debugBtn.classList.remove('hidden');
+    debugBtn.addEventListener('click', () => {
+      debugLobby = {
+        gameID: 'DEBUG', isAuto: true, debugFake: true, mapSize: 'medium',
+        seed: Math.floor(Math.random() * 0x100000000),
+        playerCount: 0, minPlayers: 2, maxPlayers: 8
+      };
+      refreshLobbyList();
+    });
+  }
+
   function refreshLobbyList() {
     Transport.fetchLobbyList().then((list) => {
       lastLobbyList = list;
-      UI.renderQuickJoin(list.find((entry) => entry.isAuto) || null);
+      UI.renderQuickJoin(debugLobby || list.find((entry) => entry.isAuto) || null);
       UI.renderPublicLobbies(list.filter((entry) => !entry.isAuto), (gameID) => joinLobby(gameID));
     });
   }
@@ -290,7 +306,7 @@
   // with a real gameID in hand.
   document.getElementById('quickJoinBtn').addEventListener('click', () => {
     const entry = lastLobbyList.find((e) => e.isAuto);
-    if (!entry) return;
+    if (!entry || debugLobby) return;
     // joinLobby()'s in-progress UI lives inside #joinMode's body (#joinLobby),
     // which is only visible while the "Join by code" tab is the active one
     // (UI.setupLobby's click handler toggles each mode body's `hidden`
