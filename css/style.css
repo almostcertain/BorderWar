@@ -1448,4 +1448,7 @@ body:has(#overlay:not(.hidden)) #perfStats { visibility: hidden; }
 /* Hide hint bar: a placement refusal (.warn) still shows. */
 body.noHint #hint:not(.warn) { display: none; }
 
+#communityLinks { margin-top: 14px; font-size: 13px; text-align: center; }
+#communityLinks a { color: inherit; opacity: 0.8; }
+#communityLinks a:hover { opacity: 1; }
 #buildInfo { margin-top: 10px; font-size: 11px; opacity: 0.5; font-variant-numeric: tabular-nums; }
