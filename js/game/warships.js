@@ -235,6 +235,7 @@ Object.assign(Game, {
       owner: playerId,
       path: r.path, pos: 0,
       patrolTile: r.dest,
+      ordered: true,
       health: this.WARSHIP_MAX_HEALTH, maxHealth: this.WARSHIP_MAX_HEALTH,
       target: null, targetKind: null,
       lastShellAt: -Infinity, lastPathAt: this.elapsed
@@ -270,6 +271,8 @@ Object.assign(Game, {
       w.path = path;
       w.pos = 0;
       w.patrolTile = tile;
+      w.ordered = true;
+      w.target = null; w.targetKind = null;
       w.lastPathAt = this.elapsed;
       moved = true;
     }
@@ -448,7 +451,18 @@ Object.assign(Game, {
       if (!ok) { w.target = null; w.targetKind = null; }
     }
 
+    if (w.ordered && w.pos >= w.path.length - 1) w.ordered = false;
+
     if (!w.target) this.warshipAcquireTarget(w, pos, rangeSq);
+
+    // A relocation order (or the launch voyage) is never interrupted: the ship
+    // keeps sailing and shoots what it passes, but doesn't stop or chase.
+    if (w.ordered) {
+      if (w.targetKind === 'boat' || w.targetKind === 'warship') this.warshipShootAt(w);
+      else { w.target = null; w.targetKind = null; }
+      w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * this.TICK_DT);
+      return;
+    }
 
     if (w.targetKind === 'boat' || w.targetKind === 'warship') {
       this.warshipShootAt(w);
