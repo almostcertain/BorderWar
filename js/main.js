@@ -308,7 +308,7 @@
     const entry = lastLobbyList.find((e) => e.isAuto);
     if (!entry || debugLobby) return;
     // joinLobby()'s in-progress UI lives inside #joinMode's body (#joinLobby),
-    // which is only visible while the "Join by code" tab is the active one
+    // which is only visible while the "Join custom lobby" tab is the active one
     // (UI.setupLobby's click handler toggles each mode body's `hidden`
     // class) — switch to it first so a hero-button join from the Host or
     // Singleplayer tab doesn't connect into a panel nobody can see.

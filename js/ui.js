@@ -1590,14 +1590,28 @@ const UI = {
       host: document.getElementById('hostMode'),
       join: document.getElementById('joinMode')
     };
+    // Picking a mode swaps the open-game card out for that mode's form; Back
+    // (#modeBack) undoes it. A class on #overlay rather than `hidden` on the
+    // card, because hideLobby() owns the card's `hidden` for the lobby screens.
+    const overlay = document.getElementById('overlay');
+    const back = document.getElementById('modeBack');
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         tabs.forEach((t) => t.classList.toggle('active', t === tab));
         for (const key in bodies) bodies[key].classList.toggle('hidden', key !== tab.dataset.mode);
+        overlay.classList.add('modeOpen');
+        back.classList.remove('hidden');
         this.setLobbyError('');
         // The preview skips drawing while its panel is hidden.
         this.refreshMapPreview(tab.dataset.mode === 'host' ? 'host' : '');
       });
+    });
+    back.addEventListener('click', () => {
+      tabs.forEach((t) => t.classList.remove('active'));
+      for (const key in bodies) bodies[key].classList.add('hidden');
+      overlay.classList.remove('modeOpen');
+      back.classList.add('hidden');
+      this.setLobbyError('');
     });
 
     document.getElementById('lobbyCode').addEventListener('click', () => this.copyLobbyCode());

@@ -1368,39 +1368,24 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #pauseBtn, #hoverPanel
   #nameRow input { width: 60%; }
 }
 
-@media (min-width: 900px) and (min-height: 500px) {
-  #overlay .menuPanel {
-    max-width: 860px;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.15fr);
-    column-gap: 28px;
-    align-items: start;
-  }
-  #overlay .menuMain { position: sticky; top: 0; }
-  #overlay .menuMain h1 { font-size: 40px; }
-  #overlay .orDivider {
-    align-self: stretch;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    margin: 0;
-  }
-  #overlay .orDivider::before,
-  #overlay .orDivider::after {
-    content: '';
-    flex: 1;
-    width: 1px;
-    margin: 8px 0;
-    background: rgba(255, 255, 255, 0.5);
-  }
-  #overlay .menuModes {
-    padding: 16px;
-    border-radius: 12px;
-    background: rgba(0, 0, 0, 0.12);
-  }
-  #overlay .modeTab { min-width: 0; padding: 12px 6px; font-size: 14px; }
-  #licenseFooter { grid-column: 1 / -1; }
+/* One centered column at every width: title and name, the open-game card, then
+   the mode row and its form. The "or" divider only made sense between columns. */
+#overlay .menuPanel { max-width: 460px; gap: 16px; }
+#overlay .menuMain h1 { font-size: 40px; }
+#overlay .orDivider { display: none; }
+#overlay .modeTab { min-width: 0; padding: 12px 6px; font-size: 14px; }
+
+/* A mode is open: its form replaces the open-game card. Back sits above the title,
+   left-aligned with the column, and goes when the tabs do (in a lobby). */
+#overlay.modeOpen #quickJoin { display: none !important; }
+.menuPanel:has(#modeTabs.hidden) #modeBack { display: none; }
+#modeBack {
+  align-self: flex-start;
+  width: auto;
+  margin: 0;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: #fff;
 }
 
 /* --- Options (js/options.js) ------------------------------------------------ */
