@@ -123,7 +123,7 @@
          same way it always has). Host/Join are two more panels reusing the
          same Transport/onConnect/onServerMessage pipeline with local:false;
          see js/main.js's "Multiplayer lobby" section. -->
-    <label id="nameRow">Name <input id="playerName" type="text" maxlength="20" placeholder="You" autocomplete="off" spellcheck="false"></label>
+    <label id="nameRow">Name <input id="playerTag" type="text" maxlength="5" placeholder="TAG" title="Optional team tag (2-5 letters or digits). Players with the same tag are put on the same team in team games." autocomplete="off" spellcheck="false" style="width:4.5em;text-transform:uppercase"> <input id="playerName" type="text" maxlength="20" placeholder="You" autocomplete="off" spellcheck="false"></label>
     <label id="lowGfxRow" title="Draws the map at standard resolution instead of Retina/HiDPI. Much faster on older laptops; slightly softer text.">
       <input id="lowGfx" type="checkbox"> Low graphics (faster on older computers)
     </label>

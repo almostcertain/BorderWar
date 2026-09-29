@@ -1610,6 +1610,9 @@ const UI = {
     let savedName = '';
     try { savedName = localStorage.getItem('borderwar_username') || ''; } catch (e) { /* ignore */ }
     if (savedName) document.getElementById('playerName').value = savedName;
+    let savedTag = '';
+    try { savedTag = localStorage.getItem('borderwar_tag') || ''; } catch (e) { /* ignore */ }
+    document.getElementById('playerTag').value = savedTag;
 
     // Low graphics is a per-device choice, so it lives in this browser's
     // storage and applies the moment it is ticked.
@@ -1629,7 +1632,14 @@ const UI = {
   getPlayerName() {
     const name = (document.getElementById('playerName').value || '').trim();
     if (name) { try { localStorage.setItem('borderwar_username', name); } catch (e) { /* ignore */ } }
-    return name;
+    // The optional team tag rides in the name as "[TAG] name" (OpenFront's
+    // clan-tag convention), so it needs no protocol change; the sim reads it
+    // back out in Teams.tagOf.
+    const tag = (document.getElementById('playerTag').value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5);
+    document.getElementById('playerTag').value = tag;
+    try { localStorage.setItem('borderwar_tag', tag); } catch (e) { /* ignore */ }
+    if (tag.length < 2) return name;
+    return '[' + tag + '] ' + (name || 'Player');
   },
 
   // Read the host panel's map/bot/tribe controls into the shape `start_game`

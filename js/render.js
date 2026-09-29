@@ -2550,8 +2550,15 @@ const Render = {
     let nIcons = 0;
     for (const [, bit] of this.LABEL_ICON_BITS) if (icons & bit) nIcons++;
     const iconStep = 1.3;                        // icon (1.05em) + gap (0.25em), in ems
-    const nameW = (sp.nameEm + nIcons * iconStep) * font;
-    const troopsW = sp.troopsEm * font;
+    // Measured at the real size: small text renders wider than its 100px
+    // em-width scales to (hinting), which clipped the end of longer names.
+    this.labelEm('');
+    const mc = this.measureCtx;
+    mc.font = '600 ' + font + 'px system-ui, sans-serif';
+    const nameW = mc.measureText(sp.wantName).width + nIcons * iconStep * font;
+    mc.font = font + 'px system-ui, sans-serif';
+    const troopsW = mc.measureText(sp.wantTroops).width;
+    mc.font = '600 100px system-ui, sans-serif';
     const pad = Math.ceil(font * 0.15 + 2);
     const w = Math.ceil(Math.max(nameW, troopsW)) + pad * 2;
     const h = Math.ceil(font * 2.6) + pad * 2;

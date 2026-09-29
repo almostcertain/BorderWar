@@ -54,6 +54,13 @@ const Teams = {
     return 2;
   },
 
+  // The clan tag in a "[TAG] name" username: 2-5 letters/digits, upper-cased,
+  // or null. Players sharing a tag are seated on the same team.
+  tagOf(name) {
+    const m = /^\[([A-Za-z0-9]{2,5})\]/.exec(typeof name === 'string' ? name : '');
+    return m ? m[1].toUpperCase() : null;
+  },
+
   isDuosTriosQuads(pt) { return pt === this.DUOS || pt === this.TRIOS || pt === this.QUADS; },
 
   // TeamAssignment.resolveTeamsList.
@@ -180,7 +187,21 @@ Object.assign(Game, {
   // Quads fill the fullest team that still has room (so teams complete one
   // at a time); a fixed team count fills the emptiest.
   assignTeams(humans, nations, teams, isDuosTriosQuads) {
-    const order = humans.slice();
+    // Clans first: humans sharing a "[TAG]" (2+ of them, biggest clan first,
+    // ties by roster order) are seated together, then everyone else in roster
+    // order. With no tags in play this leaves the order untouched.
+    const clans = new Map();
+    for (const p of humans) {
+      const tag = Teams.tagOf(p.name);
+      if (tag) { if (!clans.has(tag)) clans.set(tag, []); clans.get(tag).push(p); }
+    }
+    const groups = [...clans.values()].filter(g => g.length > 1);
+    groups.sort((a, b) => b.length - a.length);
+    const grouped = new Set();
+    const order = [];
+    const clanOf = new Map();
+    for (const g of groups) for (const p of g) { order.push(p); grouped.add(p); clanOf.set(p, g); }
+    for (const p of humans) if (!grouped.has(p)) order.push(p);
     const shuffled = nations.slice();
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(this.rng() * (i + 1));
@@ -190,7 +211,15 @@ Object.assign(Game, {
 
     const maxTeamSize = Math.ceil(order.length / teams.length);
     const counts = new Map(teams.map(t => [t, 0]));
+    const clanTeam = new Map();
     for (const p of order) {
+      const g = clanOf.get(p);
+      const want = g ? clanTeam.get(g) : undefined;
+      if (want !== undefined && counts.get(want) < maxTeamSize) {
+        p.team = want;
+        counts.set(want, counts.get(want) + 1);
+        continue;
+      }
       let best = null, bestSize = isDuosTriosQuads ? -1 : Infinity;
       for (const t of teams) {
         const size = counts.get(t);
@@ -200,6 +229,7 @@ Object.assign(Game, {
       // Upstream "kicks" a player no team has room for; without clans that
       // can't happen, but leave them teamless rather than fail if it does.
       p.team = best;
+      if (g && best !== null && want === undefined) clanTeam.set(g, best);
       if (best !== null) counts.set(best, counts.get(best) + 1);
     }
   },
