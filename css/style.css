@@ -1372,6 +1372,8 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #pauseBtn, #hoverPanel
    the mode row and its form. The "or" divider only made sense between columns. */
 #overlay .menuPanel { max-width: 460px; gap: 16px; }
 #overlay .menuMain h1 { font-size: 40px; }
+.brand { display: flex; align-items: center; justify-content: center; gap: 0.3em; }
+.brand .brandMark { height: 1.5em; width: auto; flex: 0 0 auto; }
 #overlay .orDivider { display: none; }
 #overlay .modeTab { min-width: 0; padding: 12px 6px; font-size: 14px; }
 

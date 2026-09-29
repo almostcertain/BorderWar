@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <path id="outline" d="M16 1L30.5 4V16.5C30.5 24 24.8 28.6 16 31.5C7.2 28.6 1.5 24 1.5 16.5V4Z"/>
+    <path id="front" d="M16.5 0L16 1L13.9 5.2L15.6 9.5L14.2 15.5L15.6 21.5L13.9 26.8L16 31.5L16.5 32.5"/>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="-1" y="-1" width="34" height="34">
+      <use href="#outline" fill="#fff"/>
+      <use href="#front" fill="none" stroke="#000" stroke-width="1.5" stroke-miterlimit="10"/>
+      <g fill="#000" fill-rule="evenodd">
+        <path transform="translate(4 9.5) scale(.25)" d="M0 0H22C29.5 0 34 4.4 34 11.2C34 16.6 32.4 20.1 29.2 21.7C33.4 23.3 36 27.2 36 33.2C36 42.2 30.2 48 20.8 48H0ZM10.6 9.4H19.6C22.3 9.4 23.4 10.9 23.4 13.4C23.4 16 22.1 17.5 19.3 17.5H10.6ZM10.6 26.8H20.4C23.7 26.8 25.4 28.7 25.4 32.6C25.4 36.4 23.7 38.6 20.4 38.6H10.6Z"/>
+        <path transform="translate(16.6 9.5) scale(.25)" d="M0 0H10.4L14.1 23.37L17.8 0H28.2L31.9 23.37L35.6 0H46L38.4 48H28L23 16.42L18 48H7.6Z"/>
+      </g>
+    </mask>
+    <clipPath id="west">
+      <path d="M-1 0H16.5L16 1L13.9 5.2L15.6 9.5L14.2 15.5L15.6 21.5L13.9 26.8L16 31.5L16.5 32.5H-1Z"/>
+    </clipPath>
+  </defs>
+  <use href="#outline" fill="#0b1220"/>
+  <g mask="url(#cut)">
+    <use href="#outline" fill="#ff9f43"/>
+    <use href="#outline" fill="#3d7dff" clip-path="url(#west)"/>
+  </g>
+</svg>
