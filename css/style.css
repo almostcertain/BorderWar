@@ -927,6 +927,11 @@ html, body {
   background: radial-gradient(ellipse at center, rgba(12, 20, 34, 0.55), rgba(8, 12, 22, 0.85));
 }
 #menuBg:has(~ #overlay.hidden) { display: none; }
+/* The overlay is translucent now, so keep the game's own layers from showing
+   through it (the HUD on first load, the finished match after Play Again). */
+body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #pauseBtn, #hoverPanel, #debugToggle, #debugPanel) {
+  visibility: hidden;
+}
 
 .hidden { display: none !important; }
 
