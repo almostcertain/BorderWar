@@ -1788,15 +1788,21 @@ const UI = {
       console.error('[map preview]', e);
       return null;
     }
-    const ctx = canvas.getContext('2d');
-    const img = ctx.createImageData(w, h);
+    // Painted on a scratch canvas and stamped across with drawImage, as
+    // menubg.js does: Firefox drops a putImageData made straight onto a
+    // displayed (GPU-backed) canvas, leaving the preview blank.
+    const off = this._previewScratch || (this._previewScratch = document.createElement('canvas'));
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d');
+    const img = octx.createImageData(w, h);
     // render.js's unclaimed-ground tones: water, plains, highland, mountain.
     const water = [18, 34, 60], ground = [[78, 94, 72], [104, 96, 66], [122, 120, 114]];
     for (let i = 0; i < w * h; i++) {
       const c = map.owner[i] === WATER ? water : ground[map.terrain[i]];
       img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255;
     }
-    ctx.putImageData(img, 0, 0);
+    octx.putImageData(img, 0, 0);
+    canvas.getContext('2d').drawImage(off, 0, 0);
     return map;
   },
 
