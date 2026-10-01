@@ -162,6 +162,11 @@ const Executor = {
     return w && w.owner === playerId ? w : null;
   },
 
+  _scout(id, playerId) {
+    const s = Game.scoutById(id);
+    return s && s.owner === playerId ? s : null;
+  },
+
   // --- Dispatch --------------------------------------------------------------
   //
   // One handler per Protocol.INTENTS entry, keyed by wire type, each
@@ -243,6 +248,11 @@ const Executor = {
       // (resolveWarshipLaunch), so the click tile is a destination, not a
       // placement.
       if (it.unit === 'warship') return Game.buildWarship(playerId, it.tile);
+      // Scout (fog of war, game/scouts.js): same shape, the tile is where to
+      // send it. buildScout never looks at what the tile is, so that an order
+      // into the fog cannot be refused for terrain; it refuses outright in a
+      // fog-off match.
+      if (it.unit === 'scout') return Game.buildScout(playerId, it.tile);
       // Atom/Hydrogen bomb: "strike here", resolved to the nearest ready Silo
       // by resolveNukeLaunch. Any tile is a legal target, own territory
       // included, matching OpenFront.
@@ -283,6 +293,21 @@ const Executor = {
       }
       if (fleet.length === 0) return false;
       return Game.moveWarships(fleet, it.tile, playerId);
+    },
+
+    // Game.moveScouts (fog of war, game/scouts.js). Same shape and the same
+    // id handling as move_warship, kept as its own intent so the rules for
+    // warships stay untouched: a Scout may be sent to any tile on the map,
+    // discovered or not, land or water.
+    move_scout(playerId, it) {
+      if (!Executor._tileOnMap(it.tile)) return false;
+      const scouts = [];
+      for (let i = 0; i < it.unitIds.length; i++) {
+        const s = Executor._scout(it.unitIds[i], playerId);
+        if (s) scouts.push(s);
+      }
+      if (scouts.length === 0) return false;
+      return Game.moveScouts(scouts, it.tile, playerId);
     },
 
     // ui.js:522 Game.annexEnclosedPockets. This game's own mechanic, no

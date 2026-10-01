@@ -190,6 +190,18 @@ Object.assign(Game, {
     {
       type: 'mirv', name: 'MIRV', icon: '🛰', hotkey: '0',
       baseCost: 25000000, maxCost: 25000000, buildTime: 0, upgradable: false, flat: true, action: true
+    },
+    // Fog of war's Scout (docs/fog-of-war.md, game/scouts.js): an unarmed
+    // ship that uncovers the map. This game's own unit, no OpenFront
+    // counterpart. Flat 25k, and `action: true` for the same reason Warship
+    // is: a click means "send one toward this tile from one of my Ports"
+    // (resolveScoutLaunch/buildScout), not "place one here". `fogOnly` marks
+    // an entry that only exists in fog matches: buildScout refuses with fog
+    // off, and the build bar leaves the entry out. It has no hotkey for the
+    // same reason. Last in the table so no other entry's position moves.
+    {
+      type: 'scout', name: 'Scout', icon: '🔭',
+      baseCost: 25000, maxCost: 25000, buildTime: 0, upgradable: false, flat: true, action: true, fogOnly: true
     }
   ],
 

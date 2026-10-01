@@ -228,6 +228,7 @@ The mapping is 1:1. OpenFront names are used where they exist.
 | `build_unit` | `unit, tile` | `ui.js:403/426/492` build / warship / nuke |
 | `upgrade_structure` | `tile` | `ui.js:465` `Game.upgrade` |
 | `move_warship` | `unitIds[], tile` | `ui.js:447` `Game.moveWarships` |
+| `move_scout` | `unitIds[], tile` | `Game.moveScouts` — fog of war's Scout (`docs/fog-of-war.md`); this game's own. A Scout is bought with `build_unit` (`unit: 'scout'`, `tile` = where to send it) |
 | `annex_region` | `tile` | `ui.js:513` `Game.annexRegion` — this game's own, no OpenFront equivalent |
 | `allianceRequest` | `recipient` | `radial.js:122` |
 | `allianceReject` | `requestor` | `ui.js:845` |

@@ -46,9 +46,12 @@ const Hash = {
   // Fog of war (game/vision.js): the vision* fields are sim state — bots
   // branch on them — so they are digested too, in fog matches only. With fog
   // off they are null and compute() never reaches them, which leaves a
-  // fog-off digest exactly what it was before they existed.
+  // fog-off digest exactly what it was before they existed. 'scouts'
+  // (game/scouts.js) is the same: Scouts only exist in fog matches and are
+  // only mixed in there. They are the one ship type in the digest because
+  // they are the one that writes vision state as it moves.
   INPUT_FIELDS: ['ticks', 'players', 'attacks', 'running', 'spawning', 'winnerId',
-    'visionCount', 'visionMet', 'visionShare', 'visionCells', 'visionStamped'],
+    'visionCount', 'visionMet', 'visionShare', 'visionCells', 'visionStamped', 'scouts'],
 
   // Sample every Nth tile of GameMap.owner.
   //
@@ -185,6 +188,26 @@ const Hash = {
       if (uses('visionShare')) whole(Game.visionShare);
       if (uses('visionCells')) sampled(Game.visionCells);
       if (uses('visionStamped')) sampled(Game.visionStamped);
+      // Scouts, in full, the way attacks are above: there are at most two a
+      // nation. Who owns each, where it is, where it was sent and what it
+      // has left.
+      if (uses('scouts')) {
+        const scouts = Game.scouts;
+        u32(scouts.length);
+        for (let i = 0; i < scouts.length; i++) {
+          const s = scouts[i];
+          u32(s.id);
+          u32(s.owner);
+          u32(s.path[Math.min(s.path.length - 1, Math.floor(s.pos))]);
+          u32(s.destTile);
+          u32(s.routing ? 1 : 0);
+          num(s.health);
+        }
+        // The route search in flight, if any: whose it is and how far along.
+        const search = Game.scoutSearch;
+        u32(search ? search.scoutId : -1);
+        u32(search ? search.nodes : 0);
+      }
     }
 
     // fmix32 (murmur3's finalizer). Word-wise FNV leaves the last few inputs

@@ -23,7 +23,7 @@ Game.init(Hash._syntheticGameStartInfo(cfg),0);
 console.log('init ms',(performance.now()-t0).toFixed(0),'map',GameMap.width,'x',GameMap.height,'fog',Game.fog);
 Game.chooseSpawn(Hash.firstLegalSpawn());
 // wrap phases
-const phases=['updateConstruction','resolveOpposingFronts','stepAttack','checkAnnexations','stepBoats','updateFactoryStations','stepTrains','updatePortTrade','stepTradeShips','stepWarships','stepShells','stepSAMs','stepNukes','updateDiplomacy','setOwner','seaPath','goldPerSecond','maxTroops','visionStamp','visionAllianceFormed'];
+const phases=['updateConstruction','resolveOpposingFronts','stepAttack','checkAnnexations','stepBoats','updateFactoryStations','stepTrains','updatePortTrade','stepTradeShips','stepWarships','stepShells','stepSAMs','stepNukes','updateDiplomacy','setOwner','seaPath','goldPerSecond','maxTroops','visionStamp','visionAllianceFormed','stepScouts','seaTowardRun'];
 const cur={};let depth={};
 function wrap(obj,name,label){const o=obj[name];if(typeof o!=='function')return;obj[name]=function(...a){if(depth[label]){return o.apply(this,a);}depth[label]=1;const s=performance.now();try{return o.apply(this,a);}finally{cur[label]=(cur[label]||0)+performance.now()-s;depth[label]=0;}};}
 for(const p of phases) wrap(Game,p,p);

@@ -240,6 +240,7 @@ Object.assign(Game, {
       target: null, targetKind: null,
       lastShellAt: -Infinity, lastPathAt: this.elapsed
     });
+    if (this.fog) this.warshipReveal(this.warships[this.warships.length - 1]);
     return true;
   },
 
@@ -310,6 +311,10 @@ Object.assign(Game, {
     }
     if (best) { w.target = best; w.targetKind = 'warship'; return; }
 
+    // Fog of war: an unfriendly Scout (game/scouts.js) comes next. It is shot
+    // from where the warship stands, like a boat or a warship, never chased.
+    if (this.fog && this.scoutTargetFor(w, pos, rangeSq)) return;
+
     best = null; bestDist = Infinity;
     for (const s of this.tradeShips) {
       if (s.owner === w.owner || this.areAllied(w.owner, s.owner)) continue;
@@ -346,7 +351,7 @@ Object.assign(Game, {
       born: this.elapsed,
       targetKind: w.targetKind,
       target: w.target,
-      damage: w.targetKind === 'warship' ? this.warshipShellDamage() : null
+      damage: w.targetKind === 'warship' || w.targetKind === 'scout' ? this.warshipShellDamage() : null
     });
   },
 
@@ -440,8 +445,8 @@ Object.assign(Game, {
 
     if (w.target) {
       const kind = w.targetKind;
-      const arr = kind === 'boat' ? this.boats : kind === 'warship' ? this.warships : this.tradeShips;
-      let ok = arr.includes(w.target) && (kind !== 'warship' || w.target.health > 0);
+      const arr = kind === 'boat' ? this.boats : kind === 'warship' ? this.warships : kind === 'scout' ? this.scouts : this.tradeShips;
+      let ok = arr.includes(w.target) && ((kind !== 'warship' && kind !== 'scout') || w.target.health > 0);
       if (ok) {
         const tp = this.pathPos(w.target);
         const d = (tp.x - pos.x) ** 2 + (tp.y - pos.y) ** 2;
@@ -458,13 +463,13 @@ Object.assign(Game, {
     // A relocation order (or the launch voyage) is never interrupted: the ship
     // keeps sailing and shoots what it passes, but doesn't stop or chase.
     if (w.ordered) {
-      if (w.targetKind === 'boat' || w.targetKind === 'warship') this.warshipShootAt(w);
+      if (w.targetKind === 'boat' || w.targetKind === 'warship' || w.targetKind === 'scout') this.warshipShootAt(w);
       else { w.target = null; w.targetKind = null; }
       w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * this.TICK_DT);
       return;
     }
 
-    if (w.targetKind === 'boat' || w.targetKind === 'warship') {
+    if (w.targetKind === 'boat' || w.targetKind === 'warship' || w.targetKind === 'scout') {
       this.warshipShootAt(w);
       return;
     }
@@ -490,8 +495,8 @@ Object.assign(Game, {
     const step = this.WARSHIP_SHELL_SPEED * this.TICK_DT;
     for (let i = this.shells.length - 1; i >= 0; i--) {
       const s = this.shells[i];
-      const arr = s.targetKind === 'boat' ? this.boats : this.warships;
-      const alive = arr.includes(s.target) && (s.targetKind !== 'warship' || s.target.health > 0);
+      const arr = s.targetKind === 'boat' ? this.boats : s.targetKind === 'scout' ? this.scouts : this.warships;
+      const alive = arr.includes(s.target) && (s.targetKind === 'boat' || s.target.health > 0);
       if (!alive) { this.shells.splice(i, 1); continue; }
 
       const tp = this.pathPos(s.target);
@@ -527,7 +532,23 @@ Object.assign(Game, {
         continue;
       }
       this.warshipTick(w);
+      if (this.fog) this.warshipReveal(w);
     }
+  },
+
+  // Fog of war (docs/fog-of-war.md): a warship uncovers VISION_SIGHT_WARSHIP
+  // cells around itself, for its owner and its owner's allies. Called when it
+  // is launched and after each of its ticks, and stamps only when the ship is
+  // in a different vision cell from the one it last stamped from — which
+  // covers a relocation or a repath putting it on a new tile as well as plain
+  // sailing. `visionCell` exists only on warships in fog matches; nothing
+  // reaches this with fog off.
+  warshipReveal(w) {
+    const tile = w.path[Math.min(w.path.length - 1, Math.floor(w.pos))];
+    const cell = this.visionCellOf(tile);
+    if (cell === w.visionCell) return;
+    w.visionCell = cell;
+    this.revealAround(w.owner, tile, this.VISION_SIGHT_WARSHIP);
   },
 
 });
