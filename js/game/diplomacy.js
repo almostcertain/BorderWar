@@ -130,6 +130,8 @@ Object.assign(Game, {
       expiresAt: this.elapsed + this.ALLIANCE_DURATION,
       extendA: false, extendB: false
     });
+    // Fog of war: the two have now met, and share their maps while this lasts.
+    if (this.fog) this.visionAllianceFormed(a.id, b.id);
     // A deal signed while the armies are already in the field has to recall
     // them, or the front carries on eating your new ally's land. Boats are
     // deliberately NOT recalled here — OpenFront's own TransportShipExecution
@@ -160,6 +162,8 @@ Object.assign(Game, {
     if (i >= 0) this.alliances.splice(i, 1);
     this.players[al.a].allies.delete(al.b);
     this.players[al.b].allies.delete(al.a);
+    // Fog of war: map sharing stops; both keep what they have discovered.
+    if (this.fog) this.visionRefreshShare();
   },
 
   // OpenFront marks the breaker a traitor unless the other side already is one,

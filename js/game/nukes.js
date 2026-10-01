@@ -376,6 +376,8 @@ Object.assign(Game, {
         const op = this.players[owner];
         if (b.built) op.units[b.type] = Math.max(0, this.unitsOwned(op, b.type) - b.level);
         else op.unitsPending[b.type] = Math.max(0, this.unitsPending(op, b.type) - 1);
+        // Fog of war: a nuke hit tells the victim who launched it.
+        if (this.fog) this.markMet(owner, nuke.ownerId);
       }
       this.buildings.delete(tile);
     }
@@ -426,6 +428,7 @@ Object.assign(Game, {
     // ignores it — see that function's own comment.
     for (const [ownerId, numImpactedTiles] of tilesPerPlayer) {
       const p = this.players[ownerId];
+      if (this.fog) this.markMet(ownerId, nuke.ownerId);
       const maxTroops = this.maxTroops(p);
       let tilesLeft = p.tiles.size + numImpactedTiles;
       for (let i = 0; i < numImpactedTiles; i++) {

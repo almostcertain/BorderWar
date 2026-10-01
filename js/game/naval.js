@@ -303,6 +303,8 @@ Object.assign(Game, {
     // OpenFront lands a boat by starting an AttackExecution, which brings its
     // temporary embargo with it — see embargoOnAttack.
     this.embargoOnAttack(boat.attacker, boat.target);
+    // Fog of war: a landing is an attack, so the target has met the attacker.
+    if (this.fog) this.markMet(boat.target, boat.attacker);
 
     // A normal attack, seeded from the landing tile's own border — it's real
     // owned territory now (setOwner just ran), so no special-casing is needed

@@ -492,6 +492,9 @@ const Game = {
 
     // Team modes (game/teams.js). A no-op for FFA.
     this.setupTeams(config, H, botCount);
+    // Fog of war vision state (game/vision.js). Allocates nothing with fog
+    // off. Before the first claim below, which already reveals.
+    this.initVision();
 
     // Spawn-pick phase: every Nation/Tribe claims a provisional starting disc
     // immediately, then keeps re-rolling it to a new nearby spot every
@@ -721,6 +724,8 @@ const Game = {
       // fallout, since an irradiated tile sitting unclaimed is exactly the
       // steady state the mechanic depends on.
       this.fallout.delete(i);
+      // Fog of war: territory reveals the map around it (game/vision.js).
+      if (this.fog) this.visionTileGained(i, newOwner);
     }
 
     // Border bookkeeping: only tile i and its immediate neighbours can have

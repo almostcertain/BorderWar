@@ -181,8 +181,8 @@ it goes in the desync hash.
   On the large map (2000x1000) that is 31,250 cells. Per-tile tracking for
   ~110 groups would cost about 27 MB; the cell grid costs about 0.5 MB.
 - **Layout.** One bitmask of groups per cell (`Uint32Array`,
-  `cells * ceil(groups / 32)` words). `Game.isDiscovered(group, tile)` is one
-  bit test. Cell-major layout makes the "met" check below cheap.
+  `cells * ceil(groups / 32)` words). `Game.isDiscovered(playerId, tile)` is
+  one bit test. Cell-major layout makes the "met" check below cheap.
 - **Reveal on ownership change.** `setOwner` (`core.js:703`) is the single
   path for territory changes. When a group gains a tile in a cell it has not
   yet stamped from, stamp a disc of cells around it. A second bitmask records
@@ -201,10 +201,65 @@ it goes in the desync hash.
 Starting values, all tuning dials: cell 8 tiles, border sight 3 cells, scout
 sight 5 cells, warship sight 3 cells, radio tower sight 12 cells.
 
+#### As built (task 2)
+
+All state is top-level on `Game`, `null`/`0` in a fog-off match, and only
+`vision.js` writes it.
+
+| Field | Shape | Meaning |
+|---|---|---|
+| `visionGroupOf` | `Int16Array[players]` | Player id to group id, `-1` for tribes. Teams take the first ids in `Game.teams` order; everyone else follows in player-id order, so in a free-for-all a nation's group is its player id. |
+| `visionCells` | `Uint32Array[cells * visionWords]` | Groups that have discovered each cell. |
+| `visionStamped` | same | Groups that have already stamped border sight from a tile in the cell. |
+| `visionShare` | `Uint32Array[groups * visionWords]` | The bits a group's stamp sets: its own plus its current allies'. Rebuilt from `Game.alliances` whenever one forms or ends. |
+| `visionMet` | `Uint32Array[players * visionWords]` | Groups that have met each player. |
+| `visionCount` | `Uint32Array[groups]` | Cells each group has discovered. Changes exactly when the group's discovered set does, so render uses it as a revision counter. |
+| `visionCellsW`, `visionCellsH`, `visionGroups`, `visionWords` | numbers | Grid size, group count, words per bitmask. |
+
+Cell index is `cy * visionCellsW + cx`; a group's bit is word `g >>> 5`, bit
+`g & 31`.
+
+API (read-only unless marked):
+
+- `Game.isDiscovered(playerId, tile)`: true with fog off and for tribes.
+- `Game.hasMet(a, b)`: has `a` met `b`. True with fog off, for `a === b`, for
+  teammates, and when `a` is a tribe. A tribe as `b` is met like any other
+  land owner. False if either id is not a player.
+- `Game.visionGroup(playerId)`: group id, or `-1` (tribe, not a player, fog
+  off).
+- `Game.visionCellOf(tile)`: cell index, for noticing a unit has changed cell.
+- `Game.revealAround(playerId, tile, radiusCells)` (sim only): reveal a disc
+  to the player's group and its current allies. Scouts, warships and the
+  radio tower call this with `VISION_SIGHT_SCOUT` / `_WARSHIP` / `_RADIO`.
+- `Game.markMet(observerId, subjectId)` (sim only): the attack half of
+  contact. Called from `launchAttack`, `resolveLanding` and `detonateNuke`.
+
+Choices made while building:
+
+- A disc of radius `r` cells is every cell with `dx*dx + dy*dy <= r*r + r`
+  (radius `r + 0.5`), so small discs are round rather than a plus shape.
+- Contact belongs to the vision group, so a team shares its contacts as well
+  as its map. Allies still do not.
+- Sharing is direct. When A and B ally, each gets the other's whole map as it
+  stands, including what B was given by an earlier ally C; after that A gets
+  B's new stamps but not C's.
+- Vision is live during the spawn countdown, so until task 3 fixes spawns a
+  bot's wobbling provisional spawn (and a human re-picking) leaves a trail of
+  discovered cells and contacts.
+- An alliance forming scans the whole grid once (a few ms on the large map).
+  Everything else is proportional to what is newly revealed.
+
 ### Hash and goldens
 
 - Add vision state and `Game.scouts` to `Hash.INPUT_FIELDS` (`js/net/hash.js`)
-  so a vision desync is caught.
+  so a vision desync is caught. Vision state is in (task 2), only when fog is
+  on: `visionCount`, `visionMet` and `visionShare` whole, the two cell grids
+  sampled every `Hash.VISION_STRIDE` words. A fog-off digest is unchanged.
+- `node tools/sim-harness.js fog` checks fog-on matches: each scenario twice
+  in fresh contexts with identical hashes, the vision invariants, the contact
+  and sharing rules, and that a fog-off match allocates nothing. `--perturb`
+  is its negative control. `node tools/sim-harness.js neutral` checks fog-off
+  behaviour against a pre-fog baseline.
 - **The goldens will need a re-record.** `tools/sim-harness.js` digests every
   non-cosmetic field on `Game` and checks the source hash of `js/ai.js`, so
   new state fields and the bot changes fail `compare` even with fog off. Before

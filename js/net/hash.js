@@ -43,7 +43,12 @@ const Hash = {
   // the actual fix for that invisibility, not cleanup: without it, the next
   // task that lets non-Runner/Executor code mutate sim state gets the same
   // free pass this one did.
-  INPUT_FIELDS: ['ticks', 'players', 'attacks', 'running', 'spawning', 'winnerId'],
+  // Fog of war (game/vision.js): the vision* fields are sim state — bots
+  // branch on them — so they are digested too, in fog matches only. With fog
+  // off they are null and compute() never reaches them, which leaves a
+  // fog-off digest exactly what it was before they existed.
+  INPUT_FIELDS: ['ticks', 'players', 'attacks', 'running', 'spawning', 'winnerId',
+    'visionCount', 'visionMet', 'visionShare', 'visionCells', 'visionStamped'],
 
   // Sample every Nth tile of GameMap.owner.
   //
@@ -71,6 +76,11 @@ const Hash = {
   // permanently confined to a fifteen-tile window to hide from it. Smaller maps
   // are proportionally cheaper: medium (1/16th the tiles) measures 0.16 ms.
   OWNER_STRIDE: 16,
+
+  // Sample every Nth word of the fog-of-war cell grids — see compute(). At 11
+  // the vision part of the digest measured 0.1-0.2 ms on the World map with
+  // 83 vision groups (three words a cell), against 0.76 ms for the rest.
+  VISION_STRIDE: 11,
 
   // 32-bit unsigned FNV-1a over the simulation state. Pure: no allocation, no
   // clock, no Game.me, no Fx.
@@ -158,6 +168,25 @@ const Hash = {
       for (let i = 0; i < len; i += stride) h = Math.imul(h ^ (owner[i] & 0xffff), P);
     }
 
+    // Fog of war vision state. The three small arrays go in whole: each
+    // group's discovered-cell count (so, like tiles.size above, the *size* of
+    // every group's discovered area is covered exactly), who has met whom,
+    // and who is sharing with whom. The two per-cell grids are sampled like
+    // the tile scan, for the same reason and with the same argument: a
+    // difference in where rather than how much spreads and trips a sampled
+    // word. VISION_STRIDE counts words, not cells, and is a prime larger
+    // than any word count a lobby can reach, so it walks through every word
+    // of a cell's bitmask instead of landing on the same one each time.
+    if (Game.fog) {
+      const whole = a => { for (let i = 0; i < a.length; i++) h = Math.imul(h ^ a[i], P); };
+      const sampled = a => { for (let i = 0, s = this.VISION_STRIDE; i < a.length; i += s) h = Math.imul(h ^ a[i], P); };
+      if (uses('visionCount')) whole(Game.visionCount);
+      if (uses('visionMet')) whole(Game.visionMet);
+      if (uses('visionShare')) whole(Game.visionShare);
+      if (uses('visionCells')) sampled(Game.visionCells);
+      if (uses('visionStamped')) sampled(Game.visionStamped);
+    }
+
     // fmix32 (murmur3's finalizer). Word-wise FNV leaves the last few inputs
     // under-diffused across the 32 bits; this makes every input bit affect
     // every output bit, so a one-tile or one-gold difference in the very last
@@ -228,7 +257,7 @@ const Hash = {
     return {
       gameID: 'hash-harness',
       seed: cfg.seed,
-      config: { map: cfg.map, mapSize: cfg.size, bots: cfg.bots, tribes: cfg.tribes, difficulty: cfg.difficulty, gameMode: cfg.gameMode, playerTeams: cfg.playerTeams },
+      config: { map: cfg.map, mapSize: cfg.size, bots: cfg.bots, tribes: cfg.tribes, difficulty: cfg.difficulty, gameMode: cfg.gameMode, playerTeams: cfg.playerTeams, fogOfWar: cfg.fogOfWar },
       players: [{ clientID: 'harness', username: 'Harness', playerId: 0 }]
     };
   },
