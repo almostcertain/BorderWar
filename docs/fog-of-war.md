@@ -1,7 +1,9 @@
 # Fog of war (design)
 
-Status: **design agreed, nothing built.** No ticket numbers yet. This doc is the
-source for the tickets; update it as decisions change.
+Status: **being built on the `feature/fog-of-war` branch.** Tasks 1 to 8 are
+done; 9 (bots) and 10 (verification) are in progress; 11 (Radio Tower) is a
+follow-up and not started. No ticket numbers. Where the build differs from the
+design below, "As built" near the end says how.
 
 A match option. When it is on, the map starts black, each nation sees only what
 it has discovered, and the sea is explored with a new Scout unit. When it is
@@ -367,6 +369,107 @@ Much of the bot logic is already border-based (`borderTargets`, `think`,
 `UNITS` entry `radio`, placed on owned land through the ordinary `build` path.
 Cheap, not upgradable, only in fog matches. On completion it stamps one large
 disc. Discovery survives the tower being captured or destroyed.
+
+## As built
+
+Where the build differs from, or had to interpret, the design above. Task 2's
+notes are under "Vision state".
+
+### Lobby (task 1)
+
+- Players who join a hosted lobby see only a roster and a status line, with
+  no settings and no preview, so there was nothing to hide for them. The auto
+  lobby is always fog off.
+
+### Spawn (task 3)
+
+- The camera opens centred on the player's spawn at about 100 tiles across
+  the shorter screen side.
+- A tap during the countdown flashes "Spawns are random in fog of war".
+- Teammates can start far apart, because spawns are random.
+
+### Gating (task 7)
+
+- The clicked tile is checked before any terrain lookup, as well as the
+  resolved landing or destination tile, so a refusal never says whether a
+  black tile is land, water or coast. The reason is `'Undiscovered'`.
+- Contact refusals read `'Not met'`.
+- "Embargo all" skips nations the sender has not met.
+- The donation gate is redundant in practice: donating needs an alliance, and
+  an alliance makes both sides meet.
+
+### Scouts (task 5)
+
+- **An order does no pathfinding.** Buying or moving a scout only records the
+  tile; the route is found in `stepScouts`, so an order cannot be refused for
+  terrain by construction.
+- **The route search is spread over ticks**, 20,000 tiles a slice, inside
+  `SEA_PATH_NODE_BUDGET_PER_TICK`. The design's single capped search often
+  could not get a scout round its own continent (167 of 200 test voyages
+  arrived on the World map; sliced, 198 of 200). One search runs at a time
+  across all nations; other scouts wait. A scout sits still while its route
+  is found.
+- The search has its own arena: about 23 MB on a 2000x1000 map, allocated on
+  the first scout search of a fog match.
+- A click on land or a lake resolves to the nearest tile of the scout's own
+  sea within 256 tiles; beyond that it sails toward the best tile seen and
+  retries.
+- Launch Port: the nearest to the click in a straight line. Terrain is used
+  to pick the Port only when the click is water the buyer has discovered.
+- Health 400, so two warship shells sink one. Warships rank targets boat,
+  warship, scout, trade ship. A nuke blast sinks scouts as it does warships.
+- An eliminated owner's scouts are removed on the next tick. Losing the last
+  Port changes nothing, as for warships.
+- The `UNITS` entry is marked `fogOnly` and has no hotkey; `buildScout`
+  refuses with fog off.
+
+### Rendering (task 4)
+
+- **`Render.fogActive()`** is the single switch: false with fog off, once the
+  match is over, for an eliminated viewer, and for a viewer with no vision
+  group. `Render.canSee(tile)` is the per-tile test. The UI gates every
+  filter on these.
+- **The layer has one pixel per cell corner** (251x126 on the large map), not
+  per cell, so undiscovered cells are fully opaque and the soft edge sits
+  inside the outermost discovered cells. Clear sight is therefore about 2
+  cells past the border with a fading third, not 3.
+- The fog colour is the canvas backdrop (`FOG_COLOR`, `#060a14`), so the map
+  edge does not show as an outline.
+- In fog matches labels, badges, front numbers and popups are drawn over the
+  fog and culled by their anchor tile. A nation is named on the map only once
+  its label anchor (the centre of its largest landmass) is discovered.
+- The placement ghost is drawn over the fog, since nukes and scouts aim
+  blind. A warship ghost is refused unless the hovered tile and its
+  destination are both discovered.
+- Blasts and SAM flashes are culled on their centre. The incoming-nuke target
+  ring is always drawn. "Own" missiles means the viewer's, not teammates'.
+- **Spectators and replays do not exist in the game today.** A client that is
+  not on the roster is treated as player 0 and gets that player's fog.
+
+### UI (tasks 6 and 8)
+
+- **Leaderboard.** Six rows as today: the top 3, then met nations in rank
+  order, the viewer always present, then "+N unknown nations". Rows show
+  their true rank among all nations. An unmet top-3 row shows name and land
+  share only, not gold or status icons. Tribes are in the ranking, so early
+  on the top 3 can be tribes. Teams: the top 3 teams always, lower teams only
+  if a member is met, then "+N unknown teams".
+- A plain tap on an undiscovered tile does nothing.
+- An unmet nation's boat in discovered water shows no hover panel.
+- **Camera jumps.** A front chip jumps to a visible contested tile if the
+  front's centre is in the black. An own boat in the black jumps to its
+  landing tile. Someone else's boat still in the black does not jump and
+  flashes "Not in sight yet".
+- **Scout controls.** Hotkey E, fog matches only. The ghost colour comes only
+  from `scoutBlockReason`, which never depends on terrain. The route is never
+  drawn; a diamond marks the clicked destination for the owner. Shift-click
+  and shift-drag select scouts with warships. A mixed order sends scouts
+  anywhere and warships only to discovered water.
+- Known rough edges: the "No trade" badge also shows when the other nation
+  has not met the viewer; an inbound boat's chip (labelled "Unknown nation")
+  appears from launch, before the boat is visible; a nuke that raises the
+  alert but hits none of the viewer's tiles leaves the launcher unknown; the
+  nuke alert row still jumps the camera to the impact point.
 
 ## Tasks
 

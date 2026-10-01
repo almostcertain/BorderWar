@@ -4,7 +4,7 @@ const Input = {
   moved: 0,
   downAt: 0,
   holdTimer: null,
-  // Live shift-drag warship box-select, or null when not dragging one — see
+  // Live shift-drag ship box-select, or null when not dragging one — see
   // onDown/onMove/onUp below and Render.drawSelectionBox.
   selecting: null,
 
@@ -115,8 +115,14 @@ const Input = {
     // to "no owner here" and hide the panel instead of naming who sent it.
     const boat = Render.findBoatNear(e.clientX, e.clientY);
     if (boat) { UI.hoverTile = -1; UI.showHoverPanel(boat.attacker); return; }
+    // A scout is the same kind of thing: afloat, away from any owned tile.
+    // The panel names whoever owns it only if the viewer has met them
+    // (showHoverPanel checks), so an unmet nation's scout shows nothing.
+    const scout = Render.findScoutNear(e.clientX, e.clientY);
+    if (scout) { UI.hoverTile = -1; UI.showHoverPanel(scout.owner); return; }
     const tile = Render.screenToTile(e.clientX, e.clientY);
-    if (tile < 0) { UI.hideHoverPanel(); return; }
+    // Fog: an undiscovered tile has no inspector, whoever owns it.
+    if (tile < 0 || !Render.canSee(tile)) { UI.hideHoverPanel(); return; }
     const owner = GameMap.owner[tile];
     if (owner < 0) { UI.hideHoverPanel(); return; }
     UI.hoverTile = tile;
@@ -165,12 +171,12 @@ const Input = {
           this.openMenu(x, y);
         }, this.LONG_PRESS_MS);
       }
-      // Shift held down on the primary button starts a warship box-select
-      // drag instead of panning — mouse only (touch has no shift), and only
+      // Shift held down on the primary button starts a ship (warship and scout)
+      // box-select drag instead of panning — mouse only (touch has no shift), and only
       // when there's actually a map to select on. `active` flips true once
       // the drag clears the same 12px tolerance onMove's pan-vs-tap test
       // uses, so a plain shift-click (no drag) still falls through to
-      // selectWarshipAt in onUp below rather than opening an empty box.
+      // selectShipAt in onUp below rather than opening an empty box.
       if (this.isPrimary(e) && e.shiftKey && e.pointerType === 'mouse' &&
           Game.running && !Game.spawning && !UI.placing && !Radial.isOpen()) {
         this.clearHold();
@@ -221,10 +227,10 @@ const Input = {
       const sel = this.selecting;
       this.selecting = null;
       if (sel.active) {
-        UI.selectWarshipsInBox(Math.min(sel.x0, sel.x1), Math.min(sel.y0, sel.y1),
-                                Math.max(sel.x0, sel.x1), Math.max(sel.y0, sel.y1));
+        UI.selectShipsInBox(Math.min(sel.x0, sel.x1), Math.min(sel.y0, sel.y1),
+                              Math.max(sel.x0, sel.x1), Math.max(sel.y0, sel.y1));
       } else {
-        UI.selectWarshipAt(e.clientX, e.clientY);
+        UI.selectShipAt(e.clientX, e.clientY);
       }
       return;
     }

@@ -65,6 +65,15 @@ html, body {
 .lbTeamRow { cursor: pointer; font-weight: 600; }
 .lbTeamRow:hover { background: rgba(8, 14, 26, 0.85); }
 
+/* Fog of war only (see UI.fogLeaderboardHtml). A row's true rank, since the
+   rows shown are not consecutive; a leader the viewer has not met, which is
+   named but takes no clicks; and the "+N unknown" line under the list. */
+.lbRank { flex: 0 0 auto; min-width: 14px; text-align: right; opacity: 0.6; }
+.lbRow.unmet { cursor: default; }
+.lbRow.unmet:hover { background: rgba(8, 14, 26, 0.65); }
+.lbRow.unmet .lbName { font-style: italic; opacity: 0.8; }
+.lbUnknown { font-style: italic; opacity: 0.7; }
+
 .lbCaret {
   flex: 0 0 auto;
   width: 9px;
