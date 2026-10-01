@@ -2,7 +2,7 @@
 const crypto = require('node:crypto');
 const { fs, path, vm, root, loader, stable } = require('./split-common');
 const mode = process.argv[2];
-if (!['record', 'compare'].includes(mode)) throw new Error('Usage: node tools/sim-harness.js record|compare [--perturb]');
+if (!['record', 'compare', 'baseline', 'neutral'].includes(mode)) throw new Error('Usage: node tools/sim-harness.js record|compare|baseline|neutral [--perturb]');
 const perturb = process.argv.includes('--perturb');
 if (perturb && mode !== 'compare') throw new Error('--perturb is compare-only');
 const methods = ['launchAttack', 'launchNavalInvasion', 'resolveLanding', 'annexRegion', 'acceptAlliance', 'breakAlliance', 'build', 'upgrade', 'spawnTrain', 'buildWarship', 'warshipShootAt', 'launchNuke', 'detonateNuke'];
@@ -25,6 +25,38 @@ scenarios.push({ name: 'late-medium-hard-24680', size: 'medium', seed: 24680, bo
 // share (~tick 2400), so assignment, teammate friendliness and checkTeamWin
 // are all covered.
 scenarios.push({ name: 'teams4-small-12345', size: 'small', seed: 12345, bots: 8, tribes: 12, ticks: 3000, gameMode: 'team', playerTeams: 4 });
+// `neutral --only small-12345,teams4` runs just the scenarios whose name
+// contains one of the given strings: a quick check while iterating. The full
+// suite is still the bar before a task is called done.
+const onlyAt = process.argv.indexOf('--only');
+const only = onlyAt > 0 ? String(process.argv[onlyAt + 1] || '').split(',').filter(Boolean) : null;
+if (only && mode !== 'neutral') throw new Error('--only is neutral-only');
+if (only) {
+  const kept = scenarios.filter(s => only.some(part => s.name.includes(part)));
+  if (!kept.length) throw new Error(`--only matched no scenario: ${only.join(',')}`);
+  scenarios.length = 0;
+  scenarios.push(...kept);
+}
+// `baseline` / `neutral`: a behaviour-neutrality check for work that adds new
+// sim state (so `compare`'s whole-state digest and Hash checkpoints can't
+// match). `baseline` snapshots the current tree into tools/.neutral/
+// (untracked); `neutral` reruns and requires the same map ownership, tick
+// count, coverage and peaks, and the same value for every top-level Game
+// field that existed at baseline. New top-level fields are ignored. A
+// pre-existing field that is meant to differ (e.g. a new UNITS entry) goes in
+// NEUTRAL_ALLOWED with a reason.
+const neutralDir = path.join(root, 'tools/.neutral');
+const NEUTRAL_ALLOWED = [];
+function keyDigests(Game) {
+  const omitted = new Set(Game.COSMETIC_STATE);
+  const keys = {};
+  for (const key of Object.keys(Game).sort()) {
+    if (omitted.has(key) || typeof Game[key] === 'function') continue;
+    keys[key] = crypto.createHash('sha256').update(JSON.stringify(stable(Game[key]))).digest('hex');
+  }
+  return keys;
+}
+const neutralFailures = [];
 function digest(Game, GameMap) {
   let fnv = 2166136261;
   for (const owner of GameMap.owner) {
@@ -113,6 +145,25 @@ for (const cfg of scenarios) {
   const result = { scenario: cfg, checkpoints, digest: digest(Game, GameMap), simulationTicks: Game.ticks, coverage, peaks };
   if (expected && JSON.stringify(result) !== JSON.stringify(expected)) throw new Error(`DIVERGENCE ${cfg.name} tick ${cfg.ticks}: final digest, coverage, or tick count differs`);
   results.push({ target, result: { manifest, ...result } });
+  if (mode === 'baseline' || mode === 'neutral') {
+    const snap = { scenario: cfg, ownerFNV: result.digest.ownerFNV, simulationTicks: result.simulationTicks, coverage, peaks, keys: keyDigests(Game) };
+    const file = path.join(neutralDir, `${cfg.name}.json`);
+    if (mode === 'baseline') {
+      fs.mkdirSync(neutralDir, { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(snap, null, 2) + '\n');
+    } else {
+      const base = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const diffs = [];
+      for (const field of ['scenario', 'ownerFNV', 'simulationTicks', 'coverage', 'peaks']) {
+        if (JSON.stringify(base[field]) !== JSON.stringify(snap[field])) diffs.push(field);
+      }
+      for (const key of Object.keys(base.keys)) {
+        if (base.keys[key] !== snap.keys[key] && !NEUTRAL_ALLOWED.includes(key)) diffs.push(`Game.${key}`);
+      }
+      if (diffs.length) neutralFailures.push(`${cfg.name}: ${diffs.join(', ')}`);
+      console.log(`${cfg.name}: ${diffs.length ? 'DIFFERS (' + diffs.join(', ') + ')' : 'neutral'}`);
+    }
+  }
   for (const name of methods) totals[name] += coverage[name];
   for (const name of entities) suitePeaks[name] = Math.max(suitePeaks[name], peaks[name]);
   console.log(`${cfg.name}: ${cfg.ticks} ticks (${Game.ticks} simulation ticks), ${((performance.now() - began) / 1000).toFixed(2)}s`);
@@ -121,10 +172,11 @@ for (const cfg of scenarios) {
 console.log('Coverage:', JSON.stringify(totals));
 console.log('Suite peaks:', JSON.stringify(suitePeaks));
 const missing = [...methods.filter(name => totals[name] === 0), ...entities.filter(name => suitePeaks[name] === 0)];
-if (missing.length) throw new Error(`Coverage missing: ${missing.join(', ')}`);
+if (missing.length && !only) throw new Error(`Coverage missing: ${missing.join(', ')}`);
+if (neutralFailures.length) throw new Error(`NOT NEUTRAL:\n  ${neutralFailures.join('\n  ')}`);
 if (mode === 'record') {
   fs.mkdirSync(path.join(root, 'tools/golden'), { recursive: true });
   for (const { target, result } of results) fs.writeFileSync(target, JSON.stringify(result, null, 2) + '\n');
 }
-console.log(`MANIFEST ${mode === 'record' ? 'RECORDED' : 'OK'} (${sources.length} loaded files, ${Object.keys(manifest).filter(file => !file.startsWith('js/game/')).length} protected files outside js/game/)`);
+if (mode === 'record' || mode === 'compare') console.log(`MANIFEST ${mode === 'record' ? 'RECORDED' : 'OK'} (${sources.length} loaded files, ${Object.keys(manifest).filter(file => !file.startsWith('js/game/')).length} protected files outside js/game/)`);
 console.log(`${mode.toUpperCase()} OK (${scenarios.length} scenarios, ${scenarios.reduce((sum, s) => sum + s.ticks, 0)} ticks), ${((performance.now() - start) / 1000).toFixed(2)}s`);
