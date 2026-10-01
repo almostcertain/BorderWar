@@ -1,7 +1,7 @@
 # Fog of war (design)
 
-Status: **being built on the `feature/fog-of-war` branch.** Tasks 1 to 8 are
-done; 9 (bots) and 10 (verification) are in progress; 11 (Radio Tower) is a
+Status: **being built on the `feature/fog-of-war` branch.** Tasks 1 to 9 are
+done; 10 (verification) is in progress; 11 (Radio Tower) is a
 follow-up and not started. No ticket numbers. Where the build differs from the
 design below, "As built" near the end says how.
 
@@ -470,6 +470,37 @@ notes are under "Vision state".
   appears from launch, before the boat is visible; a nuke that raises the
   alert but hits none of the viewer's tiles leaves the launcher unknown; the
   nuke alert row still jumps the camera to the impact point.
+
+### Bots (task 9)
+
+- **Beaches, not `coastSample`.** `coastSample` is the 12 northernmost coastal
+  tiles of each landmass, so a fog bot could see an island's near shore and
+  still have nothing to target. Fog matches use `AI.fogCoast()`: one ocean
+  coast tile per vision cell, at most 24 per landmass. Both `navalThink` and
+  scouting use it. Lake shores are left out, so lake islands are never
+  fog-mode naval targets.
+- A bot knows where the sample beaches are and nothing about what is on them.
+- **Scouts.** One on Easy, two otherwise. Bought after the normal build order
+  and exempt from the savings reserve. Launched from an ocean Port and sent
+  to the nearest undiscovered beach to the home coast, ties by `Game.rng`. An
+  idle scout is redirected before a new one is bought. A beach that cannot be
+  reached, or lies within 80 tiles of where a scout was lost, is written off.
+  A replacement waits 2 minutes. Three failed voyages retire a scout.
+- An alliance offer from an unmet nation is answered blind (`strangerDecision`).
+  `handleEmbargoes` skips unmet nations. SAM savings count only Silos the bot
+  can see. Nukes and retaliation aim only at discovered tiles of met nations.
+- Bots do not use warships to explore.
+- **Measured against fog-off on the same seeds** (`tools/fog-activity.js`):
+  land war is unchanged. Overseas invasions run at about half until Ports and
+  scouts arrive (a Port is a bot's second purchase, so scouts appear around
+  tick 2500 to 3000), then 80 to 90% on small and World maps and about half
+  on medium and on large with 60 bots. No invasion check is refused as
+  undiscovered any more.
+- **Weak case: one giant continent.** The scout route search cannot round the
+  continent inside its 200k-node guard, so about 40% of voyages fail, bots
+  retire scouts, and the median nation discovers 38% of the map. Fixing it is
+  a `scouts.js` change.
+- Most bot scouts are eventually sunk by warships (about 95% on big maps).
 
 ## Tasks
 
