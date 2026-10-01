@@ -107,7 +107,10 @@ const UI = {
     // per-row listeners as fast as they were attached.
     document.getElementById('leaderboard').addEventListener('click', e => {
       const row = e.target.closest('.lbTeamRow');
-      if (!row) return;
+      // Fog: a row marked `unmet` (a leader the viewer has not met) takes no
+      // action. Opening a team's roster is the only row action there is today;
+      // anything added later (a menu, a camera jump) belongs behind this too.
+      if (!row || row.classList.contains('unmet')) return;
       const team = row.dataset.team;
       if (this.lbOpenTeams.has(team)) this.lbOpenTeams.delete(team);
       else this.lbOpenTeams.add(team);
@@ -346,6 +349,27 @@ const UI = {
     if (best) this.selectedWarships.add(best);
   },
 
+  // --- Fog of war: who the viewer may be told about ---------------------------
+  // docs/fog-of-war.md, "Meeting a nation". Contact is sim state
+  // (Game.hasMet); these two only read it. Everything in the UI that names a
+  // nation goes through nameOf(), and everything that shows a nation's details
+  // or acts on one asks knows() first, so the rule lives in one place. Both
+  // answer "yes, the real name" whenever Render.fogActive() is false: a fog-off
+  // match, the end of a match, and an eliminated viewer all see everything.
+  UNKNOWN_NATION: 'Unknown nation',
+
+  knows(id) {
+    return !Render.fogActive() || Game.hasMet(Game.me, id);
+  },
+
+  // `fallback` is what the caller already printed for an id that names no
+  // player at all (a debug nuke has no owner).
+  nameOf(id, fallback) {
+    const p = Game.players[id];
+    if (!p) return fallback;
+    return this.knows(id) ? p.name : this.UNKNOWN_NATION;
+  },
+
   // Ticket #30: say so when an ally marks a target (our own mark needs no
   // announcement — we just clicked it). Read-only over Player.targets; a mark
   // is identified by who placed it and when, so each one flashes once.
@@ -359,7 +383,9 @@ const UI = {
         if (this.seenMarks.has(key)) continue;
         this.seenMarks.add(key);
         if (Game.elapsed - t.at >= Game.TARGET_DURATION) continue;
-        this.flash(ally.name + ' marked ' + Game.players[t.id].name + ' as a target', 'target');
+        // Fog: allies do not share contacts, so the nation marked may be one
+        // we have not met.
+        this.flash(this.nameOf(allyId) + ' marked ' + this.nameOf(t.id) + ' as a target', 'target');
       }
     }
   },
@@ -511,6 +537,10 @@ const UI = {
   showHoverPanel(playerId) {
     const p = Game.players[playerId];
     if (!p || !p.alive) { this.hideHoverPanel(); return; }
+    // Fog: nothing about a nation we have not met. Land we can see always
+    // belongs to one we have, so this is the boat case: a boat sailing through
+    // discovered water does not introduce whoever sent it.
+    if (!this.knows(playerId)) { this.hideHoverPanel(); return; }
     this.hoverId = playerId;
     const el = document.getElementById('hoverPanel');
     el.classList.remove('hidden');
@@ -811,6 +841,10 @@ const UI = {
 
     const tile = Render.screenToTile(sx, sy);
     if (tile < 0) return;
+    // Fog: a plain tap on the black does nothing at all. Anything it did would
+    // answer what is under it: an attack that starts names the owner, and the
+    // quick-boat refusal below only ever fires for land near a coast.
+    if (!Render.canSee(tile)) return;
     const target = GameMap.owner[tile];
     if (target === WATER || target === Game.me) return;
 
@@ -1015,21 +1049,34 @@ const UI = {
     this.renderLeaderboard();
   },
 
-  playerRowHtml(p) {
+  // `rank` is only passed by the fog leaderboard (see fogLeaderboardHtml).
+  // Without it the row is exactly the fog-off one.
+  playerRowHtml(p, rank) {
     const pct = (p.tiles.size / GameMap.landTiles * 100).toFixed(1);
     const c = `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
-    const mark = (p.isBot ? iconHtml('bot') : '') +
+    // Fog: a leader we have not met is shown by name and share of the map,
+    // which is what the top 3 is there for. Its treasury and status marks are
+    // things contact tells you, like the hover panel.
+    const unmet = !this.knows(p.id);
+    const mark = unmet ? '' : (p.isBot ? iconHtml('bot') : '') +
                  (Game.onSameTeam(Game.me, p.id) ? iconHtml('teammate')
                    : Game.areAllied(Game.me, p.id) ? iconHtml('ally') : '') +
                  (Game.isTraitor(p) ? iconHtml('traitor') : '') +
                  (p.isDisconnected ? iconHtml('disconnected') : '');
-    return `<div class="lbRow${p.id === Game.me ? ' me' : ''}">
+    const rankHtml = rank === undefined ? '' : `<div class="lbRank">${rank}</div>`;
+    return `<div class="lbRow${p.id === Game.me ? ' me' : ''}${unmet ? ' unmet' : ''}">${rankHtml}
       <div class="lbSwatch" style="background:${c}"></div>
       <div class="lbName">${escapeHtml(p.name)}</div>
       <div class="lbMark">${mark}</div>
-      <div class="lbGold">${formatGold(p.gold)}</div>
+      <div class="lbGold">${unmet ? '' : formatGold(p.gold)}</div>
       <div class="lbPct">${pct}%</div>
     </div>`;
+  },
+
+  // The line under a fog leaderboard (or a team's roster) that stands for the
+  // rows left out. Not a nation, so it has no swatch and takes no clicks.
+  unknownRowHtml(n, noun) {
+    return `<div class="lbRow lbUnknown">+${n} unknown ${noun}${n === 1 ? '' : 's'}</div>`;
   },
 
   // FFA: a flat list of the top 6 players by tile count, always expanded —
@@ -1037,28 +1084,78 @@ const UI = {
   flatLeaderboardHtml() {
     const ranked = Game.players
       .filter(p => p.alive && p.tiles.size > 0)
-      .sort((a, b) => b.tiles.size - a.tiles.size)
-      .slice(0, 6);
-    return ranked.map(p => this.playerRowHtml(p)).join('');
+      .sort((a, b) => b.tiles.size - a.tiles.size);
+    if (Render.fogActive()) return this.fogLeaderboardHtml(ranked);
+    return ranked.slice(0, 6).map(p => this.playerRowHtml(p)).join('');
+  },
+
+  // Fog of war (docs/fog-of-war.md, "What the player sees"). The top 3 are
+  // always named, met or not, so nobody loses to a nation they never heard of.
+  // Below them come only nations the viewer has met, and the viewer, to the
+  // same six rows as the fog-off list; then one line counting the nations left
+  // out for being unknown. Tribes are left out of that count: there can be
+  // hundreds, and none of them is a rival for the top.
+  //
+  // The rows shown are no longer consecutive, so each nation carries its true
+  // rank, counted over every nation, unknown ones included. That gives nothing
+  // away the unknown count does not, and without it the fourth row would read
+  // as fourth place. Tribes are not counted in the rank either (a tribe's row
+  // has no number), so rank and unknown count are both in nations. What is
+  // still missing between two numbers is a met nation past the six-row cut,
+  // which the fog-off list drops without comment too.
+  fogLeaderboardHtml(ranked) {
+    const TOP = 3, ROWS = 6;
+    const rows = [];
+    let unknown = 0, mine = null, rank = 0;
+    for (let i = 0; i < ranked.length; i++) {
+      const p = ranked[i];
+      const row = { p, rank: p.isTribe ? '' : ++rank };
+      if (p.id === Game.me) mine = row;
+      if (i < TOP || this.knows(p.id)) { if (rows.length < ROWS) rows.push(row); }
+      else if (!p.isTribe) unknown++;
+    }
+    // The viewer is always on their own board; past the cut they take the
+    // last row.
+    if (mine && !rows.includes(mine)) rows[rows.length - 1] = mine;
+    return rows.map(r => this.playerRowHtml(r.p, r.rank)).join('') +
+      (unknown ? this.unknownRowHtml(unknown, 'nation') : '');
   },
 
   // Team games: one row per team (largest first), collapsed by default.
   // Clicking a team row (see setup()'s delegated listener) expands its full
   // roster underneath; while collapsed, only your own row still shows there
   // so you can track yourself without expanding your team every time.
+  //
+  // Fog of war: the same rule as the flat list, a tier up. The top 3 teams
+  // are always shown; below them only a team with a member the viewer has
+  // met (or the viewer's own), then a count of the unknown teams. Team rows
+  // carry their true rank for the same reason nation rows do. An open roster
+  // lists the members the viewer has met and counts the rest. A top-3 team
+  // with no member met has nothing to list, so it does not open.
   teamLeaderboardHtml() {
     const mine = Game.teamOf(Game.me);
+    const fog = Render.fogActive();
     const rows = Game.teams
       .map((t, i) => ({ t, i, tiles: Game.teamTiles(t) }))
       .filter(r => r.tiles > 0)
       .sort((a, b) => b.tiles - a.tiles);
+    let unknownTeams = 0;
 
-    return rows.map(r => {
+    return rows.map((r, at) => {
       const c = Teams.baseColor(r.t, r.i);
       const pct = (r.tiles / GameMap.landTiles * 100).toFixed(1);
-      const open = this.lbOpenTeams.has(r.t);
-      const teamRow = `<div class="lbRow lbTeamRow${r.t === mine ? ' me' : ''}" data-team="${r.t}">
-        <div class="lbCaret${open ? ' open' : ''}">&#9656;</div>
+
+      const members = Game.players
+        .filter(p => p.alive && p.tiles.size > 0 && Game.teamOf(p.id) === r.t)
+        .sort((a, b) => b.tiles.size - a.tiles.size);
+      const met = fog ? members.filter(p => this.knows(p.id)) : members;
+      const unmet = fog && r.t !== mine && met.length === 0;
+      if (unmet && at >= 3) { unknownTeams++; return ''; }
+
+      const open = !unmet && this.lbOpenTeams.has(r.t);
+      const rankHtml = fog ? `<div class="lbRank">${at + 1}</div>` : '';
+      const teamRow = `<div class="lbRow lbTeamRow${r.t === mine ? ' me' : ''}${unmet ? ' unmet' : ''}" data-team="${r.t}">${rankHtml}
+        <div class="lbCaret${open ? ' open' : ''}">${unmet ? '' : '&#9656;'}</div>
         <div class="lbSwatch" style="background:rgb(${c[0]},${c[1]},${c[2]})"></div>
         <div class="lbName">Team ${escapeHtml(r.t)}</div>
         <div class="lbMark">${iconHtml('teammate')}</div>
@@ -1066,18 +1163,16 @@ const UI = {
         <div class="lbPct">${pct}%</div>
       </div>`;
 
-      const members = Game.players
-        .filter(p => p.alive && p.tiles.size > 0 && Game.teamOf(p.id) === r.t)
-        .sort((a, b) => b.tiles.size - a.tiles.size);
-
       // Collapsed: just your own row, at the same indent as the full roster,
       // so it doesn't jump position when the team opens or closes.
-      const shown = open ? members : members.filter(p => p.id === Game.me);
-      const childrenHtml = shown.length
-        ? `<div class="lbChildren">${shown.map(p => this.playerRowHtml(p)).join('')}</div>` : '';
+      const shown = open ? met : met.filter(p => p.id === Game.me);
+      const hidden = open ? members.length - met.length : 0;
+      const childrenHtml = shown.length || hidden
+        ? `<div class="lbChildren">${shown.map(p => this.playerRowHtml(p)).join('')}` +
+          `${hidden ? this.unknownRowHtml(hidden, 'nation') : ''}</div>` : '';
 
       return teamRow + childrenHtml;
-    }).join('');
+    }).join('') + (unknownTeams ? this.unknownRowHtml(unknownTeams, 'team') : '');
   },
 
   renderLeaderboard() {
@@ -1166,6 +1261,35 @@ const UI = {
     }
   },
 
+  // Where a front or boat chip sends the camera: the front's centre, or the
+  // boat itself. Fog of war: never a spot the viewer has not discovered,
+  // since centring the view on the black says where something hidden is.
+  //   - A front is along the viewer's own border, so it is in sight; if its
+  //     centre happens to fall in the black (a front wrapped round a bay), the
+  //     jump goes to a contested tile that is not.
+  //   - The viewer's own boat is not drawn while it crosses undiscovered water
+  //     (docs/fog-of-war.md), so the jump goes to where they sent it: the
+  //     landing tile, discovered or it could not have launched. A recalled one
+  //     goes to the coast it is sailing home to.
+  //   - Someone else's boat still out in the black is not jumped to at all.
+  //     Its landing tile would be in sight, but where it will come ashore is
+  //     not something the viewer has seen yet.
+  frontJumpTile(kind, ref) {
+    const w = GameMap.width;
+    if (kind === 'attack') {
+      const tile = Render.attackTile(ref);
+      if (!tile || Render.canSee(Math.floor(tile.y) * w + Math.floor(tile.x))) return tile;
+      for (const t of ref.border) if (Render.canSee(t)) return { x: t % w + 0.5, y: ((t / w) | 0) + 0.5 };
+      return null;
+    }
+    const tile = Render.boatTile(ref);
+    // The same point drawBoats and findBoatNear cull on: the centre of the dot.
+    if (Render.canSee(Math.floor(tile.y + 0.5) * w + Math.floor(tile.x + 0.5))) return tile;
+    if (ref.attacker !== Game.me) { this.flash('Not in sight yet'); return null; }
+    const t = ref.retreating ? ref.path[0] : ref.landingTile;
+    return Render.canSee(t) ? { x: t % w + 0.5, y: ((t / w) | 0) + 0.5 } : null;
+  },
+
   // Every attack or boat touching the player, either direction: pushes and
   // boats they sent (with an X to retreat/recall them) and ones aimed at
   // them (read-only — a defense line, not a control).
@@ -1200,9 +1324,7 @@ const UI = {
         kind: 'attack', ref: a, mine,
         icon: mine ? 'attack' : 'fort',
         troops: a.troops,
-        name: mine
-          ? (a.target >= 0 ? Game.players[a.target].name : 'Unclaimed land')
-          : Game.players[a.attacker].name,
+        name: this.nameOf(mine ? a.target : a.attacker, 'Unclaimed land'),
         retreating: !!a.retreating
       });
     }
@@ -1214,9 +1336,9 @@ const UI = {
         kind: 'boat', ref: b, mine,
         icon: mine ? 'boat' : 'boat-enemy',
         troops: b.troops,
-        name: mine
-          ? (b.target >= 0 ? Game.players[b.target].name : 'Unclaimed land')
-          : Game.players[b.attacker].name,
+        // Fog: a boat is no contact until it lands, so one inbound from a
+        // nation we have not met reads "Unknown nation" for the whole crossing.
+        name: this.nameOf(mine ? b.target : b.attacker, 'Unclaimed land'),
         retreating: !!b.retreating
       });
     }
@@ -1241,9 +1363,13 @@ const UI = {
           `<span class="frontTroops"></span>` +
           `<span class="frontName">${escapeHtml(it.name)}</span>`;
         chip._troopsEl = chip.querySelector('.frontTroops');
+        chip._nameEl = chip.querySelector('.frontName');
+        chip._name = it.name;
       }
       chip.className = 'frontChip ' + (it.mine ? 'mine' : 'theirs') + (it.retreating ? ' retreating' : '');
       chip._troopsEl.textContent = formatCountTight(it.troops);
+      // Fog: "Unknown nation" turns into the name the moment we meet them.
+      if (chip._name !== it.name) { chip._name = it.name; chip._nameEl.textContent = it.name; }
       // Stashed on the node (not closed over `it`, which is rebuilt fresh
       // every call) so the listener below always reads this frame's kind/ref
       // even though it was only attached once, back when the chip was made.
@@ -1251,9 +1377,7 @@ const UI = {
       chip._ref = it.ref;
       if (!chip._jumpBound) {
         chip.addEventListener('click', () => {
-          const tile = chip._kind === 'attack'
-            ? Render.attackTile(chip._ref)
-            : Render.boatTile(chip._ref);
+          const tile = this.frontJumpTile(chip._kind, chip._ref);
           if (tile) Render.jumpToTile(tile.x, tile.y);
         });
         chip._jumpBound = true;
@@ -1328,16 +1452,15 @@ const UI = {
       if (!row) {
         row = document.createElement('div');
         row.className = 'nukeAlertRow';
-        const owner = Game.players[m.ownerId];
-        row.innerHTML =
-          `<span class="nukeAlertText">${iconHtml('mirv')} MIRV incoming from ${escapeHtml(owner ? owner.name : 'unknown')}!</span>` +
-          `<span class="nukeAlertTime"></span>`;
+        row.innerHTML = `<span class="nukeAlertText"></span><span class="nukeAlertTime"></span>`;
+        row._textEl = row.querySelector('.nukeAlertText');
         row._timeEl = row.querySelector('.nukeAlertTime');
         // Jumps to the real aim tile (m.dst), not m.to — m.to is now the
         // mid-air separation point the mothership itself is flying toward
         // (see nukes.js's launchMirv), not the ground it threatens.
         row.addEventListener('click', () => Render.jumpToTile(m.dst % GameMap.width, (m.dst / GameMap.width) | 0));
       }
+      this.setNukeAlertText(row, 'mirv', 'MIRV', m.ownerId);
       const left = Math.max(0, m.duration - (Game.elapsed - m.born));
       row._timeEl.textContent = Math.ceil(left) + 's';
       next.set(m, row);
@@ -1352,14 +1475,13 @@ const UI = {
       if (!row) {
         row = document.createElement('div');
         row.className = 'nukeAlertRow';
-        const owner = Game.players[n.ownerId];
-        const what = n.nukeType === 'hydrogenbomb' ? iconHtml('hbomb') + ' Hydrogen Bomb' : iconHtml('nuke') + ' Nuke';
-        row.innerHTML =
-          `<span class="nukeAlertText">${what} incoming from ${escapeHtml(owner ? owner.name : 'unknown')}!</span>` +
-          `<span class="nukeAlertTime"></span>`;
+        row.innerHTML = `<span class="nukeAlertText"></span><span class="nukeAlertTime"></span>`;
+        row._textEl = row.querySelector('.nukeAlertText');
         row._timeEl = row.querySelector('.nukeAlertTime');
         row.addEventListener('click', () => Render.jumpToTile(n.to.x, n.to.y));
       }
+      if (n.nukeType === 'hydrogenbomb') this.setNukeAlertText(row, 'hbomb', 'Hydrogen Bomb', n.ownerId);
+      else this.setNukeAlertText(row, 'nuke', 'Nuke', n.ownerId);
       const left = Math.max(0, n.duration - (Game.elapsed - n.born));
       row._timeEl.textContent = Math.ceil(left) + 's';
       next.set(n, row);
@@ -1369,6 +1491,19 @@ const UI = {
     for (const row of next.values()) if (row.parentNode !== el) el.appendChild(row);
     el.classList.toggle('hidden', next.size === 0);
     this._nukeRowByRef = next.size ? next : null;
+  },
+
+  // The warning's words. Fog of war: a launcher the viewer has not met reads
+  // "Unknown nation" (docs/fog-of-war.md, "Nukes") until the hit introduces
+  // them, by which time the row is gone. Checked every frame rather than
+  // baked in when the row is made, because contact can also come mid-flight
+  // (their land comes into view, or the viewer is eliminated and sees
+  // everything); the span is only rewritten when the name changes.
+  setNukeAlertText(row, icon, what, ownerId) {
+    const name = this.nameOf(ownerId, 'unknown');
+    if (row._name === name) return;
+    row._name = name;
+    row._textEl.innerHTML = `${iconHtml(icon)} ${what} incoming from ${escapeHtml(name)}!`;
   },
 
   // Ticket #36: a toast whenever a teammate donates gold or troops to you.
@@ -1388,12 +1523,13 @@ const UI = {
       if (Game.elapsed - d.born >= life) continue;
       let row = prev.get(d);
       if (!row) {
-        const from = Game.players[d.fromId];
         const what = d.kind === 'gold' ? formatGold(d.amount) + ' gold' : Math.round(d.amount) + ' troops';
         row = document.createElement('div');
         row.className = 'donationAlertRow';
+        // Fog: only a friendly nation can donate, and an alliance is contact,
+        // so the giver is always known today. nameOf() keeps the rule anyway.
         row.innerHTML =
-          `<span class="donationAlertText">${iconHtml(d.kind)} +${what} from ${escapeHtml(from ? from.name : 'ally')}</span>`;
+          `<span class="donationAlertText">${iconHtml(d.kind)} +${what} from ${escapeHtml(this.nameOf(d.fromId, 'ally'))}</span>`;
       }
       next.set(d, row);
     }
@@ -1463,10 +1599,12 @@ const UI = {
   pendingOffer() {
     const req = Game.requests.find(r => r.to === Game.me);
     if (req) {
-      const from = Game.players[req.from];
       return {
         key: 'req:' + req.from + ':' + req.createdAt.toFixed(1),
-        text: from.name + ' proposes a peace deal',
+        // Fog: contact is one-sided, so an offer can come from a nation we
+        // have not met. It reads "Unknown nation" and can still be answered;
+        // accepting is what introduces them (Game.acceptAlliance).
+        text: this.nameOf(req.from) + ' proposes a peace deal',
         yes: 'Accept', no: 'Reject',
         left: Game.ALLIANCE_REQUEST_DURATION - (Game.elapsed - req.createdAt),
         span: Game.ALLIANCE_REQUEST_DURATION,
@@ -1489,7 +1627,7 @@ const UI = {
       const otherId = al.a === Game.me ? al.b : al.a;
       const key = 'ext:' + otherId + ':' + al.createdAt.toFixed(1);
       if (this.dismissed.has(key)) continue;
-      const name = Game.players[otherId].name;
+      const name = this.nameOf(otherId);
       return {
         key,
         text: Game.awaitingExtension(al, Game.me)

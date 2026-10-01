@@ -116,7 +116,8 @@ const Input = {
     const boat = Render.findBoatNear(e.clientX, e.clientY);
     if (boat) { UI.hoverTile = -1; UI.showHoverPanel(boat.attacker); return; }
     const tile = Render.screenToTile(e.clientX, e.clientY);
-    if (tile < 0) { UI.hideHoverPanel(); return; }
+    // Fog: an undiscovered tile has no inspector, whoever owns it.
+    if (tile < 0 || !Render.canSee(tile)) { UI.hideHoverPanel(); return; }
     const owner = GameMap.owner[tile];
     if (owner < 0) { UI.hideHoverPanel(); return; }
     UI.hoverTile = tile;
