@@ -13,13 +13,18 @@ off, the game plays exactly as it does today.
 |---|---|
 | Unexplored map | True black. Terrain, territory, structures and units are all hidden. |
 | Discovery | Permanent. Once an area is discovered you see it live for the rest of the match. |
-| Exploring the sea | Scouts only. Warships, boats and trade ships reveal nothing. |
-| Scout | A new naval unit, available once you have a Port. Cheap and unarmed. |
-| Spawning | Random and fixed when fog is on. Nobody picks a spawn. |
+| Exploring the sea | Scouts and warships. Invasion boats and trade ships reveal nothing. |
+| Scout | A new naval unit, available once you have a Port. Unarmed. Costs 25k, capped at 2 per nation. Cannot be disbanded for now. |
+| Spawning | Random and fixed when fog is on. Nobody picks a spawn. The countdown is 5 seconds. |
 | Nukes | Can be fired into undiscovered areas. The blast reveals nothing. |
 | Bots | Bound by the same fog as humans. |
-| Radio Tower | Planned follow-up: a cheap building that reveals an area around it, mainly for landlocked nations. |
+| Radio Tower | Planned follow-up: a cheap building that reveals an area around it, mainly for landlocked nations. Until it exists, a landlocked nation cannot explore beyond its border; that is accepted for the first version. |
 | Shared vision | Teammates always share. Allies share while allied and keep what they learned. |
+| Contact | One-sided. Meeting a nation does not make it meet you. Allies share the map but not their contacts. |
+| Trade | Ports only trade between two nations that have both met each other. Rail income inside your own network is unaffected. |
+| Leaderboard | The top 3 nations are always shown, met or not. Below that, only nations you have met. |
+| Eliminated players | See the whole map, like spectators. |
+| Lobby map preview | Hidden in fog matches. |
 
 One consequence of permanent discovery: a Scout or Radio Tower has no further
 use once its surroundings are revealed. The tower is in effect a one-off
@@ -34,12 +39,17 @@ permanent.
   reveals land. This is the only source a landlocked nation has until the
   Radio Tower exists.
 - **Scouts**, in a radius around the scout as it sails.
+- **Warships**, in a smaller radius around the warship as it sails.
 - **Radio Towers** (follow-up), in a larger radius around the tower, once, when
   construction finishes.
 - **Allies and teammates**, as above.
 
-Nothing else reveals: not warships, invasion boats, trade ships, trains, or
-nuke blasts.
+Nothing else reveals: not invasion boats, trade ships, trains, or nuke
+blasts.
+
+Warships and scouts do different jobs. A warship can only be ordered to
+discovered water, so it pushes the edge of the map outward a step at a time.
+A scout can be sent straight into the black.
 
 ### Meeting a nation
 
@@ -49,6 +59,26 @@ hit). Being attacked tells you who it was but does not reveal their land.
 
 Diplomacy needs contact. Alliance requests, embargoes, donations and target
 marks only work on nations you have met.
+
+Contact is one-sided. If you have met a nation that has not met you, your
+alliance request, donation or embargo reaches it as coming from "Unknown
+nation", and it still has not met you. It can accept or decline the request.
+Accepting forms the alliance, and the two of you have then met.
+
+Allies do not share contacts. You meet your ally, not the nations your ally
+has met. In practice the shared map does most of this anyway: any nation
+whose land lies inside your ally's discovered area is now inside yours, so
+you meet it by the ordinary rule. What is not passed on is a contact your
+ally only has from being attacked.
+
+Trade needs contact on both sides. Two nations' Ports trade only once each
+has met the other. An alliance always satisfies this, because accepting one
+makes both sides meet; opening trade early is one of the benefits of allying.
+The same rule applies to trains stopping at another nation's stations.
+
+Your own rail network is not affected. Trains running between your own
+cities and factories earn as they do today, whether or not you have met
+anyone.
 
 ### What is blocked on undiscovered tiles
 
@@ -70,7 +100,9 @@ marks only work on nations you have met.
   tell the player whether a black tile is land or water.
 - Can be selected and redirected like warships.
 - Unarmed. Enemy warships shoot it. It lasts until sunk.
-- Capped per nation, like boats (3) and warships (6).
+- Costs 25k. Capped at 2 per nation (boats are capped at 3, warships at 6).
+- Cannot be disbanded for now. A scout with nothing left to reveal keeps its
+  slot until it is sunk.
 
 ### Spawning
 
@@ -80,7 +112,8 @@ marks only work on nations you have met.
 - The `spawn` action is refused in fog matches.
 - Bots stop "wobbling" their provisional spawn during the countdown. A moving
   spawn would smear their discovered area across every spot they tried.
-- The countdown stays, shortened, so players can find themselves on the map.
+- The countdown stays, shortened to 5 seconds, so players can find themselves
+  on the map.
 
 ### Nukes
 
@@ -93,21 +126,35 @@ marks only work on nations you have met.
 
 ### What the player sees
 
-- The leaderboard lists only nations you have met, plus a count of unknown
-  ones.
+- The leaderboard always shows the top 3 nations by name, met or not, so
+  nobody loses to a nation they never heard of. Below the top 3 it lists only
+  nations you have met, plus a count of unknown ones. Appearing in the top 3
+  is not contact: diplomacy with an unmet leader is still blocked.
 - Labels, structures, boats, ships, trains and fronts are drawn only inside
   your discovered area. This includes your own units, apart from your nukes.
+  Your warships and scouts are always visible because they reveal the water
+  around them. Your trade ships and invasion boats are not drawn while they
+  cross undiscovered water.
 - The fog lifts for everyone when the match ends.
-- Spectators and replays see the whole map.
+- Spectators and replays see the whole map. So does an eliminated player,
+  from the moment they are eliminated. In team games this lets a dead player
+  tell living teammates what they see; that is accepted.
+- The lobby's map preview is hidden when fog is on, in the singleplayer and
+  host panels and for players who join. On the World map the geography is
+  common knowledge anyway; the preview is still hidden for consistency.
 
 ## Known limits
 
 - **Not cheat-proof.** Multiplayer is lockstep, so every client holds the
   whole map and the fog is a filter over it. A modified client can see
   everything. Fine for solo, bots and casual lobbies; not for ranked play.
-- **Trade is unchanged in the first version.** Ports still pick partners
-  across the whole map, including nations you have not met. The ships are
-  simply not drawn in the fog. See open questions.
+- **Port trade starts slow.** Ports only trade once both nations have met, so
+  a nation that has met nobody earns no Port income, and fog matches will have
+  a weaker early economy than fog-off ones. Rail income from your own cities
+  and factories still works from the start. Trade ships are still not drawn
+  in the fog.
+- **Landlocked nations cannot explore** beyond their border sight until the
+  Radio Tower follow-up exists.
 - **Scouts know the way.** A scout's route is computed on the real map, so it
   steers around continents the player has not seen. The player only learns
   what is revealed along the route.
@@ -140,7 +187,8 @@ it goes in the desync hash.
   path for territory changes. When a group gains a tile in a cell it has not
   yet stamped from, stamp a disc of cells around it. A second bitmask records
   "already stamped", so the cost after the first tile in a cell is one test.
-- **Reveal from scouts.** Stamp a disc each time a scout enters a new cell.
+- **Reveal from scouts and warships.** Stamp a disc each time one enters a
+  new cell. The warship stamp is in `stepWarships` and gated on `Game.fog`.
 - **Sharing.** When an alliance forms, OR each side's cells into the other.
   While it lasts, each stamp is applied to allied groups too.
 - **Met.** Per player, a bitmask of groups that have met them. Updated in two
@@ -151,7 +199,7 @@ it goes in the desync hash.
   Map or Set iteration.
 
 Starting values, all tuning dials: cell 8 tiles, border sight 3 cells, scout
-sight 5 cells, radio tower sight 12 cells.
+sight 5 cells, warship sight 3 cells, radio tower sight 12 cells.
 
 ### Hash and goldens
 
@@ -168,7 +216,7 @@ sight 5 cells, radio tower sight 12 cells.
 
 In `init`, when `Game.fog`: claim `humanReserveTiles[p]` for each human
 straight away, skip `jumpSpawnPreview` in `tickSpawnPhase`, shorten
-`SPAWN_PHASE_TURNS` (starting value 30 turns, 3 s), and have
+`SPAWN_PHASE_TURNS` to 50 turns (5 s), and have
 `spawnBlockReason` return a reason so the `spawn` intent is refused. Skipping
 the wobble changes the rng stream relative to a fog-off match with the same
 seed, which is expected: it is a different mode.
@@ -176,7 +224,7 @@ seed, which is expected: it is a different mode.
 ### Scout (`js/game/scouts.js`, new)
 
 - `UNITS` entry `scout` with `action: true`, like `warship`, so the generic
-  bot build loop skips it. Cheap flat cost (starting value 25k).
+  bot build loop skips it. Flat cost 25k. `MAX_SCOUTS_PER_PLAYER: 2`.
 - `Game.scouts`: `{ id, owner, path, pos, destTile, health }`. Stepped in
   `tick()` next to `stepWarships`. Movement reuses the warship path model.
 - Launch reuses the `build_unit` intent (`unit: 'scout'`, `tile` =
@@ -199,7 +247,12 @@ rule and the UI gets its message for free:
 - `navalInvasionBlockReason`: landing tile not discovered -> `'Undiscovered'`.
 - `resolveWarshipLaunch`, `moveWarships`: destination not discovered.
 - `canRequestAlliance`, `embargoBlockReason`, `canDonate`, target marks: the
-  other nation not met.
+  other nation not met. Only the sender is checked. `acceptAlliance` is not
+  gated, and marks both sides as met.
+- `canTrade` (`diplomacy.js`): refused unless each nation has met the other.
+  Both `tradingPorts` (`trade.js`) and the train station check (`rail.js:391`)
+  go through it. The rail check passes a train's own stations before it
+  reaches `canTrade`, so own-network income needs no change.
 - `nukeBlockReason`: no change.
 
 ### Rendering (`js/render.js`)
@@ -217,11 +270,19 @@ rule and the UI gets its message for free:
 
 ### UI (`js/ui.js`, `js/radial.js`, `js/input.js`)
 
-- Lobby checkbox, plumbed through `main.js` like `gameMode`.
+- Lobby checkbox, plumbed through `main.js` like `gameMode`. While it is
+  ticked the map preview (`refreshMapPreview`, `#quickJoinMap`) is hidden,
+  for the host and for joiners.
 - Build bar: Scout (and later Radio Tower) shown only in fog matches.
 - Scout send: with Scout selected, a click anywhere sends one. Selection and
   redirect follow the warship pattern.
-- Leaderboard, hover panel, radial menu and alerts filter on "met".
+- Hover panel, radial menu and alerts filter on "met". An alert about an
+  unmet sender (request, donation, embargo, inbound nuke) names "Unknown
+  nation".
+- Leaderboard: top 3 always named; the rest filter on "met", with a count of
+  unknown nations. Row actions are disabled for an unmet nation in the top 3.
+- Eliminated viewer: the fog layer and all "met" filters switch off, the same
+  as for a spectator.
 - Spawn banner replaced by a "you start here" message; camera centres on the
   player's spawn.
 
@@ -231,8 +292,9 @@ Much of the bot logic is already border-based (`borderTargets`, `think`,
 `assistAllies`, the Tribe AI), so it needs no change. What does:
 
 - `navalThink`: skip `coastSample` tiles the bot has not discovered. **Without
-  scouts, a fog-mode bot never invades overseas beyond its sight radius**, so
-  this change and bot scouting ship together.
+  scouts, a fog-mode bot barely invades overseas**: it sees only its border
+  sight and whatever its warships happen to pass. So this change and bot
+  scouting ship together.
 - `nukeTarget`: only structures and tiles the bot has discovered.
 - `maybeRetaliate` / `retaliationTarget`: only against met nations, onto
   discovered tiles.
@@ -259,10 +321,10 @@ disc. Discovery survives the tower being captured or destroyed.
 | 2 | Vision state: groups, cell grid, territory reveal, met, sharing, hash | `vision.js` (new), `core.js`, `diplomacy.js`, `teams.js`, `hash.js` | 1 |
 | 3 | Random fixed spawn in fog matches | `core.js`, `ui.js` | 1 |
 | 4 | Fog rendering and entity culling | `render.js` | 2 |
-| 5 | Scout unit in the sim, including leak-free destination search | `scouts.js` (new), `structures.js`, `seapath.js`, `warships.js`, `protocol.js`, `executor.js` | 2 |
+| 5 | Scout unit in the sim, including leak-free destination search; warships reveal as they sail | `scouts.js` (new), `structures.js`, `seapath.js`, `warships.js`, `protocol.js`, `executor.js` | 2 |
 | 6 | Scout controls and build bar | `ui.js`, `input.js`, `render.js` | 4, 5 |
-| 7 | Action gating in the sim | `naval.js`, `warships.js`, `diplomacy.js` | 2 |
-| 8 | Hide unmet nations in leaderboard, hover, radial, alerts | `ui.js`, `radial.js` | 2, 4 |
+| 7 | Action gating in the sim, including trade only between nations that have met each other | `naval.js`, `warships.js`, `diplomacy.js` | 2 |
+| 8 | Hide unmet nations in leaderboard (top 3 always shown), hover, radial, alerts; "Unknown nation" senders; full map for eliminated players | `ui.js`, `radial.js`, `render.js` | 2, 4 |
 | 9 | Bots respect fog and use scouts | `ai.js` | 5, 7 |
 | 10 | Verification: fog-off neutrality, two-client determinism with fog on, large-map performance | `tools/`, `hash.js` | all |
 | 11 | Radio Tower (follow-up) | `structures.js`, `vision.js`, `ui.js`, `render.js`, `ai.js` | 2, 4 |
@@ -278,10 +340,9 @@ in task 5 (new pathfinding behaviour under a per-tick budget).
 
 ## Open questions
 
-- **Trade and contact.** Should a Port only trade with nations its owner has
-  met? It is more consistent, but it changes the economy in fog matches.
-  First version: no change.
-- **Scout price and cap.** Starting values are 25k and 3.
 - **Sight radii.** Starting values above; they need playtesting on small and
-  large maps.
-- **Countdown length** before the match starts, now that nobody is picking.
+  large maps. The warship radius (3 cells) is set below the scout's (5) so
+  the scout stays worth buying.
+- **Invasion boats.** Written above as "reveal nothing", so your own boats
+  are not drawn while they cross undiscovered water. The alternative is that
+  they reveal like warships.
