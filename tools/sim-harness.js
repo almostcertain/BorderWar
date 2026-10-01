@@ -101,7 +101,7 @@ function boot(cfg) {
   for (const { file, bytes } of sources) {
     vm.runInContext(bytes.toString('utf8'), ctx, { filename: file });
   }
-  const sim = vm.runInContext('({ Game, GameMap, Hash })', ctx);
+  const sim = vm.runInContext('({ Game, GameMap, Hash, Executor })', ctx);
   if (cfg.map === 'world') {
     // No fetch() in this harness (nor in the sim it's checking, on purpose —
     // see js/net/worldmap.js) — read the same static asset a browser would
@@ -267,8 +267,8 @@ function fogRun(cfg, second) {
   };
   Game.init(Hash._syntheticGameStartInfo(cfg), 0);
   if (Game.fog !== true) throw new Error(`${cfg.name}: fog is not on`);
-  const tile = Hash.firstLegalSpawn();
-  if (tile < 0 || !Game.chooseSpawn(tile)) throw new Error(`${cfg.name}: no legal human spawn`);
+  // Fog matches place every human themselves; nobody picks (fogSpawnChecks).
+  if (Game.players[0].tiles.size === 0) throw new Error(`${cfg.name}: the human has no spawn after init`);
   if (cfg.gold) for (const p of Game.players) if (p.isBot) p.gold += cfg.gold;
   const tampered = second && perturb;
   let prev = fogInvariants(sim, null, `${cfg.name} after spawn`);
@@ -291,7 +291,7 @@ function fogRules() {
   const { Game, GameMap, Hash } = sim;
   const expect = (ok, msg) => { if (!ok) throw new Error(`FOG RULES: ${msg}`); };
   Game.init(Hash._syntheticGameStartInfo(cfg), 0);
-  expect(Game.chooseSpawn(Hash.firstLegalSpawn()), 'no legal human spawn');
+  expect(Game.players[0].tiles.size > 0, 'the human has no spawn after init');
   while (Game.spawning) Game.tick();
   fogInvariants(sim, null, 'fog-rules after the spawn phase');
 
@@ -401,6 +401,178 @@ function fogRules() {
   console.log('fog-rules: one-sided contact, nuke hit, alliance sharing and its end, tribes, land attack, boat landing: ok');
 }
 
+// --- Fixed fog spawns (docs/fog-of-war.md, task 3) --------------------------
+// Everything for the spawn rules lives in the fogSpawn* functions below, so it
+// merges cleanly with the other fog checks in this mode.
+const FOG_SPAWN_TURNS = 50;
+// A tile findSpawns' own rules would let a human pick: neutral land with enough
+// land around it. Fog matches must refuse it anyway.
+function fogSpawnPickable({ Game, GameMap }) {
+  const w = GameMap.width;
+  for (let t = 0; t < GameMap.owner.length; t++) {
+    if (GameMap.isLand(t) && GameMap.owner[t] === -1 && GameMap.landAround(t % w, (t / w) | 0, 5) >= 90) return t;
+  }
+  return -1;
+}
+// Every cell a group has border sight over, worked out independently of
+// vision.js from the tiles its members own right now.
+function fogSpawnExpectedCells({ Game, GameMap }) {
+  const C = Game.VISION_CELL, cw = Game.visionCellsW, ch = Game.visionCellsH, w = GameMap.width;
+  const R = Game.VISION_SIGHT_BORDER, r2 = R * R + R;
+  const want = Array.from({ length: Game.visionGroups }, () => new Uint8Array(cw * ch));
+  for (const p of Game.players) {
+    const g = Game.visionGroupOf[p.id];
+    if (g < 0) continue;
+    for (const t of p.tiles) {
+      const cx = ((t % w) / C) | 0, cy = (((t / w) | 0) / C) | 0;
+      for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+        const x = cx + dx, y = cy + dy;
+        if (dx * dx + dy * dy <= r2 && x >= 0 && y >= 0 && x < cw && y < ch) want[g][y * cw + x] = 1;
+      }
+    }
+  }
+  return want;
+}
+function fogSpawnSameOwners(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+// Run the countdown, returning how many turns it took and a Hash every 10.
+function fogSpawnCountdown({ Game, Hash }) {
+  const hashes = [Hash.compute()];
+  let turns = 0;
+  while (Game.spawning) {
+    Game.tick();
+    turns++;
+    if (turns % 10 === 0) hashes.push(Hash.compute());
+    if (turns > 1000) throw new Error('FOG SPAWN: the countdown never ended');
+  }
+  return { turns, hashes };
+}
+// One scenario's spawn rules, plus the same match with fog off as a reference.
+function fogSpawnChecks(cfg) {
+  const fail = msg => { throw new Error(`FOG SPAWN ${cfg.name}: ${msg}`); };
+  const run = () => {
+    const sim = boot(cfg);
+    sim.Game.init(sim.Hash._syntheticGameStartInfo(cfg), 0);
+    return sim;
+  };
+  const sim = run(), { Game, GameMap, Hash, Executor } = sim;
+  if (!Game.fog) fail('fog is not on');
+
+  // The human is on land before the first turn, on the reserve tile.
+  const reserve = Game.humanReserveTiles[0];
+  if (!(Game.players[0].tiles.size > 0 && GameMap.owner[reserve] === 0)) fail('the human does not own their reserve tile right after init');
+  if (!Game.spawning || Game.spawnPhaseTicks !== 0) fail('the countdown has not started');
+  if (Game.SPAWN_PHASE_TURNS !== FOG_SPAWN_TURNS) fail(`SPAWN_PHASE_TURNS is ${Game.SPAWN_PHASE_TURNS}`);
+
+  // A spawn is refused, by the sim and through the executor, and changes nothing.
+  const pick = fogSpawnPickable(sim);
+  if (pick < 0) fail('no tile a human could have picked');
+  const reason = Game.spawnBlockReason(pick);
+  if (typeof reason !== 'string' || !reason) fail('spawnBlockReason does not refuse a spawn');
+  Executor.setRoster([{ clientID: 'harness', playerId: 0 }]);
+  const before = GameMap.owner.slice(), mine = Game.players[0].tiles.size;
+  if (Game.chooseSpawn(pick, 0) !== false) fail('chooseSpawn accepted a spawn');
+  if (Executor.apply({ type: 'spawn', tile: pick, clientID: 'harness' }) !== false) fail('the executor applied a spawn intent');
+  if (!fogSpawnSameOwners(before, GameMap.owner) || Game.players[0].tiles.size !== mine || !Game.spawning) fail('a refused spawn changed something');
+  // The same tile is a legal pick with fog off, so it is fog that refuses it.
+  const offCfg = { ...cfg, fogOfWar: false };
+  const off = boot(offCfg);
+  off.Game.init(off.Hash._syntheticGameStartInfo(offCfg), 0);
+  if (off.Game.spawnBlockReason(pick) !== null) fail(`tile ${pick} is not a legal pick with fog off, so the refusal proves nothing`);
+
+  // Team seating and the spawn tiles are what a fog-off match deals.
+  const seats = g => JSON.stringify({ teams: g.teams || null, team: g.players.map(p => p.team === undefined ? null : p.team), reserve: g.humanReserveTiles });
+  if (seats(Game) !== seats(off.Game)) fail('teams or reserve tiles differ from the fog-off match');
+
+  // The countdown: 5 s, and nobody's land moves during it.
+  const start = GameMap.owner.slice();
+  const first = fogSpawnCountdown(sim);
+  if (first.turns !== FOG_SPAWN_TURNS) fail(`the countdown lasted ${first.turns} turns, not ${FOG_SPAWN_TURNS}`);
+  if (!fogSpawnSameOwners(start, GameMap.owner)) fail('territory changed during the countdown');
+  if (Game.spawning || !Game.running) fail('the countdown did not hand over to the match');
+
+  // Discovered area is exactly border sight around where everyone stands: no trail.
+  const want = fogSpawnExpectedCells(sim), W = Game.visionWords;
+  for (let g = 0; g < Game.visionGroups; g++) {
+    let n = 0;
+    for (let cell = 0; cell < want[g].length; cell++) {
+      const has = fogHas(Game.visionCells, cell * W, g);
+      if (has !== (want[g][cell] === 1)) fail(`group ${g} cell ${cell}: discovered ${has}, border sight says ${want[g][cell] === 1}`);
+      n += want[g][cell];
+    }
+    if (n !== Game.visionCount[g]) fail(`visionCount[${g}] is ${Game.visionCount[g]}, border sight is ${n} cells`);
+  }
+  fogInvariants(sim, null, `${cfg.name} after the fixed-spawn countdown`);
+
+  // A second, fresh run agrees turn for turn.
+  const again = run(), second = fogSpawnCountdown(again);
+  if (JSON.stringify(first.hashes) !== JSON.stringify(second.hashes)) fail('two runs of the countdown hash differently');
+  if (JSON.stringify(digest(Game, GameMap)) !== JSON.stringify(digest(again.Game, again.GameMap))) fail('two runs end the countdown in different states');
+  console.log(`fog-spawn ${cfg.name}: human placed in init, spawn refused (${JSON.stringify(reason)}), ${first.turns}-turn countdown with no territory moved, discovery is exactly border sight, 2 runs identical: ok`);
+}
+// Negative control: with fog off the same countdown does move bots, so the
+// "no territory moved" check above is capable of failing.
+function fogSpawnControl() {
+  const cfg = { name: 'fog-spawn-control', size: 'small', seed: 12345, bots: 8, tribes: 12 };
+  const { Game, GameMap, Hash } = boot(cfg);
+  Game.init(Hash._syntheticGameStartInfo(cfg), 0);
+  const start = GameMap.owner.slice();
+  const { turns } = fogSpawnCountdown({ Game, Hash });
+  if (turns !== 100) throw new Error(`FOG SPAWN CONTROL: a fog-off single-human countdown is ${turns} turns, not 100`);
+  if (fogSpawnSameOwners(start, GameMap.owner)) throw new Error('FOG SPAWN CONTROL: bots did not move during a fog-off countdown, so the fog check proves nothing');
+  console.log('fog-spawn control: fog off, 100-turn countdown, bots wobble their spawn: ok');
+}
+// Several humans: each is seated on their own reserve tile and the countdown
+// ends without moving anyone. Run as a free-for-all and as a clan team game.
+function fogSpawnMultiHuman() {
+  const names = ['[AB] One', 'Two', '[AB] Three', '[CD] Four'];
+  const players = names.map((username, playerId) => ({ clientID: 'c' + playerId, username, playerId }));
+  const base = { gameID: 'fog-spawn', seed: 12345, players };
+  const configs = [
+    { name: 'ffa', config: { mapSize: 'small', bots: 8, tribes: 12 } },
+    { name: 'teams', config: { mapSize: 'small', bots: 8, tribes: 12, gameMode: 'team', playerTeams: 3 } }
+  ];
+  for (const { name, config } of configs) {
+    const fail = msg => { throw new Error(`FOG SPAWN multi-human ${name}: ${msg}`); };
+    const run = fogOfWar => {
+      const sim = boot({ size: 'small' });
+      sim.Game.init({ ...base, config: { ...config, fogOfWar } }, 2);
+      return sim;
+    };
+    const sim = run(true), { Game, GameMap, Executor } = sim;
+    const reserve = Game.humanReserveTiles;
+    if (reserve.length !== players.length || new Set(reserve).size !== players.length) fail('the reserve tiles are not distinct');
+    const sizes = [];
+    for (let p = 0; p < players.length; p++) {
+      if (GameMap.owner[reserve[p]] !== p) fail(`human ${p} does not own their reserve tile ${reserve[p]} right after init`);
+      sizes.push(Game.players[p].tiles.size);
+    }
+    if (sizes.some(n => n === 0)) fail(`a human has no land: ${sizes}`);
+    if (Game.SPAWN_PHASE_TURNS !== FOG_SPAWN_TURNS) fail(`SPAWN_PHASE_TURNS is ${Game.SPAWN_PHASE_TURNS} with several humans`);
+    Executor.setRoster(players);
+    const pick = fogSpawnPickable(sim), before = GameMap.owner.slice();
+    for (const { clientID } of players) {
+      if (Executor.apply({ type: 'spawn', tile: pick, clientID }) !== false) fail(`the executor applied a spawn intent from ${clientID}`);
+    }
+    if (!fogSpawnSameOwners(before, GameMap.owner)) fail('refused spawns changed something');
+    const { turns } = fogSpawnCountdown(sim);
+    if (turns !== FOG_SPAWN_TURNS) fail(`the countdown lasted ${turns} turns`);
+    if (!fogSpawnSameOwners(before, GameMap.owner)) fail('territory changed during the countdown');
+    fogInvariants(sim, null, `fog-spawn multi-human ${name}`);
+    if (Game.teams) {
+      // Clans are seated together, exactly as in a fog-off match.
+      const off = run(false);
+      const seats = g => JSON.stringify(g.players.map(p => p.team === undefined ? null : p.team));
+      if (seats(Game) !== seats(off.Game)) fail('teams differ from the fog-off match');
+      if (Game.players[0].team !== Game.players[2].team) fail('the [AB] clan was not seated together');
+    }
+    console.log(`fog-spawn multi-human ${name}: ${players.length} humans on distinct reserve tiles (${sizes.join('/')} tiles), spawns refused, ${turns}-turn countdown, nobody moved: ok`);
+  }
+}
+
 function fogOff() {
   const cfg = { name: 'fog-off-small-12345', size: 'small', seed: 12345, bots: 8, tribes: 12, ticks: 6000 };
   const { Game, Hash } = boot(cfg);
@@ -448,9 +620,12 @@ function runFog() {
   if (!kept.length) throw new Error(`--only matched no fog scenario: ${only.join(',')}`);
   fogOff();
   fogRules();
+  fogSpawnControl();
+  fogSpawnMultiHuman();
   const fogTotals = Object.fromEntries(fogMethods.map(k => [k, 0]));
   for (const cfg of kept) {
     const began = performance.now();
+    fogSpawnChecks(cfg);
     const first = fogRun(cfg, false), second = fogRun(cfg, true);
     for (let i = 0; i < first.checkpoints.length; i++) {
       const p = first.checkpoints[i], q = second.checkpoints[i];
