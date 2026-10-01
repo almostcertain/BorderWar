@@ -422,7 +422,19 @@ const UI = {
     banner.classList.remove('warn');
     this.spawnBannerOpen = true;
     this.spawnSent = false;
-    document.getElementById('spawnBannerText').textContent = this.SPAWN_HINT;
+    document.getElementById('spawnBannerText').textContent = Game.fog ? this.SPAWN_FOG_HINT : this.SPAWN_HINT;
+    if (Game.fog) this.centerOnOwnSpawn();
+  },
+
+  // Fog matches place everyone before the first frame (docs/fog-of-war.md), and
+  // the rest of the map is black, so the view opens on the player's own spawn
+  // rather than the whole map. Camera only; the sim is read, never written.
+  centerOnOwnSpawn() {
+    const tile = Game.humanReserveTiles[Game.me];
+    if (tile === undefined) return;
+    Render.jumpToTile(tile % GameMap.width, (tile / GameMap.width) | 0);
+    // About 100 tiles across the shorter side. clampCamera bounds it per frame.
+    Render.cam.scale = Math.min(window.innerWidth, window.innerHeight) / 100;
   },
 
   exitSpawnSelect() {
@@ -448,6 +460,8 @@ const UI = {
 
   SPAWN_HINT: 'Tap the map to place your capital',
   SPAWN_SENT_HINT: 'Placing your capital…',
+  // Fog matches: spawns are random and fixed, so there is nothing to tap.
+  SPAWN_FOG_HINT: 'You start here',
 
   flashSpawn(text) {
     this.spawnFlashText = text;
@@ -480,7 +494,7 @@ const UI = {
     // the phase's own turn counter (Game.ticks stays frozen at 0 throughout
     // the whole spawn phase by design, so it can't drive this).
     const remaining = Math.max(0, Math.ceil((Game.SPAWN_PHASE_TURNS - Game.spawnPhaseTicks) * Game.TICK_DT));
-    const hint = this.spawnSent ? this.SPAWN_SENT_HINT : this.SPAWN_HINT;
+    const hint = Game.fog ? this.SPAWN_FOG_HINT : (this.spawnSent ? this.SPAWN_SENT_HINT : this.SPAWN_HINT);
     el.textContent = hint + ' · ' + remaining + 's';
   },
 
