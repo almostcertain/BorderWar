@@ -117,6 +117,8 @@ const Render = {
     for (const [id, sp] of this.labelSprites) this.dropLabelSprite(id, sp);
     this.structSprites.clear();
     this.structSpriteR = -1;
+    this.fogSource = null;         // the fog layer restarts from the new match's vision grid (updateFog)
+    this.fogChanged();
 
     // Unclaimed ground, one tone per terrain: grassy plains, dun highland,
     // bare grey mountain.
@@ -376,7 +378,12 @@ const Render = {
 
   drawHoverHighlight(territoryChanged, ctx) {
     const id = UI.hoverId;
-    if (id < 0) { this.hoverBuiltFor = -1; return; }
+    // Fog: a cursor over undiscovered ground highlights nothing, whatever the
+    // UI has decided is hovered (hoverTile is -1 when the hover is a boat).
+    if (id < 0 || (this.fogged && UI.hoverTile >= 0 && this.fogHides(UI.hoverTile))) {
+      this.hoverBuiltFor = -1;
+      return;
+    }
     const now = performance.now();
     const tileMoved = UI.hoverTile !== this.hoverBuiltForTile;
     // Switching to a different nation rebuilds immediately — that one is a
@@ -647,7 +654,250 @@ const Render = {
     return GameMap.idx(x, y);
   },
 
+  // --- Fog of war --------------------------------------------------------------
+  // docs/fog-of-war.md. What each nation has discovered is sim state
+  // (game/vision.js); everything here only reads it, to decide what the local
+  // viewer is shown, and writes nothing back.
+  //
+  // WHO IS FOGGED. fogActive() is the one place that decides whether the
+  // viewer's picture is restricted at all, and canSee() the one place that
+  // answers "is this tile inside what the viewer has discovered". The UI
+  // (leaderboard, hover panel, radial menu) should filter on these two rather
+  // than re-derive the rule. Both read the sim directly, so they are right at
+  // any moment, input handlers included.
+  //
+  // The whole map is shown (fogActive() false, canSee() true for every tile)
+  // when any of these holds:
+  //   - the match has no fog (Game.fog);
+  //   - the match is over (Game.winnerId is set): the fog lifts for everyone;
+  //   - the viewer has been eliminated (their player's `alive` is false),
+  //     from that turn on, team game or not;
+  //   - the viewer is not a nation at all: Game.me names no player, or one
+  //     with no vision group. This is the spectator and replay case. Neither
+  //     exists as a client mode yet (a spectating client currently falls back
+  //     to viewing as player 0, see main.js's `start` handler); whatever adds
+  //     one only has to leave Game.me off the roster, e.g. -1, which
+  //     altRelationOf and drawDiploBadges already treat as "no viewer".
+  fogActive() {
+    if (!Game.fog || Game.winnerId !== null) return false;
+    const me = Game.players[Game.me];
+    return !!me && me.alive && Game.visionGroup(Game.me) >= 0;
+  },
+
+  // True if the viewer may be shown what is on `tile`: always while
+  // fogActive() is false, otherwise only inside their discovered area (never
+  // for a tile off the map).
+  canSee(tile) {
+    return !this.fogActive() || Game.isDiscovered(Game.me, tile);
+  },
+
+  // THE LAYER. A small canvas with one pixel per CORNER of the sim's vision
+  // grid rather than per cell: cells + 1 each way, 251x126 on the large map.
+  // A corner is opaque while any cell touching it is undiscovered and clear
+  // once they all are. Stretched over the map with smoothing, that leaves an
+  // undiscovered cell solid across its whole area (all four of its corners
+  // are opaque) and puts the soft edge, one cell wide, entirely inside the
+  // discovered cells along the boundary. A pixel per cell would centre the
+  // blend on the boundary instead and show the first half-cell of
+  // undiscovered terrain through it.
+  //
+  // updateFog() keeps the layer in step with the viewer's vision group.
+  // Game.visionCount[group] changes exactly when the group's discovered set
+  // does, so on most frames the whole cost is comparing it with fogSeenCount.
+  // When it has grown, the grid is walked for the cells the layer has not got
+  // yet (fogSeen is the layer's own copy of the group's bits, and the walk
+  // stops once it has found as many as the count grew by), their corners are
+  // recomputed, and only the rectangle they fall in is blitted.
+  //
+  // Like the map layers above, the canvas is edited with putImageData, so
+  // Firefox would copy it to the GPU on every draw. It is tiny, but once it
+  // has held still for FOG_BITMAP_SETTLE frames it is swapped for an
+  // ImageBitmap anyway; while the viewer is still exploring, the canvas itself
+  // is stamped and no bitmaps are churned.
+  //
+  // CULLING. The layer is drawn over the whole world (see draw() for the
+  // order), but no pass relies on it to hide anything: each one also skips
+  // what fogHides()/fogHidesAt() say the viewer has not discovered. Those two
+  // read fogSeen, so they are only for the passes draw() runs after
+  // updateFog(), behind a check of `fogged`; anything answering a question
+  // from outside a frame (the hit-tests) goes through canSee().
+  FOG_COLOR: [6, 10, 20],        // the backdrop draw() clears to, so the fog and the void past the map's edge are one
+  FOG_BITMAP_SETTLE: 30,
+  fogged: false,                 // fogActive(), sampled once per draw()
+  fogCanvas: null,
+  fogCtx: null,
+  fogImage: null,
+  fogPixels: null,
+  fogSeen: null,                 // Uint8Array per vision cell: 1 once the viewer's group has discovered it
+  fogSeenCount: 0,
+  fogW: 0,                       // vision grid size in cells, as built
+  fogH: 0,
+  fogGroup: -1,
+  fogSource: null,               // the Game.visionCells the layer was built from; a new match has a new one
+  fogBmp: null,
+  fogBmpPending: false,
+  fogNoBitmap: false,
+  fogGen: 0,
+  fogSteady: 0,
+
+  // Starts the layer again from fully fogged: a new match, or a new viewer.
+  resetFog(g) {
+    const cw = Game.visionCellsW, ch = Game.visionCellsH;
+    if (!this.fogCanvas || this.fogW !== cw || this.fogH !== ch) {
+      this.fogCanvas = document.createElement('canvas');
+      this.fogCanvas.width = cw + 1;
+      this.fogCanvas.height = ch + 1;
+      this.fogCtx = this.fogCanvas.getContext('2d');
+      this.fogImage = this.fogCtx.createImageData(cw + 1, ch + 1);
+      this.fogPixels = new Uint32Array(this.fogImage.data.buffer);
+      this.fogSeen = new Uint8Array(cw * ch);
+      this.fogW = cw;
+      this.fogH = ch;
+    }
+    const c = this.FOG_COLOR;
+    this.fogSeen.fill(0);
+    this.fogSeenCount = 0;
+    this.fogPixels.fill(this.packed(c[0], c[1], c[2]));
+    this.fogCtx.putImageData(this.fogImage, 0, 0);
+    this.fogGroup = g;
+    this.fogSource = Game.visionCells;
+    this.fogChanged();
+  },
+
+  // The canvas no longer matches any bitmap made from it, finished or not.
+  fogChanged() {
+    this.fogGen++;
+    this.fogSteady = 0;
+    if (this.fogBmp) { this.fogBmp.close(); this.fogBmp = null; }
+  },
+
+  // Clears corner (i, j) of the vision grid if every cell meeting there (up to
+  // four) is now discovered. Cells past the map's edge don't exist and so
+  // never hold a corner opaque; and discovery is permanent, so a corner never
+  // has to be put back.
+  fogCorner(i, j) {
+    const cw = this.fogW, ch = this.fogH, seen = this.fogSeen;
+    const left = i > 0, right = i < cw;
+    let clear = true;
+    if (j > 0) {
+      const row = (j - 1) * cw + i;
+      clear = (!left || seen[row - 1] !== 0) && (!right || seen[row] !== 0);
+    }
+    if (clear && j < ch) {
+      const row = j * cw + i;
+      clear = (!left || seen[row - 1] !== 0) && (!right || seen[row] !== 0);
+    }
+    if (clear) this.fogPixels[j * (cw + 1) + i] = 0;
+  },
+
+  updateFog() {
+    const g = Game.visionGroup(Game.me);
+    if (this.fogSource !== Game.visionCells || this.fogGroup !== g) this.resetFog(g);
+    const count = Game.visionCount[g];
+    let need = count - this.fogSeenCount;
+    if (need === 0) {
+      if (!this.fogBmp && !this.fogBmpPending && ++this.fogSteady >= this.FOG_BITMAP_SETTLE) this.snapshotFog();
+      return;
+    }
+    // Discovery is permanent, so a count that fell belongs to a different grid.
+    if (need < 0) { this.resetFog(g); need = count; }
+
+    const cw = this.fogW, seen = this.fogSeen;
+    const cells = Game.visionCells, W = Game.visionWords, bit = 1 << (g & 31);
+    let minX = cw, minY = this.fogH, maxX = -1, maxY = -1;
+    for (let c = 0, k = g >>> 5, n = seen.length; c < n && need > 0; c++, k += W) {
+      if (seen[c] !== 0 || (cells[k] & bit) === 0) continue;
+      seen[c] = 1;
+      need--;
+      // A corner shared with a cell found later in this walk is simply set
+      // again then, with that cell counted.
+      const cx = c % cw, cy = (c / cw) | 0;
+      this.fogCorner(cx, cy);
+      this.fogCorner(cx + 1, cy);
+      this.fogCorner(cx, cy + 1);
+      this.fogCorner(cx + 1, cy + 1);
+      if (cx < minX) minX = cx;
+      if (cx > maxX) maxX = cx;
+      if (cy < minY) minY = cy;
+      if (cy > maxY) maxY = cy;
+    }
+    this.fogSeenCount = count;
+    if (maxX < 0) return;
+    this.fogCtx.putImageData(this.fogImage, 0, 0, minX, minY, maxX - minX + 2, maxY - minY + 2);
+    this.fogChanged();
+  },
+
+  snapshotFog() {
+    if (this.fogNoBitmap) return;
+    const gen = this.fogGen;
+    let req;
+    try {
+      req = createImageBitmap(this.fogCanvas);
+    } catch (e) {
+      this.fogNoBitmap = true;     // no createImageBitmap: keep stamping the canvas
+      return;
+    }
+    this.fogBmpPending = true;
+    req.then(bmp => {
+      this.fogBmpPending = false;
+      if (gen !== this.fogGen) { bmp.close(); return; }   // the fog moved on while this was being made
+      this.fogBmp = bmp;
+    }, () => { this.fogBmpPending = false; this.fogNoBitmap = true; });
+  },
+
+  // Is `tile` hidden from the viewer? Only meaningful while `fogged`.
+  fogHides(tile) {
+    const w = GameMap.width, C = Game.VISION_CELL;
+    return this.fogSeen[(((tile / w) | 0) / C | 0) * this.fogW + ((tile % w) / C | 0)] === 0;
+  },
+
+  // The same for a tile-space position as the passes carry one: a unit at
+  // (x, y) is drawn centred half a tile further on, and that centre is the
+  // point tested. Anything off the map is hidden.
+  fogHidesAt(x, y) {
+    const C = Game.VISION_CELL;
+    x += 0.5;
+    y += 0.5;
+    if (!(x >= 0 && y >= 0)) return true;
+    const cx = (x / C) | 0, cy = (y / C) | 0;
+    return cx >= this.fogW || cy >= this.fogH || this.fogSeen[cy * this.fogW + cx] === 0;
+  },
+
+  // Stretches the layer over the map. Only the part of it under the viewport
+  // is drawn (plus a pixel each way, so the filter never runs out of source at
+  // a screen edge): zoomed right in, the whole layer would be a destination
+  // rectangle tens of thousands of pixels across.
+  drawFog() {
+    const ctx = this.ctx, s = this.cam.scale * this.dpr, C = Game.VISION_CELL;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    const halfW = cw / 2 / s, halfH = ch / 2 / s;
+    // In cells. The layer is let run half a cell past the map on every side
+    // (the outer half of its edge pixels, which just repeat the edge value):
+    // stopping exactly on the map's edge leaves that edge antialiased against
+    // the tiles underneath, a faint outline of the map through the fog. Past
+    // the edge there is only the backdrop, which is the fog's own colour.
+    const x0 = Math.max(-0.5, Math.floor((this.cam.x - halfW) / C) - 1);
+    const y0 = Math.max(-0.5, Math.floor((this.cam.y - halfH) / C) - 1);
+    const x1 = Math.min(Math.min(GameMap.width / C, this.fogW) + 0.5, Math.ceil((this.cam.x + halfW) / C) + 1);
+    const y1 = Math.min(Math.min(GameMap.height / C, this.fogH) + 0.5, Math.ceil((this.cam.y + halfH) / C) + 1);
+    if (x1 <= x0 || y1 <= y0) return;
+
+    const smooth = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = true;
+    ctx.setTransform(s, 0, 0, s, cw / 2 - this.cam.x * s, ch / 2 - this.cam.y * s);
+    // Corner i is pixel i, whose centre is at i + 0.5 in the image: the half
+    // pixel of offset lines the pixel centres up with the cell corners.
+    ctx.drawImage(this.fogBmp || this.fogCanvas, x0 + 0.5, y0 + 0.5, x1 - x0, y1 - y0,
+                  x0 * C, y0 * C, (x1 - x0) * C, (y1 - y0) * C);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = smooth;
+  },
+
   draw() {
+    // Fog of war, decided once so that every pass below agrees for the frame.
+    const fog = this.fogged = this.fogActive();
+    if (fog) this.updateFog();
+
     // Captured before the rebuild below consumes the flags, so the hover
     // overlay knows whether ownership moved this frame too.
     const territoryChanged = Game.dirty || Game.dirtyTiles.size > 0;
@@ -684,23 +934,51 @@ const Render = {
 
     this.drawRailroads();
     this.drawStructures();
-    this.drawPlacement();
-    if (!this.altView) {
-      this.drawLabels();
-      this.drawDiploBadges();
-      this.drawFronts();
+    // In a fog match the placement ghost and the map lettering move to the
+    // end, over the fog layer (see below). With fog off the order is as it
+    // always was.
+    if (!fog) {
+      this.drawPlacement();
+      if (!this.altView) {
+        this.drawLabels();
+        this.drawDiploBadges();
+        this.drawFronts();
+      }
     }
     this.drawBoats();
     this.drawTrains();
     this.drawTradeShips();
     this.drawWarships();
+    // A drawScouts pass belongs here: under the fog and culled like the rest.
     this.drawShells();
     this.drawMirvs();
     this.drawNukes();
     this.drawNukeBlasts();
     this.drawSamFlashes();
+    if (fog) {
+      // Everything above is the world, and the fog goes over all of it:
+      // whatever runs out past the discovered area (a range ring, a boat's
+      // trail, a contrail, a blast) is cut off where the area ends. What
+      // follows is drawn on top of the fog, so culling is all that hides it:
+      //   - names, badges, front numbers and the gold pop-ups further down.
+      //     Each is placed by a single discovered tile, and lettering sliced
+      //     through by the fog's edge reads as a glitch;
+      //   - the viewer's own missiles in flight, the one thing they are shown
+      //     over undiscovered ground (the blast, a world effect, stays under);
+      //   - the placement ghost: it is their cursor, and has to stay visible
+      //     while a nuke is aimed into the black.
+      this.drawFog();
+      if (!this.altView) {
+        this.drawLabels();
+        this.drawDiploBadges();
+        this.drawFronts();
+      }
+      this.drawMirvs(true);
+      this.drawNukes(true);
+    }
     this.drawGoldPopups();
     this.drawKillPopups();
+    if (fog) this.drawPlacement();
     this.drawSelectionBox();
   },
 
@@ -717,10 +995,18 @@ const Render = {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
 
+    const fog = this.fogged;
     ctx.strokeStyle = 'rgba(210, 190, 150, 0.55)';
     ctx.lineWidth = Math.max(1, this.dpr * 1.1);
     ctx.beginPath();
     for (const r of Game.railroads) {
+      if (fog) {
+        // A rail with every waypoint undiscovered is not drawn at all; one
+        // that runs out into the fog is cut off by the layer above.
+        let hidden = true;
+        for (const tile of r.waypoints) if (!this.fogHides(tile)) { hidden = false; break; }
+        if (hidden) continue;
+      }
       let moved = false;
       for (const tile of r.waypoints) {
         const px = (tile % w + 0.5 - this.cam.x) * s + cw / 2;
@@ -969,6 +1255,7 @@ const Render = {
     let best = null, bestDist = Infinity;
     for (const b of Game.buildings.values()) {
       if (b.type !== type) continue;
+      if (!this.canSee(b.tile)) continue;   // fog: not drawn, so not there to tap
       const bx = (b.tile % w + 0.5 - this.cam.x) * this.cam.scale + window.innerWidth / 2;
       const by = (((b.tile / w) | 0) + 0.5 - this.cam.y) * this.cam.scale + window.innerHeight / 2;
       const d = Math.hypot(bx - sx, by - sy);
@@ -1018,6 +1305,8 @@ const Render = {
       const a = b.path[idx], c = b.path[Math.min(idx + 1, b.path.length - 1)];
       const ax = a % w, ay = (a / w) | 0, cx = c % w, cy = (c / w) | 0;
       const tx = ax + (cx - ax) * frac, ty = ay + (cy - ay) * frac;
+      // Fog: the same point drawBoats culls on, the centre of the dot.
+      if (!this.canSee(Math.floor(ty + 0.5) * w + Math.floor(tx + 0.5))) continue;
       const bx = (tx + 0.5 - this.cam.x) * s + window.innerWidth / 2;
       const by = (ty + 0.5 - this.cam.y) * s + window.innerHeight / 2;
       const d = Math.hypot(bx - sx, by - sy);
@@ -1053,7 +1342,11 @@ const Render = {
           snapY = Math.max(Math.min(y1, y2), Math.min(Math.floor(cy), Math.max(y1, y2)));
         }
         const d = Math.hypot(cx - snapX - 0.5, cy - snapY - 0.5);
-        if (d < bestDist) { bestDist = d; bestTile = GameMap.idx(snapX, snapY); }
+        // Fog: an undiscovered stretch of rail must not pull the cursor onto it.
+        if (d < bestDist && this.canSee(GameMap.idx(snapX, snapY))) {
+          bestDist = d;
+          bestTile = GameMap.idx(snapX, snapY);
+        }
       }
     }
     return bestTile;
@@ -1065,8 +1358,10 @@ const Render = {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
     const d = Math.max(2, Math.round(3 * this.dpr)), h = d / 2, o = Math.max(1, Math.round(this.dpr));
+    const fog = this.fogged;
     for (const b of Game.buildings.values()) {
       if (b.type === 'sam') continue;   // SAMs keep their full icon (see drawStructures)
+      if (fog && this.fogHides(b.tile)) continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -d || py < -d || px > cw + d || py > ch + d) continue;
@@ -1090,10 +1385,14 @@ const Render = {
     // defence at a glance is a big part of what max zoom-out is for.
     // Range rings follow the same rule: forts' only with icons, SAMs' always.
     const iconsShown = this.structureIconsShown();
+    // Fog: an undiscovered structure is skipped in every pass below, range
+    // ring included; a ring would give it away from well outside the fog.
+    const fog = this.fogged;
 
     // First pass: draw protection radii for all built forts, behind everything.
     for (const b of Game.buildings.values()) {
       if (!iconsShown || b.type !== 'fort' || !b.built) continue;
+      if (fog && this.fogHides(b.tile)) continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       const rr = Game.fortRange() * s;
@@ -1118,6 +1417,7 @@ const Render = {
     // protection zones stay visually distinct even where they overlap.
     for (const b of Game.buildings.values()) {
       if (b.type !== 'sam' || !b.built) continue;
+      if (fog && this.fogHides(b.tile)) continue;
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       const rr = Game.dynamicSamRange(b, Game.renderElapsed) * s;
@@ -1149,6 +1449,7 @@ const Render = {
       const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
       const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
+      if (fog && this.fogHides(b.tile)) continue;
 
       const owner = GameMap.owner[b.tile];
       const icon = this.structureSprite(b.type, owner, b.built, r);
@@ -1245,12 +1546,21 @@ const Render = {
 
   // Where the armed structure would land. Mouse only — touch has no hover, so
   // there the hint line under the build bar is the whole of the feedback.
+  //
+  // Fog: this is drawn over the fog layer (see draw()), so the cursor and a
+  // nuke's aim stay visible in the black. That makes it the one pass nothing
+  // covers, and each part of the ghost that is worked out from the real map
+  // has to hold back what the viewer has not discovered: the structure under
+  // the cursor, a warship's snapped destination and route, and the stations a
+  // new one would link to. The rings centred on the cursor itself say nothing.
   drawPlacement() {
     if (!UI.placing || UI.placing === 'debugpeace' || UI.placeHover < 0) return;   // debugpeace has no ghost
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
     const tile = UI.placeHover;
-    const hoverB = Game.buildings.get(tile);
+    const fog = this.fogged;
+    const blind = fog && this.fogHides(tile);
+    const hoverB = blind ? undefined : Game.buildings.get(tile);
     // Warship resolution (which Port it launches from, the route it sails)
     // runs a real seaPath per candidate Port — too expensive to redo every
     // animation frame while the mouse just sits still. Cached by hovered
@@ -1267,8 +1577,14 @@ const Render = {
     // they're always checked against their own cached resolution instead.
     // The debug nuke has no legality check at all (see Game.debugNuke) — any
     // tile is always a valid click for either half of its two-click flow.
+    // Fog: a warship order shows as refused unless both the tile under the
+    // cursor and the water it snaps to are discovered. Green over the black
+    // would say "there is water here, and a way to it". The sim refuses the
+    // same orders (resolveWarshipLaunch); the ghost does not lean on that.
+    const warshipOk = !!warshipPreview && warshipPreview.ok &&
+      !(fog && (blind || this.fogHides(warshipPreview.dest)));
     const ok = UI.placing === 'warship'
-      ? warshipPreview.ok
+      ? warshipOk
       : isNuke
         ? nukePreview.ok
         : isDebugNuke
@@ -1331,7 +1647,7 @@ const Render = {
     // whichever owned Port got picked, plus the patrol radius it wanders
     // once it arrives at the (possibly snapped) destination, same dashed-
     // ring language as Fort's protection radius above.
-    if (UI.placing === 'warship' && warshipPreview.ok) {
+    if (warshipOk) {
       const dx = (warshipPreview.dest % w + 0.5 - this.cam.x) * s + cw / 2;
       const dy = (((warshipPreview.dest / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
       ctx.beginPath();
@@ -1350,6 +1666,9 @@ const Render = {
       ctx.beginPath();
       let movedRoute = false;
       for (const t of warshipPreview.path) {
+        // The route is found on the real map and may cross water the viewer
+        // has not discovered; those stretches are left out of the line.
+        if (fog && this.fogHides(t)) { movedRoute = false; continue; }
         const lx = (t % w + 0.5 - this.cam.x) * s + cw / 2;
         const ly = (((t / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
         if (!movedRoute) { ctx.moveTo(lx, ly); movedRoute = true; } else ctx.lineTo(lx, ly);
@@ -1494,9 +1813,13 @@ const Render = {
     // onStructureCompleted/previewCityConnections) — same preview branch.
     if ((UI.placing === 'factory' || UI.placing === 'city' || UI.placing === 'port') &&
         !(hoverB && hoverB.type === UI.placing)) {
-      const lines = UI.placing === 'factory'
+      let lines = UI.placing === 'factory'
         ? Game.previewFactoryConnections(tile)
         : Game.previewCityConnections(tile);
+      // The preview links to any station in range, whoever owns it, and the
+      // range is far longer than anyone's sight. Each line ends on its
+      // station; in fog only the ones the viewer has discovered are shown.
+      if (fog && lines.length) lines = lines.filter(path => !this.fogHides(path[path.length - 1]));
 
       if (lines.length || UI.placing === 'factory') {
         const cx = px + s / 2, cy = py + s / 2;
@@ -1609,6 +1932,7 @@ const Render = {
   drawFronts() {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
+    const fog = this.fogged;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
@@ -1645,6 +1969,7 @@ const Render = {
         const px = (tile % w + 0.5 - this.cam.x) * s + cw / 2;
         const py = ((tile / w | 0) + 0.5 - this.cam.y) * s + ch / 2;
         if (px < -60 || py < -60 || px > cw + 60 || py > ch + 60) continue;
+        if (fog && this.fogHides(tile)) continue;
         ctx.strokeText(text, px, py);
         ctx.fillText(text, px, py);
       }
@@ -1715,6 +2040,7 @@ const Render = {
     // boats don't dwarf the map when zoomed out.
     const size = Math.max(2.5 * this.dpr, Math.min(13 * this.dpr, s * 1.05));
     const unit = size / this.BOAT_DOT_RADIUS;
+    const fog = this.fogged;
 
     for (const b of Game.boats) {
       const idx = Math.min(b.path.length - 1, Math.floor(b.pos));
@@ -1726,6 +2052,11 @@ const Render = {
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
+      // Fog: the viewer's own boats included. A boat reveals nothing, so it
+      // is out of sight while it crosses water its nation has not discovered.
+      // (Its trail picks up from wherever it was last drawn: updateBoatTrail
+      // extends over every tile crossed since.)
+      if (fog && this.fogHidesAt(tx, ty)) continue;
 
       const owner = Game.players[b.attacker];
       let colour = owner ? `rgb(${owner.color[0]}, ${owner.color[1]}, ${owner.color[2]})` : 'rgba(235,240,250,0.9)';
@@ -1777,6 +2108,7 @@ const Render = {
     const dots = this._boatDots || (this._boatDots = this.buildBoatDots());
     const size = Math.max(5 * this.dpr, Math.min(13 * this.dpr, s * 1.05));
     const unit = size / this.BOAT_DOT_RADIUS;
+    const fog = this.fogged;
 
     for (const t of Game.trains) {
       // trainTilePos walks the same orthogonal elbow waypoints drawRailroads
@@ -1789,6 +2121,7 @@ const Render = {
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
+      if (fog && this.fogHidesAt(tx, ty)) continue;
 
       const owner = Game.players[t.owner];
       const c2 = owner ? owner.color : [200, 200, 200];
@@ -1819,6 +2152,7 @@ const Render = {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
     const radius = Math.max(3.5 * this.dpr, Math.min(8 * this.dpr, s * 0.65));
+    const fog = this.fogged;
 
     for (const ship of Game.tradeShips) {
       const idx = Math.min(ship.path.length - 1, Math.floor(ship.pos));
@@ -1830,6 +2164,7 @@ const Render = {
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
+      if (fog && this.fogHidesAt(tx, ty)) continue;   // the viewer's own included, like boats
 
       const owner = Game.players[ship.owner];
       const col = owner ? owner.color : [200, 200, 200];
@@ -1868,12 +2203,20 @@ const Render = {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, mw = GameMap.width;
     const r = Math.max(7 * this.dpr, Math.min(18 * this.dpr, s * 1.0));
+    // Fog: culled on position like everything else, the viewer's own
+    // included. By design a warship reveals the water around it as it sails
+    // (docs/fog-of-war.md), which is what keeps one's own fleet in view.
+    const fog = this.fogged;
 
     if (UI.selectedWarships.size) {
       for (const w of Game.warships) {
         if (!UI.selectedWarships.has(w)) continue;
         const { x: sx, y: sy } = this.warshipClientPos(w);
         const px = sx * this.dpr, py = sy * this.dpr;
+        if (fog) {
+          const p = Game.pathPos(w);
+          if (this.fogHidesAt(p.x, p.y)) continue;   // no rings round a hull that isn't drawn
+        }
         if (px >= -60 && py >= -60 && px <= cw + 60 && py <= ch + 60) {
           ctx.beginPath();
           ctx.arc(px, py, r * 1.8, 0, Math.PI * 2);
@@ -1899,7 +2242,7 @@ const Render = {
         // Destination marker: only while actually en route (still short of
         // the last path tile), so an arrived/patrolling ship doesn't show a
         // marker on top of itself.
-        if (w.pos < w.path.length - 1) {
+        if (w.pos < w.path.length - 1 && !(fog && this.fogHides(w.path[w.path.length - 1]))) {
           const destTile = w.path[w.path.length - 1];
           const dx = (destTile % mw + 0.5 - this.cam.x) * s + cw / 2;
           const dy = (((destTile / mw) | 0) + 0.5 - this.cam.y) * s + ch / 2;
@@ -1926,6 +2269,7 @@ const Render = {
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
+      if (fog && this.fogHidesAt(tx, ty)) continue;
 
       const owner = Game.players[w.owner];
       const col = owner ? owner.color : [200, 200, 200];
@@ -1982,11 +2326,13 @@ const Render = {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height;
     const r = Math.max(3 * this.dpr, Math.min(7 * this.dpr, s * 0.4));
+    const fog = this.fogged;
 
     for (const sh of Game.shells) {
       const px = (sh.x + 0.5 - this.cam.x) * s + cw / 2;
       const py = (sh.y + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -20 || py < -20 || px > cw + 20 || py > ch + 20) continue;
+      if (fog && this.fogHidesAt(sh.x, sh.y)) continue;
 
       const owner = Game.players[sh.ownerId];
       const col = owner ? owner.color : [255, 255, 255];
@@ -2025,12 +2371,19 @@ const Render = {
   // needs a NUKE_MAGNITUDES entry, and the mothership has none — see
   // nukes.js's own comment on why; the precise impact points aren't known
   // until it splits, so nothing to ring yet).
-  drawMirvs() {
+  //
+  // Fog: draw() calls this twice, like drawNukes (see there). `overFog` picks
+  // the viewer's own motherships, drawn above the fog layer; without it the
+  // call draws everyone else's, culled to the discovered area.
+  drawMirvs(overFog) {
     if (!Game.mirvs.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height;
+    const fog = this.fogged;
 
     for (const m of Game.mirvs) {
+      const mine = m.ownerId === Game.me;
+      if (fog && mine !== !!overFog) continue;
       const t = Math.max(0, Math.min(1, (Game.renderElapsed - m.born) / m.duration));
       const arc = Math.sin(Math.PI * t);
       const dist = Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y);
@@ -2041,6 +2394,7 @@ const Render = {
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
+      if (fog && !mine && this.fogHidesAt(tx, Math.max(0, ty))) continue;
 
       const colour = '#ff2a2a';
       const radius = Math.max(9 * this.dpr, Math.min(20 * this.dpr, s * 0.65));
@@ -2090,12 +2444,23 @@ const Render = {
   // straight-line distance in Game.launchNuke. Warhead drawn as a plain
   // disc — round, so unlike the old rocket silhouette it needs no tangent/
   // angle bookkeeping to orient itself along the arc.
-  drawNukes() {
+  //
+  // Fog: the viewer's own missiles are the one thing they are shown over
+  // undiscovered ground, so in a fog match draw() calls this twice. The first
+  // call (no argument) runs under the fog layer and draws everyone else's,
+  // each only while the warhead as drawn is inside the discovered area; the
+  // contrail behind it is cut off by the layer where it leaves that area.
+  // The second (`overFog`) runs above the layer and draws the viewer's own,
+  // whole. With fog off there is one call and it draws them all.
+  drawNukes(overFog) {
     if (!Game.nukes.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height;
+    const fog = this.fogged;
 
     for (const n of Game.nukes) {
+      const mine = n.ownerId === Game.me;
+      if (fog && mine !== !!overFog) continue;
       // Ticket #25: a nuke heading for the player's land also marks where
       // it will hit — a pulsing red ring at its outer blast radius plus a
       // solid one at the guaranteed-destroyed inner radius. Drawn before the
@@ -2123,6 +2488,9 @@ const Render = {
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -30 || py < -30 || px > cw + 30 || py > ch + 30) continue;
+      // The arc can lift a warhead past the top of the map, where there is no
+      // fog to ask; the top row answers for it.
+      if (fog && !mine && this.fogHidesAt(tx, Math.max(0, ty))) continue;
 
       const colour = '#ff2a2a';
       const radius = Math.max(6 * this.dpr, Math.min(14 * this.dpr, s * 0.45));
@@ -2218,8 +2586,12 @@ const Render = {
     if (!Game.nukeBlasts.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height;
+    const fog = this.fogged;
 
     for (const b of Game.nukeBlasts) {
+      // Fog: a detonation on undiscovered ground is not shown, the viewer's
+      // own included; the missile is theirs to watch, the result is not.
+      if (fog && this.fogHidesAt(b.x, b.y)) continue;
       const t = Math.min(1, (Game.renderElapsed - b.born) / Game.NUKE_BLAST_FX_DURATION);
       const px = (b.x + 0.5 - this.cam.x) * s + cw / 2;
       const py = (b.y + 0.5 - this.cam.y) * s + ch / 2;
@@ -2251,8 +2623,10 @@ const Render = {
     if (!Game.samFlashes.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height;
+    const fog = this.fogged;
 
     for (const f of Game.samFlashes) {
+      if (fog && this.fogHidesAt(f.x, Math.max(0, f.y))) continue;   // an intercept happens up on the arc, like drawNukes
       // Lower-bound clamp is load-bearing, not just tidy: an unclamped
       // negative t here fed straight into `maxR * t` below as a ctx.arc
       // radius — Game.fastForward() can spawn one with `born` set from an
@@ -2315,9 +2689,12 @@ const Render = {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
     const life = Fx.GOLD_POPUP_LIFETIME;
+    const fog = this.fogged;
 
     for (const g of Fx.goldPopups) {
       if (g.ownerId !== Game.me) continue;
+      // Fog: the viewer's money, but paid over a port they may not have found.
+      if (fog && this.fogHides(g.tile)) continue;
       const tx = g.tile % w, ty = (g.tile / w) | 0;
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
@@ -2358,9 +2735,11 @@ const Render = {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
     const life = Fx.KILL_POPUP_LIFETIME;
+    const fog = this.fogged;
 
     for (const g of Fx.killPopups) {
       if (g.ownerId !== Game.me) continue;
+      if (fog && this.fogHides(g.tile)) continue;
       const tx = g.tile % w, ty = (g.tile / w) | 0;
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
       const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
@@ -2657,6 +3036,7 @@ const Render = {
 
     const meP = Game.players[Game.me];
     const marked = meP ? Game.transitiveTargets(meP) : null;
+    const fog = this.fogged;
     for (const L of this.labels) {
       const p = Game.players[L.id];
       L.font = 0;                        // 0 = no name drawn; drawDiploBadges reads it
@@ -2665,6 +3045,11 @@ const Render = {
       const px = (L.x + 0.5 - this.cam.x) * s + cw / 2;
       const py = (L.y + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -80 || py < -80 || px > cw + 80 || py > ch + 80) continue;
+      // Fog: a nation is named only where its label sits, the middle of its
+      // largest landmass. Land of it seen at the edge of the fog goes unnamed
+      // until that is discovered; moving the label to the visible part would
+      // put a size-scaled name on a sliver.
+      if (fog && this.fogHides(L.y * GameMap.width + L.x)) continue;
 
       // Size against the blob's real on-screen box and the measured text, not
       // sqrt(area) — a long thin nation has plenty of tiles but no room to
@@ -2809,6 +3194,9 @@ const Render = {
       const px = (L.x + 0.5 - this.cam.x) * s + cw / 2;
       const py = (L.y + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -60 || py < -60 || px > cw + 60 || py > ch + 60) continue;
+      // Fog: a request can come from a nation the viewer has not found (it
+      // reaches them as "Unknown nation"); a badge would point straight at it.
+      if (this.fogged && this.fogHides(L.y * GameMap.width + L.x)) continue;
 
       const r = 18 * dpr;
       const cy = py - (L.font ? L.font * 1.25 : 0) - r - 4 * dpr;

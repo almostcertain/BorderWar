@@ -390,7 +390,9 @@ const Game = {
     // Per D1: a solo player has nobody to wait for, so singleplayer keeps the
     // short window; any match with more than one human gets the long one so
     // every human has a real chance to place before the deadline.
-    this.SPAWN_PHASE_TURNS = H > 1 ? 150 : 100;
+    // Fog matches place everyone at once, so the countdown is only there for
+    // players to find themselves on the map: 5 s (docs/fog-of-war.md).
+    this.SPAWN_PHASE_TURNS = this.fog ? 50 : (H > 1 ? 150 : 100);
 
     for (let p = 0; p < total; p++) {
       const isHuman = p < H;
@@ -508,6 +510,9 @@ const Game = {
     // `spawning` instead of `running`.
     this.spawnCenters = new Array(total).fill(-1);
     this.nextSpawnJumpAt = new Array(total).fill(0);
+    // Fog matches: nobody picks. Every human starts on the reserve tile that
+    // would otherwise only be the fallback at the deadline.
+    if (this.fog) for (let p = 0; p < H; p++) this.claimStart(this.humanReserveTiles[p], p);
     for (let p = H; p < total; p++) {
       this.spawnCenters[p] = npcSpawns[p - H];
       this.claimStart(npcSpawns[p - H], p);
@@ -553,6 +558,7 @@ const Game = {
   // good, a string is what the spawn banner should say back.
   spawnBlockReason(tile) {
     if (!this.spawning) return 'Game already started';
+    if (this.fog) return 'Spawns are random in fog of war';
     if (tile < 0 || !GameMap.isLand(tile)) return 'Choose a land tile';
     // "Unclaimed" already means "not currently held by anyone, human or
     // NPC" — so two humans picking distinct legal spots never collide, and a
@@ -658,6 +664,9 @@ const Game = {
   // as the spawn phase ran. This is exactly the bug MP-3.2 exists to fix.
   tickSpawnPhase() {
     for (let p = this.humanCount; p < this.players.length; p++) {
+      // Fog matches: nobody wobbles. Vision is live during the countdown, so a
+      // moving spawn would leave a trail of discovered cells and contacts.
+      if (this.fog) break;
       // Tribes hold a fixed spot — only Nations (bots) wobble their
       // provisional disc during the countdown.
       if (this.players[p].isTribe) continue;
