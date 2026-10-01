@@ -1619,6 +1619,8 @@ const UI = {
     this.bindModeSelect('host');
     this.setupMapGen('');
     this.setupMapGen('host');
+    this.bindFogToggle('');
+    this.bindFogToggle('host');
 
     // Prefill the shared name field from the last time this browser played.
     let savedName = '';
@@ -1660,7 +1662,8 @@ const UI = {
     const mode = this.getModeConfig('host');
     const gen = this.getMapGenConfig('host');
     const config = { map: map, mapSize: mapSize, mapGen: gen.mapGen, bots: bots, tribes: tribes,
-      difficulty: difficulty, gameMode: mode.gameMode, playerTeams: mode.playerTeams };
+      difficulty: difficulty, gameMode: mode.gameMode, playerTeams: mode.playerTeams,
+      fogOfWar: mode.fogOfWar };
     // Procedural maps use the preview's seed; World keeps a fresh server seed.
     if (map === 'procedural') config.seed = gen.seed;
     return config;
@@ -1672,8 +1675,8 @@ const UI = {
   // as their OpenFront strings.
   modeIds(prefix) {
     return prefix
-      ? { mode: prefix + 'GameMode', teams: prefix + 'PlayerTeams', row: prefix + 'PlayerTeamsRow' }
-      : { mode: 'gameMode', teams: 'playerTeams', row: 'playerTeamsRow' };
+      ? { mode: prefix + 'GameMode', teams: prefix + 'PlayerTeams', row: prefix + 'PlayerTeamsRow', fog: prefix + 'FogOfWar' }
+      : { mode: 'gameMode', teams: 'playerTeams', row: 'playerTeamsRow', fog: 'fogOfWar' };
   },
 
   getModeConfig(prefix) {
@@ -1681,7 +1684,25 @@ const UI = {
     const gameMode = document.getElementById(ids.mode).value === 'team' ? 'team' : 'ffa';
     const raw = document.getElementById(ids.teams).value;
     const playerTeams = /^\d+$/.test(raw) ? parseInt(raw, 10) : raw;
-    return { gameMode, playerTeams };
+    // Fog of war (docs/fog-of-war.md) rides in the same config.
+    const fogOfWar = !!document.getElementById(ids.fog).checked;
+    return { gameMode, playerTeams, fogOfWar };
+  },
+
+  // Ticking Fog of war hides the whole map preview block (canvas, note, seed
+  // box and New map), so the host does not see the map the players will be
+  // dropped into. Only the display changes: the seed input keeps its value,
+  // so a procedural match still uses the seed the preview was last drawn
+  // from, and un-ticking shows the block, which the ResizeObserver in
+  // setupMapGen redraws.
+  bindFogToggle(prefix) {
+    const box = document.getElementById(this.modeIds(prefix).fog);
+    const block = document.getElementById(this.mapGenId(prefix, 'mapPreviewBlock'));
+    const sync = () => block.classList.toggle('hidden', box.checked);
+    box.addEventListener('change', sync);
+    // Browsers can restore a ticked box on reload without a change event.
+    window.addEventListener('pageshow', sync);
+    sync();
   },
 
   // The Teams row only shows once Teams is picked.
@@ -1725,7 +1746,7 @@ const UI = {
     box.innerHTML =
       '<div class="optRow2">' + select('landform') + select('land') + '</div>' +
       '<div class="optRow2">' + select('terrain') + select('rivers') + select('coast') + '</div>' +
-      '<div class="mapPreview">' +
+      '<div class="mapPreview" id="' + this.mapGenId(prefix, 'mapPreviewBlock') + '">' +
         '<canvas id="' + this.mapGenId(prefix, 'mapPreview') + '" width="' + this.MAP_PREVIEW_W +
           '" height="' + this.MAP_PREVIEW_H + '"></canvas>' +
         '<span id="' + this.mapGenId(prefix, 'mapPreviewNote') + '" class="mapPreviewNote"></span>' +

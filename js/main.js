@@ -503,7 +503,8 @@
       tribes: tribes,
       difficulty: difficultySelect.value,
       gameMode: mode.gameMode,
-      playerTeams: mode.playerTeams
+      playerTeams: mode.playerTeams,
+      fogOfWar: mode.fogOfWar
     });
   }
 

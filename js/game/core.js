@@ -274,6 +274,10 @@ const Game = {
     // PROFILES). Set on every init so a previous match's tier can't leak in;
     // anything unrecognised — including a lobby that sends none — is Medium.
     this.difficulty = this.DIFFICULTIES.includes(config.difficulty) ? config.difficulty : this.DEFAULT_DIFFICULTY;
+    // Fog of war (docs/fog-of-war.md): a match option, off unless the config
+    // says exactly true. Every fog rule is gated on this, so fog off is the
+    // game as it always was.
+    this.fog = config.fogOfWar === true;
 
     // `map: 'world'` selects OpenFront's real, baked "World" coastline
     // instead of a procedural one; `mapSize` is meaningless for it (the real
