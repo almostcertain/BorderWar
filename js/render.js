@@ -1547,6 +1547,41 @@ const Render = {
     return this._nukeLaunchResult;
   },
 
+  // Fog of war: the rail link a placement ghost may draw from `from` to the
+  // station at `to`, or null. Game.orthogonalPath's rule (one elbow, across
+  // first and then down first, land all the way), except that ground the
+  // viewer has not discovered never counts as a way through. With everything
+  // on the route discovered this is the same line the sim would build.
+  fogRailPreview(from, to) {
+    if (this.fogHides(from) || this.fogHides(to)) return null;
+    const w = GameMap.width;
+    const ax = from % w, ay = (from / w) | 0, bx = to % w, by = (to / w) | 0;
+    const clear = (x0, y0, x1, y1) => {
+      const dx = Math.sign(x1 - x0), dy = Math.sign(y1 - y0);
+      for (let x = x0, y = y0; ; x += dx, y += dy) {
+        const t = y * w + x;
+        if (this.fogHides(t) || !GameMap.isLand(t)) return false;
+        if (x === x1 && y === y1) return true;
+      }
+    };
+    if (ax === bx || ay === by) return clear(ax, ay, bx, by) ? [from, to] : null;
+    if (clear(ax, ay, bx, ay) && clear(bx, ay, bx, by)) return [from, GameMap.idx(bx, ay), to];
+    if (clear(ax, ay, ax, by) && clear(ax, by, bx, by)) return [from, GameMap.idx(ax, by), to];
+    return null;
+  },
+
+  // Fog of war: is there a built Factory the viewer has discovered within
+  // station range of `tile`? A City or Port only joins the rail network when
+  // one is (Game.previewCityConnections), and that check counts hidden
+  // Factories too.
+  fogSeesFactoryNear(tile) {
+    const range2 = Game.TRAIN_STATION_MAX_RANGE * Game.TRAIN_STATION_MAX_RANGE;
+    for (const b of Game.buildings.values()) {
+      if (b.type === 'factory' && b.built && !this.fogHides(b.tile) && Game.tileDistSq(tile, b.tile) <= range2) return true;
+    }
+    return false;
+  },
+
   // Where the armed structure would land. Mouse only — touch has no hover, so
   // there the hint line under the build bar is the whole of the feedback.
   //
@@ -1826,9 +1861,17 @@ const Render = {
         ? Game.previewFactoryConnections(tile)
         : Game.previewCityConnections(tile);
       // The preview links to any station in range, whoever owns it, and the
-      // range is far longer than anyone's sight. Each line ends on its
-      // station; in fog only the ones the viewer has discovered are shown.
-      if (fog && lines.length) lines = lines.filter(path => !this.fogHides(path[path.length - 1]));
+      // range is far longer than anyone's sight. In fog a line is shown only
+      // if the viewer could have worked it out: it ends on a station they have
+      // discovered and runs over land they have discovered the whole way
+      // (fogRailPreview), and a City or Port shows any at all only when a
+      // Factory they can see is in range. The sim's own answer is found on the
+      // real map, so drawing it would say whether the tile under the cursor,
+      // and the ground between it and the station, is land.
+      if (fog && lines.length) {
+        if (UI.placing !== 'factory' && !this.fogSeesFactoryNear(tile)) lines = [];
+        else lines = lines.map(path => this.fogRailPreview(path[0], path[path.length - 1])).filter(Boolean);
+      }
 
       if (lines.length || UI.placing === 'factory') {
         const cx = px + s / 2, cy = py + s / 2;

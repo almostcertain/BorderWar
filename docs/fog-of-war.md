@@ -1,8 +1,8 @@
 # Fog of war (design)
 
-Status: **being built on the `feature/fog-of-war` branch.** Tasks 1 to 9 are
-done; 10 (verification) is in progress; 11 (Radio Tower) is a
-follow-up and not started. No ticket numbers. Where the build differs from the
+Status: **built on the `feature/fog-of-war` branch, not yet playtested by a
+person.** Tasks 1 to 10 are done; 11 (Radio Tower) is a follow-up and not
+started. No ticket numbers. Where the build differs from the
 design below, "As built" near the end says how.
 
 A match option. When it is on, the map starts black, each nation sees only what
@@ -501,6 +501,58 @@ notes are under "Vision state".
   retire scouts, and the median nation discovers 38% of the map. Fixing it is
   a `scouts.js` change.
 - Most bot scouts are eventually sunk by warships (about 95% on big maps).
+
+### Verification (task 10)
+
+What was checked on the final code, in a Chromium pane (no Firefox there):
+
+- `sim-harness.js neutral` and `fog` both pass. `Hash.verifyDeterminism` takes
+  `fogOfWar: true` and skips the spawn step in a fog match. Fog-on and fog-off
+  dual runs agree in the browser, a flipped vision bit is caught at the turn it
+  is flipped, and three browser runs end on the same hash as the same scenario
+  in node (`fog-small-12345`, `fog-medium-67890`, `fog-late-medium-24680`).
+- Three two-client matches on the node server (two FFA, one Teams): every hash
+  compared between the two clients matched (301, 800 and 1196 of them), and
+  the server flagged nothing. A client that has been eliminated (no fog) stays in
+  step with one that is still fogged.
+- Elimination and the end of the match lift the fog in FFA and Teams. A fog
+  match after a fog-off one, and the reverse, start clean.
+- Large map, 82 bots and 400 tribes, 6000 ticks: a tick averages 2.9 ms with
+  fog and 3.4 ms without, worst 28 and 29 ms. The scout route search costs at
+  most 4 ms in a tick. `Hash.compute` goes from 0.8 to 1.0 ms. The search arena
+  is 21.7 MB and the vision grids 0.7 MB.
+- Not caused by fog, but found while measuring: on The World the annexation
+  sweep (every 20 ticks) costs 60 to 80 ms a time for about the first 100
+  seconds of a match, fog on or off.
+
+Fixed in this task (render and UI only):
+
+- The City, Factory and Port ghost drew its rail link through the black
+  whenever the real map had land all the way, so sweeping the cursor showed
+  land from water up to 110 tiles from a station. `Render.fogRailPreview` now
+  only counts discovered land, and a City or Port needs a Factory the viewer
+  can see.
+- With a structure armed, the hint line read "Tap to upgrade this City" over a
+  hidden enemy City of the same type.
+- The leaderboard kept the previous match's standings through the next match's
+  countdown.
+- Join Lobby sent the click event as the join code (not a fog bug; it stopped
+  anyone joining by code).
+
+Known leaks left in, both in sim code:
+
+- **Boat wedge.** On a discovered tile the wedge reads "Undiscovered" when the
+  nearest coast it would land on is hidden, and "No coast nearby" when there is
+  none within 50 tiles. The difference says whether there is coast in the
+  black. A plain tap on land you do not border flashes the same reasons.
+  Fixing it means making `nearestOwnedCoast` skip tiles the attacker has not
+  discovered, which changes where a boat goes.
+- **Warship order.** The same, weaker: a click on discovered land whose
+  nearest water is hidden reads "Undiscovered".
+
+Not checked: real Firefox, a rejoin during a fog match, a real touch device,
+and a bot launching a nuke in a two-client match (bot nukes were covered by
+the dual run, 111 launches a run).
 
 ## Tasks
 

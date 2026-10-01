@@ -483,6 +483,11 @@ const UI = {
     document.getElementById('nukeAlert').classList.add('hidden');
     document.getElementById('nukeAlert').innerHTML = '';
     document.getElementById('traitorChip').textContent = '';
+    // The leaderboard is not redrawn during the spawn countdown (update()
+    // returns early), so without this the previous match's standings stay on
+    // screen until the new match's first frame after it.
+    document.getElementById('leaderboard').innerHTML = '';
+    this.lastLeaderboard = 0;
     // MP-4.1: a fresh match starts with nothing queued — no reason for a
     // stale "catching up" readout from whatever this client was doing before
     // to still be on screen. updateCatchup would hide it on the next frame
@@ -1349,7 +1354,10 @@ const UI = {
       // Mouse-only, like placeHover itself (see Input.onHover) — touch just
       // gets the generic placement hint below and learns the upgrade path
       // from the flashed block reason on a tap that lands on one.
-      const hoverB = this.placeHover >= 0 ? Game.buildings.get(this.placeHover) : null;
+      // Fog: a structure on a tile the viewer has not discovered is not there
+      // as far as the hint is concerned, or sweeping the cursor over the black
+      // would find every hidden City by the line changing to "upgrade".
+      const hoverB = this.placeHover >= 0 && Render.canSee(this.placeHover) ? Game.buildings.get(this.placeHover) : null;
       if (hoverB && hoverB.type === this.placing && hoverB.built) {
         hintEl.textContent = 'Tap to upgrade this ' + def.name + ' to level ' + (hoverB.level + 1) +
           ' · ' + formatGold(Game.unitCost(me, this.placing)) + ' gold' +

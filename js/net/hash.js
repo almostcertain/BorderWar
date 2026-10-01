@@ -298,7 +298,13 @@ const Hash = {
     // synthetic single-human roster always places its one human at 0). Both
     // runs must place the same capital, so the divergent Game.me is applied
     // after.
-    if (!Game.chooseSpawn(cfg.spawnTile)) throw new Error('Hash harness: spawn tile ' + cfg.spawnTile + ' rejected');
+    // A fog match places every human itself in init() and refuses chooseSpawn
+    // (docs/fog-of-war.md, "Spawning"), so there is nothing to pick: the
+    // capital is already the same in both runs. Same guard as
+    // tools/sim-harness.js.
+    if (Game.fog) {
+      if (Game.players[0].tiles.size === 0) throw new Error('Hash harness: the human has no spawn after init');
+    } else if (!Game.chooseSpawn(cfg.spawnTile)) throw new Error('Hash harness: spawn tile ' + cfg.spawnTile + ' rejected');
     Game.me = cfg.me;
 
     if (cfg.render) {
@@ -334,6 +340,9 @@ const Hash = {
   //
   // Options (all optional):
   //   bots, tribes, seed, size, turns   match setup
+  //   fogOfWar                          true runs a fog-of-war match. Spawns are
+  //                                     then placed by init() and spawnTile is
+  //                                     ignored (reported as -1).
   //   spawnTile                         defaults to firstLegalSpawn()
   //   meA, meB                          the two view pointers; must differ
   //   renderEvery                       draw every Nth turn of run B (1 = every turn)
@@ -364,21 +373,26 @@ const Hash = {
     const renderEvery = opts.renderEvery != null ? opts.renderEvery : 1;
     const yieldEvery = opts.yieldEvery != null ? opts.yieldEvery : 100;
     const yieldEveryA = opts.yieldEveryA != null ? opts.yieldEveryA : 0;
+    const fogOfWar = opts.fogOfWar === true;
 
     if (meA === meB) throw new Error('Hash harness: meA and meB must differ — differing in nothing proves nothing');
 
     // Seed the map once up front purely so firstLegalSpawn has a map to scan;
-    // each run re-inits from the same seed and gets the same one back.
-    Game.init(this._syntheticGameStartInfo({ bots, tribes, seed, size }), 0);
-    const spawnTile = opts.spawnTile != null ? opts.spawnTile : this.firstLegalSpawn();
-    if (spawnTile < 0) throw new Error('Hash harness: no legal spawn tile on this map');
+    // each run re-inits from the same seed and gets the same one back. A fog
+    // match has no spawn to pick (see _run), so it skips this.
+    let spawnTile = -1;
+    if (!fogOfWar) {
+      Game.init(this._syntheticGameStartInfo({ bots, tribes, seed, size }), 0);
+      spawnTile = opts.spawnTile != null ? opts.spawnTile : this.firstLegalSpawn();
+      if (spawnTile < 0) throw new Error('Hash harness: no legal spawn tile on this map');
+    }
 
     const realTick = Game.tick;
     let inHarness = false;
     Game.tick = function () { if (inHarness) realTick.call(this); };
     const tick = () => { inHarness = true; try { realTick.call(Game); } finally { inHarness = false; } };
 
-    const base = { bots, tribes, seed, size, turns, spawnTile, tick, renderEvery };
+    const base = { bots, tribes, seed, size, turns, spawnTile, tick, renderEvery, fogOfWar };
     let a, b;
     try {
       // Run A: no renderer, no yielding, straight through.
@@ -413,7 +427,7 @@ const Hash = {
       firstDivergentTurn: first,
       divergentTurns: count,
       samples,
-      turns, seed, size, bots, tribes, spawnTile,
+      turns, seed, size, bots, tribes, spawnTile, fogOfWar,
       runA: { me: meA, render: false, yieldEvery: yieldEveryA, ms: Math.round(a.ms), finalHash: a.hashes[turns - 1] },
       runB: { me: meB, render: true, renderEvery, yieldEvery, ms: Math.round(b.ms), finalHash: b.hashes[turns - 1] }
     };
