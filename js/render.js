@@ -949,7 +949,7 @@ const Render = {
     this.drawTrains();
     this.drawTradeShips();
     this.drawWarships();
-    // A drawScouts pass belongs here: under the fog and culled like the rest.
+    this.drawScouts();
     this.drawShells();
     this.drawMirvs();
     this.drawNukes();
@@ -976,6 +976,9 @@ const Render = {
       this.drawMirvs(true);
       this.drawNukes(true);
     }
+    // Over the fog, because it marks where the player sent a scout, which may
+    // well be in the black. Nothing to draw in a match without fog.
+    this.drawScoutOrders();
     this.drawGoldPopups();
     this.drawKillPopups();
     if (fog) this.drawPlacement();
@@ -1583,15 +1586,21 @@ const Render = {
     // same orders (resolveWarshipLaunch); the ghost does not lean on that.
     const warshipOk = !!warshipPreview && warshipPreview.ok &&
       !(fog && (blind || this.fogHides(warshipPreview.dest)));
+    // A Scout is bought with a click anywhere, and nothing it can be refused
+    // for (a Port, the cap, gold) depends on the tile, so one answer holds for
+    // the whole map, the black included: the ghost is the same over land,
+    // water and the unknown, and says nothing the viewer has not seen.
     const ok = UI.placing === 'warship'
       ? warshipOk
-      : isNuke
-        ? nukePreview.ok
-        : isDebugNuke
-          ? true
-          : (hoverB && hoverB.type === UI.placing)
-            ? Game.canUpgrade(Game.me, tile)
-            : Game.canBuild(Game.me, UI.placing, tile);
+      : UI.placing === 'scout'
+        ? !UI.scoutReason()
+        : isNuke
+          ? nukePreview.ok
+          : isDebugNuke
+            ? true
+            : (hoverB && hoverB.type === UI.placing)
+              ? Game.canUpgrade(Game.me, tile)
+              : Game.canBuild(Game.me, UI.placing, tile);
 
     const px = (tile % w - this.cam.x) * s + cw / 2;
     const py = (((tile / w) | 0) - this.cam.y) * s + ch / 2;
@@ -2307,6 +2316,169 @@ const Render = {
         ctx.fillStyle = pct > 0.5 ? '#7ee787' : pct > 0.25 ? '#f0c674' : '#ff6b6b';
         ctx.fillRect(bx, by, bw * pct, bh);
       }
+    }
+  },
+
+  // CSS-pixel position of a scout, for the hit-tests (see warshipClientPos).
+  scoutClientPos(sc) {
+    const s = this.cam.scale;
+    const p = Game.pathPos(sc);
+    return {
+      x: (p.x + 0.5 - this.cam.x) * s + window.innerWidth / 2,
+      y: (p.y + 0.5 - this.cam.y) * s + window.innerHeight / 2
+    };
+  },
+
+  // The scout (anyone's) under a CSS-pixel point, or null. Fog: one the viewer
+  // cannot see is not drawn and so is not there to find.
+  findScoutNear(sx, sy) {
+    if (!Game.scouts.length) return null;
+    const s = this.cam.scale, w = GameMap.width;
+    // The drawn hull's radius in CSS px (see drawScouts), plus some slop.
+    const buffer = Math.max(7, Math.min(18, s)) * 1.6;
+    let best = null, bestDist = Infinity;
+    for (const sc of Game.scouts) {
+      const idx = Math.min(sc.path.length - 1, Math.floor(sc.pos));
+      const frac = Math.min(1, sc.pos - idx);
+      const a = sc.path[idx], c = sc.path[Math.min(idx + 1, sc.path.length - 1)];
+      const ax = a % w, ay = (a / w) | 0, cx = c % w, cy = (c / w) | 0;
+      const tx = ax + (cx - ax) * frac, ty = ay + (cy - ay) * frac;
+      if (!this.canSee(Math.floor(ty + 0.5) * w + Math.floor(tx + 0.5))) continue;
+      const bx = (tx + 0.5 - this.cam.x) * s + window.innerWidth / 2;
+      const by = (ty + 0.5 - this.cam.y) * s + window.innerHeight / 2;
+      const d = Math.hypot(bx - sx, by - sy);
+      if (d <= buffer && d < bestDist) { best = sc; bestDist = d; }
+    }
+    return best;
+  },
+
+  // Scouts (fog matches only): an unarmed ship that exists to uncover the map,
+  // drawn as an arrowhead in its owner's colour pointing the way it is sailing,
+  // so it cannot be taken for a warship's pair of rings. Culled by the fog on
+  // position like every other pass; a scout lights up the water round it, so
+  // the player's own are always in view in practice.
+  //
+  // WHAT IS NEVER DRAWN: the route. A scout's `path` is found on the real map
+  // and runs through water the owner has not discovered, so a line along it
+  // would trace unseen coastlines. The heading below reads only the few tiles
+  // right around the hull, which are discovered by construction, and the
+  // destination marker (drawScoutOrders) is the raw tile the player clicked.
+  // While a route is still being found, the owner's scout shows a small
+  // spinner, and nothing else.
+  drawScouts() {
+    if (!Game.scouts.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height, mw = GameMap.width;
+    const r = Math.max(7 * this.dpr, Math.min(18 * this.dpr, s * 1.0));
+    const fog = this.fogged;
+
+    for (const sc of Game.scouts) {
+      const path = sc.path, end = path.length - 1;
+      const idx = Math.min(end, Math.floor(sc.pos));
+      const frac = Math.min(1, sc.pos - idx);
+      const a = path[idx], c = path[Math.min(idx + 1, end)];
+      const ax = a % mw, ay = (a / mw) | 0, cx = c % mw, cy = (c / mw) | 0;
+      const tx = ax + (cx - ax) * frac, ty = ay + (cy - ay) * frac;
+      const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (ty + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -40 || py < -40 || px > cw + 40 || py > ch + 40) continue;
+      if (fog && this.fogHidesAt(tx, ty)) continue;
+
+      // Heading: along the tiles it is sailing through, from where the hull
+      // is to a few tiles ahead, or from a few tiles back once it is at the
+      // end. Straight up while it has no path yet (just launched, or just
+      // re-ordered).
+      let angle = -Math.PI / 2;
+      const j = Math.min(end, idx + 4), i = j > idx ? idx : Math.max(0, end - 4);
+      if (j !== i) {
+        const hx = path[j] % mw - path[i] % mw, hy = ((path[j] / mw) | 0) - ((path[i] / mw) | 0);
+        if (hx !== 0 || hy !== 0) angle = Math.atan2(hy, hx);
+      }
+
+      const owner = Game.players[sc.owner];
+      const col = owner ? owner.color : [200, 200, 200];
+      const mine = sc.owner === Game.me;
+
+      // Own scout: a selection ring, and a spinner while its route is found.
+      if (mine && UI.selectedScouts.has(sc)) {
+        ctx.beginPath();
+        ctx.arc(px, py, r * 1.8, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = Math.max(1.5, this.dpr * 1.5);
+        ctx.stroke();
+      }
+      if (mine && sc.routing && sc.pos >= end) {
+        const spin = Game.renderElapsed * 5;
+        ctx.beginPath();
+        ctx.arc(px, py, r * 1.45, spin, spin + Math.PI * 1.1);
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+        ctx.lineWidth = Math.max(1.2, this.dpr * 1.2);
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
+
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(angle);
+      ctx.beginPath();
+      ctx.moveTo(r * 1.15, 0);
+      ctx.lineTo(-r * 0.8, -r * 0.75);
+      ctx.lineTo(-r * 0.35, 0);
+      ctx.lineTo(-r * 0.8, r * 0.75);
+      ctx.closePath();
+      ctx.fillStyle = `rgb(${(col[0] * 0.55) | 0}, ${(col[1] * 0.55) | 0}, ${(col[2] * 0.55) | 0})`;
+      ctx.fill();
+      ctx.strokeStyle = `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
+      ctx.lineWidth = Math.max(1.2, r * 0.16);
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      // The lens.
+      ctx.beginPath();
+      ctx.arc(r * 0.2, 0, r * 0.2, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.restore();
+
+      // Health bar: only once damaged, exactly as a warship's.
+      if (sc.health < sc.maxHealth) {
+        const bw = r * 2.1, bh = Math.max(2, r * 0.22);
+        const bx = px - bw / 2, by = py - r * 1.5;
+        const pct = Math.max(0, sc.health / sc.maxHealth);
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.fillStyle = pct > 0.5 ? '#7ee787' : pct > 0.25 ? '#f0c674' : '#ff6b6b';
+        ctx.fillRect(bx, by, bw * pct, bh);
+      }
+    }
+  },
+
+  // Where the viewer's own scouts are headed: a hollow diamond on the tile
+  // each was last sent to, exactly as clicked, quiet for one under way and
+  // brighter for a selected one. Drawn over the fog because the click may
+  // have been into the black; it is the player's own input, not the map. Gone
+  // once the scout has stopped, since a scout that could not get all the way
+  // there stopped somewhere else.
+  drawScoutOrders() {
+    if (!Game.scouts.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height, mw = GameMap.width;
+    const m = Math.max(4 * this.dpr, Math.min(9 * this.dpr, s * 0.3));
+    for (const sc of Game.scouts) {
+      if (sc.owner !== Game.me) continue;
+      if (!sc.routing && sc.pos >= sc.path.length - 1) continue;
+      const dx = (sc.destTile % mw + 0.5 - this.cam.x) * s + cw / 2;
+      const dy = (((sc.destTile / mw) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+      if (dx < -20 || dy < -20 || dx > cw + 20 || dy > ch + 20) continue;
+      ctx.beginPath();
+      ctx.moveTo(dx, dy - m);
+      ctx.lineTo(dx + m, dy);
+      ctx.lineTo(dx, dy + m);
+      ctx.lineTo(dx - m, dy);
+      ctx.closePath();
+      ctx.strokeStyle = UI.selectedScouts.has(sc) ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.45)';
+      ctx.lineWidth = Math.max(1.5, this.dpr * 1.5);
+      ctx.stroke();
     }
   },
 

@@ -57,8 +57,18 @@ const UI = {
   // for attack/boat chips, so nothing here goes stale across a splice
   // elsewhere in that array.
   selectedWarships: new Set(),
+  // The same for the player's own Scouts (fog matches only; empty otherwise).
+  // A selection can hold both kinds: see the order branch in onTap.
+  selectedScouts: new Set(),
 
   DEFAULT_HINT: 'Tap land to attack · right-click or hold for diplomacy/boat · shift-drag to select warships · drag to pan',
+  // Fog matches have Scouts to select as well.
+  FOG_DEFAULT_HINT: 'Tap land to attack · right-click or hold for diplomacy/boat · shift-drag to select ships · drag to pan',
+
+  // Hotkeys for entries whose Game.UNITS row carries none (the Scout: its row
+  // is sim data and was left alone). 'e' for explore; the digits, P and the
+  // WASD pan keys are taken.
+  EXTRA_HOTKEYS: { scout: 'e' },
 
   // Puts the attack ratio back to its default and moves the slider handle and
   // label to match. The browser restores a range input's last value on refresh
@@ -181,12 +191,16 @@ const UI = {
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (e.key === 'Escape') {
         this.cancelPlacing();
-        this.selectedWarships.clear();
+        this.clearShipSelection();
         return;
       }
       if (e.key === 'p' || e.key === 'P') { this.togglePause(); return; }
       const u = Game.UNITS.find(x => x.hotkey === e.key);
       if (u) this.togglePlacing(u.type);
+      // Only a fog match has the button, so only a fog match has the key.
+      else if (Game.fog && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === this.EXTRA_HOTKEYS.scout) {
+        this.togglePlacing('scout');
+      }
     });
   },
 
@@ -208,29 +222,8 @@ const UI = {
   // the innerHTML at 60Hz would kill :active and the button's own press state.
   setupBuildBar() {
     const bar = document.getElementById('buildBar');
-    // Entries marked fogOnly (the Scout) are left out: this bar is built once,
-    // before any match has said whether it has fog, and the unit cannot be
-    // bought in a fog-off match.
-    bar.innerHTML = Game.UNITS.filter(u => !u.fogOnly).map(u =>
-      `<button class="buildBtn" data-type="${u.type}">
-         <span class="bbKey">${u.hotkey}</span>
-         <span class="bbIcon">${iconHtml(this.UNIT_ICONS[u.type] || u.type)}</span>
-         <span class="bbBody">
-           <span class="bbName">${u.name}</span>
-           <span class="bbCost"></span>
-         </span>
-         <span class="bbCount"></span>
-       </button>`).join('');
-
-    this.buildEls = new Map();
-    for (const btn of bar.querySelectorAll('.buildBtn')) {
-      this.buildEls.set(btn.dataset.type, {
-        btn,
-        cost: btn.querySelector('.bbCost'),
-        count: btn.querySelector('.bbCount')
-      });
-      btn.addEventListener('click', () => this.togglePlacing(btn.dataset.type));
-    }
+    this._barFog = null;
+    this.rebuildBuildBar();
 
     // The scrollbar is hidden (see #buildBar::-webkit-scrollbar in style.css),
     // so on a narrow window a mouse user has no visible handle and no touch
@@ -260,7 +253,46 @@ const UI = {
     };
     bar.addEventListener('scroll', updateFade);
     new ResizeObserver(updateFade).observe(bar);
+    // A rebuilt bar can change width without the bar's own box changing.
+    this._updateBarFade = updateFade;
     updateFade();
+  },
+
+  // (Re)writes the buttons. Entries marked fogOnly (the Scout) are in the bar
+  // only while the match has fog: the bar is first built at page load, before
+  // any match has said whether it has fog, so syncBuildBar redoes it when the
+  // answer changes from one match to the next. A fog-off bar comes out exactly
+  // as it always was.
+  rebuildBuildBar() {
+    const bar = document.getElementById('buildBar');
+    const fog = this._barFog = !!Game.fog;
+    bar.innerHTML = Game.UNITS.filter(u => !u.fogOnly || fog).map(u =>
+      `<button class="buildBtn" data-type="${u.type}">
+         <span class="bbKey">${u.hotkey || this.EXTRA_HOTKEYS[u.type] || ''}</span>
+         <span class="bbIcon">${iconHtml(this.UNIT_ICONS[u.type] || u.type)}</span>
+         <span class="bbBody">
+           <span class="bbName">${u.name}</span>
+           <span class="bbCost"></span>
+         </span>
+         <span class="bbCount"></span>
+       </button>`).join('');
+
+    this.buildEls = new Map();
+    for (const btn of bar.querySelectorAll('.buildBtn')) {
+      this.buildEls.set(btn.dataset.type, {
+        btn,
+        cost: btn.querySelector('.bbCost'),
+        count: btn.querySelector('.bbCount')
+      });
+      btn.addEventListener('click', () => this.togglePlacing(btn.dataset.type));
+    }
+    if (this._updateBarFade) this._updateBarFade();
+  },
+
+  // Cheap enough for every frame; a no-op unless the match's fog setting
+  // differs from what the bar was built for.
+  syncBuildBar() {
+    if (this._barFog !== !!Game.fog) this.rebuildBuildBar();
   },
 
   // Puts away whatever build is armed — structure, nuke, warship or the debug
@@ -280,7 +312,7 @@ const UI = {
     if (!Game.running) return;
     this.placing = this.placing === type ? null : type;
     this.placeHover = -1;
-    this.selectedWarships.clear();
+    this.clearShipSelection();
     if (this.placing) { Radial.hide(); this.hideHoverPanel(); }
   },
 
@@ -304,7 +336,7 @@ const UI = {
     this.debugNukeType = type;
     this.debugNukeSrc = -1;
     this.placeHover = -1;
-    this.selectedWarships.clear();
+    this.clearShipSelection();
     Radial.hide();
     this.hideHoverPanel();
   },
@@ -318,38 +350,57 @@ const UI = {
     if (this.placing === 'debugpeace') { this.placing = null; return; }
     this.placing = 'debugpeace';
     this.placeHover = -1;
-    this.selectedWarships.clear();
+    this.clearShipSelection();
     Radial.hide();
     this.hideHoverPanel();
   },
 
-  // The player's own warships whose drawn hull falls inside a shift-drag
-  // box, in CSS-pixel client coordinates (same space screenToTile/
+  // Empties the ship selection, warships and scouts both.
+  clearShipSelection() {
+    this.selectedWarships.clear();
+    this.selectedScouts.clear();
+  },
+
+  // The player's own warships and scouts whose drawn hull falls inside a
+  // shift-drag box, in CSS-pixel client coordinates (same space screenToTile/
   // findStructureNear use) — replaces whatever was selected before, same as
   // a fresh marquee in any RTS. An empty box (nothing of yours inside it)
-  // simply clears the selection.
-  selectWarshipsInBox(x0, y0, x1, y1) {
-    this.selectedWarships.clear();
+  // simply clears the selection. A scout the fog hides cannot be picked, like
+  // everything else the fog hides; one's own never is, since a scout lights up
+  // the water around it.
+  selectShipsInBox(x0, y0, x1, y1) {
+    this.clearShipSelection();
     for (const w of Game.warships) {
       if (w.owner !== Game.me) continue;
       const p = Render.warshipClientPos(w);
       if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) this.selectedWarships.add(w);
     }
+    for (const s of Game.scouts) {
+      if (s.owner !== Game.me || !Render.canSee(Game.scoutTile(s))) continue;
+      const p = Render.scoutClientPos(s);
+      if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) this.selectedScouts.add(s);
+    }
   },
 
-  // A shift-click (not a drag) on a single warship — replaces the selection
-  // with just that one, or clears it if the click didn't land on any.
-  selectWarshipAt(sx, sy) {
+  // A shift-click (not a drag) on a single ship — replaces the selection with
+  // just the nearest one, or clears it if the click didn't land on any.
+  selectShipAt(sx, sy) {
     const TAP_RADIUS = 22;   // CSS px, roughly matching the drawn hull size
-    let best = null, bestDist = TAP_RADIUS;
+    let best = null, bestDist = TAP_RADIUS, bestIsScout = false;
     for (const w of Game.warships) {
       if (w.owner !== Game.me) continue;
       const p = Render.warshipClientPos(w);
       const d = Math.hypot(p.x - sx, p.y - sy);
       if (d <= bestDist) { best = w; bestDist = d; }
     }
-    this.selectedWarships.clear();
-    if (best) this.selectedWarships.add(best);
+    for (const s of Game.scouts) {
+      if (s.owner !== Game.me || !Render.canSee(Game.scoutTile(s))) continue;
+      const p = Render.scoutClientPos(s);
+      const d = Math.hypot(p.x - sx, p.y - sy);
+      if (d <= bestDist) { best = s; bestDist = d; bestIsScout = true; }
+    }
+    this.clearShipSelection();
+    if (best) (bestIsScout ? this.selectedScouts : this.selectedWarships).add(best);
   },
 
   // --- Fog of war: who the viewer may be told about ---------------------------
@@ -408,7 +459,9 @@ const UI = {
     this.debugNukeType = null;
     this.debugNukeSrc = -1;
     this.placeHover = -1;
-    this.selectedWarships.clear();
+    this.clearShipSelection();
+    this.syncBuildBar();
+    this._scoutReasonTick = -1;
     this.resetRatio();
     this.flashUntil = 0;
     this.spawnFlashUntil = 0;
@@ -709,6 +762,26 @@ const UI = {
       return;
     }
 
+    // Scout (fog matches): the click names where to send it, any tile at all,
+    // black included. Nothing here may look at the map under the tap: a
+    // refusal, or any difference in feedback, would say what an undiscovered
+    // tile is. scoutBlockReason is built so that none of its reasons does
+    // (gold, Port, cap), which is also why a tile that is off the map is the
+    // only refusal that keeps it armed.
+    if (this.placing === 'scout') {
+      const tile = Render.screenToTile(sx, sy);
+      const reason = Game.scoutBlockReason(Game.me, tile);
+      if (reason) {
+        this.flash(reason);
+        if (reason !== 'Off the map') { this.placing = null; this.placeHover = -1; }
+        return;
+      }
+      Transport.sendIntent(Protocol.intent.buildUnit('scout', tile));
+      this.placing = null;
+      this.placeHover = -1;
+      return;
+    }
+
     // Atom/Hydrogen Bomb: same "click anywhere, the game resolves the
     // launch point" shape as Warship above, via Game.resolveNukeLaunch/
     // nukeBlockReason/launchNuke rather than buildBlockReason/build — a
@@ -768,24 +841,39 @@ const UI = {
     // every selected ship on the click — a full water search across the map,
     // done twice, once here and once for real a turn later — is not worth
     // buying that case back.
-    if (this.selectedWarships.size) {
+    //
+    // Fog of war: the selection can hold scouts too, and the tap orders both.
+    // A scout goes wherever the tap was (moveScout never refuses a tile, so
+    // the tap is always consumed). A warship still needs a tap on discovered
+    // water, so in a mixed selection it simply stays put when the tap is in
+    // the black, and the hint line says so.
+    if (this.selectedWarships.size || this.selectedScouts.size) {
       const tile = Render.screenToTile(sx, sy);
       // Objects can't cross a wire, so the order names ids (MP-1.2). Ships
       // that have sunk since the selection was made are skipped here; the
       // Executor drops any that sink in the ~100 ms after, so an order over a
       // fleet that is losing ships still moves the ones that are left.
-      const unitIds = [];
+      const unitIds = [], scoutIds = [];
       for (const w of this.selectedWarships) if (Game.warshipById(w.id)) unitIds.push(w.id);
-      this.selectedWarships.clear();
-      const reachable = tile >= 0 &&
+      for (const s of this.selectedScouts) if (Game.scoutById(s.id)) scoutIds.push(s.id);
+      this.clearShipSelection();
+      const reachable = tile >= 0 && Render.canSee(tile) &&
         Game.nearestWaterNear(tile, Game.NEAREST_COAST_MAX_DIST) >= 0;
+      let consumed = false;
+      if (scoutIds.length && tile >= 0) {
+        Transport.sendIntent(Protocol.intent.moveScout(scoutIds, tile));
+        consumed = true;
+      }
       if (unitIds.length && reachable) {
         // The raw clicked tile travels, not the snapped one: the snap is a rule
         // of the sim (moveWarships does it) and every client must perform it
         // identically rather than trust one client's answer.
         Transport.sendIntent(Protocol.intent.moveWarship(unitIds, tile));
-        return;
+        consumed = true;
+      } else if (unitIds.length && scoutIds.length && tile >= 0) {
+        this.flash('Warships stay put · they only sail to discovered water');
       }
+      if (consumed) return;
     }
 
     if (this.placing) {
@@ -969,6 +1057,8 @@ const UI = {
       pauseBtn._paused = LocalServer.paused;
       pauseBtn.innerHTML = LocalServer.paused ? iconHtml('play') + ' Resume' : iconHtml('pause') + ' Pause';
     }
+
+    this.syncBuildBar();
 
     // The HUD stays hidden until the human has claimed a capital — only the
     // banner (and the leaderboard, already outside #hud) is live.
@@ -1189,19 +1279,26 @@ const UI = {
   updateBuildBar(me) {
     if (this.placing && !me.alive) this.placing = null;
 
+    // Scouts that have sunk since they were selected.
+    for (const sc of this.selectedScouts) if (!Game.scoutById(sc.id)) this.selectedScouts.delete(sc);
+
     for (const u of Game.UNITS) {
       const els = this.buildEls.get(u.type);
       if (!els) continue;
       const cost = Game.unitCost(me, u.type);
-      const owned = Game.unitsOwned(me, u.type);
+      // A Scout is not a structure, so unitsOwned never sees it. Its badge is
+      // afloat/cap, the cap being what stops the next purchase.
+      const isScout = u.type === 'scout';
+      const owned = isScout ? Game.scoutCount(me.id) : Game.unitsOwned(me, u.type);
       els.cost.textContent = formatGold(cost);
-      els.count.textContent = owned ? '×' + owned : '';
+      els.count.textContent = isScout ? (owned ? owned + '/' + Game.MAX_SCOUTS_PER_PLAYER : '') : owned ? '×' + owned : '';
       // Affordability drives the dim, not the disabled attribute: a button you
       // cannot press is also a button that cannot tell you the price.
       els.btn.classList.toggle('poor', me.gold < cost);
       els.btn.classList.toggle('armed', this.placing === u.type);
       els.btn.classList.toggle('locked',
-        (u.type === 'atombomb' || u.type === 'hydrogenbomb' || u.type === 'mirv') && Game.unitsOwned(me, 'silo') < 1);
+        (u.type === 'atombomb' || u.type === 'hydrogenbomb' || u.type === 'mirv') && Game.unitsOwned(me, 'silo') < 1 ||
+        (isScout && (this.scoutReason() === 'Build a Port first' || this.scoutReason() === 'Scout limit reached')));
     }
 
     document.getElementById('debugNukeAtom').classList.toggle('armed',
@@ -1227,6 +1324,12 @@ const UI = {
         ? 'Build a Port first to unlock Warships · Esc to cancel'
         : 'Tap anywhere to launch a Warship from your nearest Port · ' +
           formatGold(Game.unitCost(me, 'warship')) + ' gold · Esc to cancel';
+    } else if (this.placing === 'scout') {
+      const reason = this.scoutReason();
+      hintEl.textContent = reason === 'Build a Port first' ? 'Build a Port first to unlock Scouts · Esc to cancel'
+        : reason ? reason + ' · Esc to cancel'
+        : 'Tap anywhere, even into the dark, to send a Scout from your nearest Port · ' +
+          formatGold(Game.unitCost(me, 'scout')) + ' gold · Esc to cancel';
     } else if (this.placing === 'atombomb' || this.placing === 'hydrogenbomb' || this.placing === 'mirv') {
       const def = Game.unitDef(this.placing);
       const article = this.placing === 'atombomb' ? 'an' : 'a';
@@ -1256,12 +1359,30 @@ const UI = {
           ' · ' + formatGold(Game.unitCost(me, this.placing)) + ' gold' +
           ' · ' + def.buildTime + 's to build · Esc to cancel';
       }
+    } else if (this.selectedScouts.size) {
+      const nw = this.selectedWarships.size, ns = this.selectedScouts.size;
+      hintEl.textContent = (nw ? nw + ' warship' + (nw > 1 ? 's' : '') + ', ' : '') +
+        ns + ' scout' + (ns > 1 ? 's' : '') + ' selected — tap to send ' +
+        (nw ? 'them (warships only to discovered water, scouts anywhere)' : (ns > 1 ? 'them' : 'it') + ' anywhere, even into the dark') +
+        ' · shift-drag to reselect · Esc to deselect';
     } else if (this.selectedWarships.size) {
       hintEl.textContent = this.selectedWarships.size + ' warship' + (this.selectedWarships.size > 1 ? 's' : '') +
         ' selected — tap open water to relocate · shift-drag to reselect · Esc to deselect';
     } else {
-      hintEl.textContent = this.DEFAULT_HINT;
+      hintEl.textContent = Game.fog ? this.FOG_DEFAULT_HINT : this.DEFAULT_HINT;
     }
+  },
+
+  // Why a Scout cannot be bought right now, or null. The reasons say nothing
+  // about any tile (docs/fog-of-war.md), so any valid tile will do to ask; 0
+  // is one. Cached per tick: it walks the buildings and is asked for several
+  // times a frame.
+  scoutReason() {
+    if (this._scoutReasonTick !== Game.ticks) {
+      this._scoutReasonTick = Game.ticks;
+      this._scoutReason = Game.scoutBlockReason(Game.me, 0);
+    }
+    return this._scoutReason;
   },
 
   // Where a front or boat chip sends the camera: the front's centre, or the
