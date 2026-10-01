@@ -331,7 +331,9 @@
 
   document.getElementById('hostCreateBtn').addEventListener('click', hostLobby);
   document.getElementById('hostStartBtn').addEventListener('click', startHostedGame);
-  document.getElementById('joinBtn').addEventListener('click', joinLobby);
+  // Wrapped: passed directly, the click event would arrive as gameIDOverride
+  // and be sent to the server as the join code.
+  document.getElementById('joinBtn').addEventListener('click', () => joinLobby());
   document.getElementById('hostLeaveBtn').addEventListener('click', leaveLobby);
   document.getElementById('joinLeaveBtn').addEventListener('click', leaveLobby);
 
