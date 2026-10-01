@@ -103,7 +103,7 @@ function boot(cfg) {
   for (const { file, bytes } of sources) {
     vm.runInContext(bytes.toString('utf8'), ctx, { filename: file });
   }
-  const sim = vm.runInContext('({ Game, GameMap, Hash, Executor, Protocol })', ctx);
+  const sim = vm.runInContext('({ Game, GameMap, Hash, Executor, Protocol, AI })', ctx);
   if (cfg.map === 'world') {
     // No fetch() in this harness (nor in the sim it's checking, on purpose —
     // see js/net/worldmap.js) — read the same static asset a browser would
@@ -128,6 +128,11 @@ function boot(cfg) {
 //     sharing and its end, the attack, landing and nuke hooks;
 //   - fogOff confirms a fog-off match allocates no vision state and never
 //     reaches the code that would write it.
+//   - fogBotWatch (task 9) rides along in every one of those runs: it fails
+//     the run the moment a Nation acts on, or weighs, something the fog hides
+//     from it, and counts what the bots' Scouts uncover. fogBotWatchControl
+//     shows it can fail, and fogBotsOff that a fog-off match never reaches
+//     any of the bots' fog code.
 // `--perturb` flips one vision bit in each scenario's second run, which has to
 // be reported as a divergence: the negative control. `--only` filters the
 // scenarios by name and skips nothing else.
@@ -138,7 +143,9 @@ const fogScenarios = [
   // Rich bots, so nukes fly and their hits make contact.
   { name: 'fog-late-medium-24680', size: 'medium', seed: 24680, bots: 8, tribes: 12, ticks: 6000, gold: 100000000, fogOfWar: true },
   // 41 vision groups: bitmasks two words wide.
-  { name: 'fog-crowded-small-12345', size: 'small', seed: 12345, bots: 40, tribes: 12, ticks: 2000, fogOfWar: true }
+  { name: 'fog-crowded-small-12345', size: 'small', seed: 12345, bots: 40, tribes: 12, ticks: 2000, fogOfWar: true },
+  // Easy Nations keep one Scout, not two (AI.PROFILES).
+  { name: 'fog-easy-small-67890', size: 'small', seed: 67890, bots: 8, tribes: 12, ticks: 5000, difficulty: 'easy', fogOfWar: true }
 ];
 const fogMethods = [...methods, 'markMet', 'visionStamp', 'visionAllianceFormed', 'visionRefreshShare'];
 const fogHas = (arr, base, g) => (arr[base + (g >>> 5)] & (1 << (g & 31))) !== 0;
@@ -242,8 +249,305 @@ function fogStats({ Game }) {
   let pairs = 0, metPairs = 0;
   for (const a of nations) for (const b of nations) if (a !== b) { pairs++; if (Game.hasMet(a.id, b.id)) metPairs++; }
   const all = Array.from(Game.visionCount, (_, g) => pct(g));
+  const sorted = [...all].sort((a, b) => a - b);
   return { groups: Game.visionGroups, words: Game.visionWords, cells: total, humanDiscoveredPct: pct(Game.visionGroupOf[0]),
-    minPct: Math.min(...all), maxPct: Math.max(...all), metPairs: `${metPairs}/${pairs}` };
+    minPct: Math.min(...all), medianPct: sorted[sorted.length >> 1], maxPct: Math.max(...all), metPairs: `${metPairs}/${pairs}` };
+}
+
+// --- fog bots (task 9): Nations are bound by the fog, and they scout ---------
+// fogBotWatch wraps everything a Nation can do to another nation, and the AI
+// helpers that weigh one, in a fog match. The checks are made on the call
+// itself, before the sim's own gates (task 7) get a say, so a bot that merely
+// asks for something the fog forbids fails the run even though the gate would
+// have refused it. It reads and counts; it never changes what a call returns.
+//   - a boat: the tile and its landing coast are discovered, the owner is met
+//   - a nuke or MIRV: the target tile is discovered, its owner is met
+//   - a warship order: discovered water
+//   - an embargo, alliance request, donation or target mark: the nation is met
+//   - AI.navalScore / provocation / similarlyStrong / nukeTarget /
+//     retaliationTarget: never asked about a nation the bot has not met, and
+//     never answer with a tile it has not discovered
+//   - AI.borderTargets / hostiles: every nation they name is one the bot has
+//     met (the rest of the AI leans on a land neighbour always being met)
+//   - Scouts: never over the tier's cap, only ever ordered to an undiscovered
+//     sample beach, never bought while one of the bot's own is standing idle
+// `stats.scoutCells` is the number of vision cells the bots' Scouts were the
+// first to show their owners: "their discovered area grows".
+const fogBotCounters = ['boats', 'boatChecks', 'nukes', 'nukeAims', 'retaliationAims', 'warshipOrders', 'embargoes', 'allianceRequests',
+  'strangerAnswers', 'donations', 'targetMarks', 'navalScores', 'provocations', 'neighbours', 'scoutsBought', 'scoutOrders', 'scoutCells'];
+function fogBotWatch(sim, name) {
+  const { Game, GameMap, AI } = sim;
+  const stats = Object.fromEntries(fogBotCounters.map(k => [k, 0]));
+  const fail = msg => { throw new Error(`FOG BOTS ${name}: ${msg}`); };
+  const bot = id => { const p = Game.players[id]; return !!p && p.isBot; };
+  const who = id => `${id} (${Game.players[id].name})`;
+  const seen = (id, tile) => Game.isDiscovered(id, tile);
+  const met = (id, other) => Game.hasMet(id, other);
+  const xy = t => `${t % GameMap.width},${(t / GameMap.width) | 0}`;
+  // `check(args)` runs before the call and may return a function to run on its result.
+  const watch = (obj, method, check) => {
+    const original = obj[method];
+    if (typeof original !== 'function') throw new Error(`Missing method ${method}`);
+    obj[method] = function (...args) {
+      const after = check(args);
+      const r = original.apply(this, args);
+      if (after) after(r);
+      return r;
+    };
+  };
+  const ownerMet = (id, tile, what) => {
+    const o = GameMap.owner[tile];
+    if (o >= 0 && o !== id && !met(id, o)) fail(`${who(id)} ${what} ${xy(tile)}, land of ${who(o)}, whom it has not met`);
+  };
+  const atRest = s => s.pos >= s.path.length - 1;
+
+  watch(Game, 'navalInvasionBlockReason', ([id]) => bot(id) && (r => { stats.boatChecks++; if (r === 'Undiscovered') fail(`${who(id)} asked for a boat the fog refuses`); }));
+  watch(Game, 'launchNavalInvasion', ([id, tile]) => {
+    if (!bot(id)) return null;
+    const landing = Game.nearestOwnedCoast(tile);
+    if (!seen(id, tile) || landing < 0 || !seen(id, landing)) fail(`${who(id)} sent a boat at ${xy(tile)}, which it has not discovered`);
+    ownerMet(id, landing, 'sent a boat at');
+    return r => { if (r) stats.boats++; };
+  });
+  for (const method of ['launchNuke', 'launchMirv']) {
+    watch(Game, method, args => {
+      const id = args[0], tile = args[args.length - 1];
+      if (!bot(id)) return null;
+      if (!seen(id, tile)) fail(`${who(id)} fired at ${xy(tile)}, which it has not discovered`);
+      ownerMet(id, tile, 'fired at');
+      return r => { if (r) stats.nukes++; };
+    });
+  }
+  watch(Game, 'buildWarship', ([id, tile]) => {
+    if (bot(id) && !seen(id, tile)) fail(`${who(id)} sent a new warship to ${xy(tile)}, which it has not discovered`);
+    return r => { if (r && bot(id)) stats.warshipOrders++; };
+  });
+  watch(Game, 'moveWarships', ([, tile, id]) => {
+    if (bot(id) && !seen(id, tile)) fail(`${who(id)} moved a warship to ${xy(tile)}, which it has not discovered`);
+    return r => { if (r && bot(id)) stats.warshipOrders++; };
+  });
+  // Only a deliberate embargo is the bot's doing; an attack's temporary one is
+  // the sim's (embargoOnAttack), placed on the attacker by its victim.
+  watch(Game, 'addEmbargo', ([from, to, temporary]) => {
+    if (temporary || !bot(from)) return null;
+    if (!met(from, to)) fail(`${who(from)} embargoed ${who(to)}, whom it has not met`);
+    if (!Game.hasEmbargoAgainst(from, to)) stats.embargoes++;
+    return null;
+  });
+  for (const method of ['setEmbargo', 'requestAlliance', 'donateTroops', 'donateGold', 'targetPlayer']) {
+    const key = { setEmbargo: 'embargoes', requestAlliance: 'allianceRequests', targetPlayer: 'targetMarks' }[method] || 'donations';
+    watch(Game, method, ([from, to]) => {
+      if (!bot(from)) return null;
+      if (!met(from, to)) fail(`${who(from)} called ${method} on ${who(to)}, whom it has not met`);
+      return r => { if (r) stats[key]++; };
+    });
+  }
+
+  // The AI's own weighing of another nation.
+  watch(AI, 'navalScore', ([p, targetId]) => {
+    if (targetId >= 0) { stats.navalScores++; if (!met(p.id, targetId)) fail(`${who(p.id)} weighed a beach of ${who(targetId)}, whom it has not met`); }
+    return null;
+  });
+  watch(AI, 'provocation', ([p, t]) => {
+    stats.provocations++;
+    if (!met(p.id, t.id)) fail(`${who(p.id)} weighed the cost of attacking ${who(t.id)}, whom it has not met`);
+    return null;
+  });
+  watch(AI, 'similarlyStrong', ([p, other]) => {
+    if (!met(p.id, other.id)) fail(`${who(p.id)} compared its strength with ${who(other.id)}, whom it has not met`);
+    return null;
+  });
+  watch(AI, 'strangerDecision', () => { stats.strangerAnswers++; return null; });
+  watch(AI, 'borderTargets', ([p]) => p.isBot && (r => {
+    for (const id of r.keys()) {
+      if (id < 0) continue;
+      stats.neighbours++;
+      if (!met(p.id, id)) fail(`${who(p.id)} borders ${who(id)} and has not met it`);
+    }
+  }));
+  watch(AI, 'hostiles', ([p]) => (r => {
+    for (const id of r) if (!met(p.id, id)) fail(`${who(p.id)} counts ${who(id)}, whom it has not met, as an enemy`);
+  }));
+  watch(AI, 'nukeTarget', ([target, p]) => {
+    if (!met(p.id, target.id)) fail(`${who(p.id)} picked a nuke target in ${who(target.id)}, whom it has not met`);
+    return r => {
+      if (r < 0) return;
+      stats.nukeAims++;
+      if (!seen(p.id, r) || GameMap.owner[r] !== target.id) fail(`${who(p.id)} aimed a nuke at ${xy(r)}, which it has not discovered or is not ${who(target.id)}'s`);
+    };
+  });
+  watch(AI, 'retaliationTarget', ([p, attackerId]) => {
+    if (!met(p.id, attackerId)) fail(`${who(p.id)} aimed retaliation at ${who(attackerId)}, whom it has not met`);
+    return r => {
+      if (r < 0) return;
+      stats.retaliationAims++;
+      if (!seen(p.id, r)) fail(`${who(p.id)} aimed retaliation at ${xy(r)}, which it has not discovered`);
+    };
+  });
+
+  // Scouts.
+  const isBeach = tile => AI.fogCoast().beaches.some(list => list.includes(tile));
+  watch(Game, 'buildScout', ([id]) => {
+    if (!bot(id)) return null;
+    // Buying is for when no Scout of its own is free to be sent instead.
+    const st = Game.players[id].aiScout;
+    for (const sc of Game.scouts) {
+      if (sc.owner !== id || sc.routing || !atRest(sc)) continue;
+      const rec = st && st.ships.find(x => x.id === sc.id);
+      if (!rec || rec.fails < AI.SCOUT_MAX_FAILS) fail(`${who(id)} bought a Scout while its Scout ${sc.id} stood idle`);
+    }
+    return r => {
+      if (!r) return;
+      stats.scoutsBought++;
+      if (Game.scoutCount(id) > AI.scoutCap()) fail(`${who(id)} has ${Game.scoutCount(id)} Scouts, over this tier's ${AI.scoutCap()}`);
+    };
+  });
+  watch(Game, 'moveScouts', ([list, tile, id]) => {
+    if (!bot(id)) return null;
+    if (seen(id, tile) || !isBeach(tile)) fail(`${who(id)} sent a Scout to ${xy(tile)}, which is ${seen(id, tile) ? 'already discovered' : 'not a sample beach'}`);
+    for (const sc of list) if (!atRest(sc)) fail(`${who(id)} redirected Scout ${sc.id} in the middle of a voyage`);
+    return r => { if (r) stats.scoutOrders++; };
+  });
+  watch(Game, 'revealAround', ([id, , radius]) => {
+    if (!bot(id) || radius !== Game.VISION_SIGHT_SCOUT) return null;
+    const g = Game.visionGroupOf[id], had = Game.visionCount[g];
+    return () => { stats.scoutCells += Game.visionCount[g] - had; };
+  });
+  return stats;
+}
+
+// What must be true of every Nation's scouting state (AI.scoutThink) at the
+// end of a run. Called after the run's digest is taken: the last check may
+// draw from Game.rng.
+function fogBotScoutEnd(sim, name) {
+  const { Game, AI } = sim;
+  const fail = msg => { throw new Error(`FOG BOTS ${name}: ${msg}`); };
+  const out = { scoutNations: 0, finished: 0, writtenOff: 0, afloat: 0 };
+  for (const p of Game.players) {
+    const st = p.aiScout;
+    if (!st) continue;
+    if (!p.isBot) fail(`player ${p.id}, not a Nation, has scouting state`);
+    out.scoutNations++;
+    out.writtenOff += st.tried.size;
+    if (!p.alive) continue;
+    if (st.ships.length > AI.scoutCap()) fail(`Nation ${p.id} tracks ${st.ships.length} Scouts`);
+    for (const rec of st.ships) {
+      const sc = Game.scoutById(rec.id);
+      // A Scout sunk since the Nation last looked is still on its books.
+      if (sc && sc.owner !== p.id) fail(`Nation ${p.id} tracks Scout ${rec.id}, which is not its own`);
+      if (sc) out.afloat++;
+    }
+    if (st.done) {
+      out.finished++;
+      const retired = st.ships.filter(rec => rec.fails >= AI.SCOUT_MAX_FAILS).length;
+      const gaveUp = st.ships.length >= AI.scoutCap() && retired === st.ships.length;
+      if (!gaveUp && AI.scoutTarget(p, st.home, st, []) >= 0) fail(`Nation ${p.id} stopped scouting with a beach still to find`);
+    }
+  }
+  return out;
+}
+
+// Negative control: each rule fogBotWatch enforces is broken on purpose, by a
+// Nation, and has to be reported.
+function fogBotWatchControl() {
+  const cfg = { name: 'fog-bot-control', size: 'small', seed: 12345, bots: 8, tribes: 12, fogOfWar: true };
+  const sim = boot(cfg);
+  const { Game, GameMap, Hash, AI } = sim;
+  Game.init(Hash._syntheticGameStartInfo(cfg), 0);
+  while (Game.spawning) Game.tick();
+  fogBotWatch(sim, cfg.name);
+  const nations = Game.players.filter(p => p.isBot && p.alive);
+  let a = null, b = null;
+  for (const x of nations) for (const y of nations) if (!a && x !== y && !Game.hasMet(x.id, y.id)) { a = x; b = y; }
+  if (!a) throw new Error('FOG BOTS CONTROL: no two Nations that have not met');
+  const theirs = b.tiles.values().next().value;
+  let dark = -1, darkCoast = -1;
+  for (let t = 0; t < GameMap.owner.length && (dark < 0 || darkCoast < 0); t++) {
+    if (Game.isDiscovered(a.id, t)) continue;
+    if (dark < 0) dark = t;
+    if (darkCoast < 0 && GameMap.isLand(t) && GameMap.isCoastal(t)) darkCoast = t;
+  }
+  if (dark < 0 || darkCoast < 0 || Game.isDiscovered(a.id, theirs)) throw new Error('FOG BOTS CONTROL: nothing undiscovered to break the rules with');
+  const mine = a.tiles.values().next().value;
+  const breaches = {
+    'a boat at an undiscovered coast': () => Game.launchNavalInvasion(a.id, darkCoast, 100),
+    'a nuke at an undiscovered tile': () => Game.launchNuke(a.id, 'atombomb', dark),
+    'a MIRV at an undiscovered tile': () => Game.launchMirv(a.id, dark),
+    'a warship to undiscovered water': () => Game.buildWarship(a.id, dark),
+    'an embargo on an unmet nation': () => Game.addEmbargo(a.id, b.id, false),
+    'an alliance request to an unmet nation': () => Game.requestAlliance(a.id, b.id),
+    'a donation to an unmet nation': () => Game.donateTroops(a.id, b.id, 10),
+    'weighing an unmet nation\'s beach': () => AI.navalScore(a, b.id, 100, 10, new Set()),
+    'weighing an attack on an unmet nation': () => AI.provocation(a, b, null, new Set()),
+    'comparing strength with an unmet nation': () => AI.similarlyStrong(a, b),
+    'a nuke target in an unmet nation': () => AI.nukeTarget(b, a),
+    'an unmet nation counted as an enemy': () => { a.relations.set(b.id, -10); try { AI.hostiles(a, new Map([[b.id, 1]])); } finally { a.relations.delete(b.id); } },
+    'a Scout sent to a discovered tile': () => Game.moveScouts([], mine, a.id)
+  };
+  for (const [what, breach] of Object.entries(breaches)) {
+    let caught = false;
+    try { breach(); } catch (err) { caught = /^FOG BOTS /.test(err.message); if (!caught) throw err; }
+    if (!caught) throw new Error(`FOG BOTS CONTROL: ${what} was not reported`);
+  }
+  console.log(`fog-bots control: ${Object.keys(breaches).length} deliberate breaches by a Nation, every one reported: ok`);
+}
+
+// An alliance offer from a nation the bot has not met ("Unknown nation") is
+// answered, either way, without the bot looking the sender up: fogBotWatch
+// fails the run if it compares strengths with it.
+function fogBotStrangerOffer() {
+  const cfg = { name: 'fog-bot-stranger', size: 'small', seed: 12345, bots: 8, tribes: 12, fogOfWar: true };
+  const sim = boot(cfg);
+  const { Game, Hash, AI } = sim;
+  const expect = (ok, msg) => { if (!ok) throw new Error(`FOG BOTS STRANGER: ${msg}`); };
+  Game.init(Hash._syntheticGameStartInfo(cfg), 0);
+  while (Game.spawning) Game.tick();
+  const stats = fogBotWatch(sim, cfg.name);
+  const answers = { offers: 0, accepted: 0, declined: 0 };
+  // Past the opening minutes, so the answer is not the early "yes to almost anyone".
+  for (const elapsedTicks of [0, 2000]) {
+    while (Game.ticks < elapsedTicks) Game.tick();
+    for (const b of Game.players) {
+      if (!b.isBot || !b.alive || !Game.players[0].alive || Game.hasMet(b.id, 0) || Game.areAllied(0, b.id)) continue;
+      // The human has seen the bot; the bot has not seen the human.
+      Game.markMet(0, b.id);
+      Game.lastRequestAt.delete('0:' + b.id);
+      expect(Game.requestAlliance(0, b.id) === true && Game.pendingRequest(0, b.id), `the offer to ${b.id} was not sent`);
+      expect(!Game.hasMet(b.id, 0), 'receiving an offer made the bot meet its sender');
+      answers.offers++;
+      AI.handleRequests(b);
+      expect(Game.pendingRequest(0, b.id) === null, `${b.id} left the offer unanswered`);
+      if (Game.areAllied(0, b.id)) { answers.accepted++; expect(Game.hasMet(b.id, 0), 'accepting did not make the bot meet its new ally'); }
+      else { answers.declined++; expect(!Game.hasMet(b.id, 0), 'declining made the bot meet the sender'); }
+    }
+  }
+  expect(answers.offers > 0 && stats.strangerAnswers > 0, 'no offer from an unmet nation was answered as one');
+  expect(answers.accepted > 0 && answers.declined > 0, `the answers were all one way: ${JSON.stringify(answers)}`);
+  console.log(`fog-bots stranger: ${answers.offers} offers from an unmet nation, ${answers.accepted} accepted, ${answers.declined} declined, ${stats.strangerAnswers} decided blind, none by looking the sender up: ok`);
+}
+
+// A fog-off match never reaches the bots' fog code, and leaves none of its
+// state behind.
+function fogBotsOff() {
+  const cfg = { name: 'fog-off-bots-small-12345', size: 'small', seed: 12345, bots: 8, tribes: 12, ticks: 6000 };
+  const { Game, Hash, AI } = boot(cfg);
+  const fail = msg => { throw new Error(`FOG OFF BOTS: ${msg}`); };
+  Game.init(Hash._syntheticGameStartInfo(cfg), 0);
+  if (!Game.chooseSpawn(Hash.firstLegalSpawn())) fail('no legal human spawn');
+  for (const name of ['fogCoast', 'fogCoastStep', 'scoutThink', 'scoutPoll', 'scoutTarget', 'scoutWriteOff', 'buyScout', 'scoutLaunchWater', 'scoutCap', 'strangerDecision']) {
+    if (typeof AI[name] !== 'function') fail(`AI.${name} is missing`);
+    AI[name] = () => fail(`AI.${name} was reached in a fog-off match`);
+  }
+  let thinks = 0;
+  const naval = AI.navalThink, decide = AI.allianceDecision, economy = AI.economy;
+  AI.navalThink = function (...args) { thinks++; return naval.apply(this, args); };
+  AI.economy = function (...args) { thinks++; return economy.apply(this, args); };
+  AI.allianceDecision = function (...args) { thinks++; return decide.apply(this, args); };
+  for (let tick = 1; tick <= cfg.ticks; tick++) Game.tick();
+  if (!thinks) fail('the bots never thought, so nothing was tested');
+  if (AI._fogCoast !== null) fail('the beach table was built');
+  for (const p of Game.players) if ('aiScout' in p) fail(`player ${p.id} carries scouting state`);
+  console.log(`fog-off-bots: none of the bots' fog code reached in ${cfg.ticks} ticks (${thinks} bot decisions), no beach table, no scouting state: ok`);
 }
 
 function fogRun(cfg, second) {
@@ -255,6 +559,7 @@ function fogRun(cfg, second) {
     if (typeof original !== 'function') throw new Error(`Missing method ${name}`);
     Game[name] = function (...args) { coverage[name]++; return original.apply(this, args); };
   }
+  const bots = fogBotWatch(sim, cfg.name);
   // Right after an alliance forms the two sides have met and hold one map.
   const accept = Game.acceptAlliance;
   Game.acceptAlliance = function (req) {
@@ -284,7 +589,10 @@ function fogRun(cfg, second) {
     }
     if (!tampered && (tick % 250 === 0 || tick === cfg.ticks)) prev = fogInvariants(sim, prev, `${cfg.name} tick ${tick}`);
   }
-  return { checkpoints, digest: digest(Game, GameMap), simulationTicks: Game.ticks, coverage, stats: fogStats(sim) };
+  const result = { checkpoints, digest: digest(Game, GameMap), simulationTicks: Game.ticks, coverage, stats: fogStats(sim), bots: { ...bots } };
+  // After the digest: this check may draw from Game.rng.
+  if (!tampered) result.scouting = fogBotScoutEnd(sim, cfg.name);
+  return result;
 }
 
 function fogRules() {
@@ -1309,7 +1617,11 @@ function runFog() {
   fogSpawnMultiHuman();
   fogScoutsOff();
   fogScouts();
+  fogBotsOff();
+  fogBotWatchControl();
+  fogBotStrangerOffer();
   const fogTotals = Object.fromEntries(fogMethods.map(k => [k, 0]));
+  const botTotals = Object.fromEntries(fogBotCounters.map(k => [k, 0]));
   for (const cfg of kept) {
     const began = performance.now();
     fogSpawnChecks(cfg);
@@ -1318,14 +1630,23 @@ function runFog() {
       const p = first.checkpoints[i], q = second.checkpoints[i];
       if (p.hash !== q.hash) throw new Error(`FOG DIVERGENCE ${cfg.name} tick ${p.tick}: run 1 ${p.hash}, run 2 ${q.hash}`);
     }
-    for (const key of ['digest', 'simulationTicks', 'coverage']) {
+    for (const key of ['digest', 'simulationTicks', 'coverage', 'bots', 'scouting']) {
       if (JSON.stringify(first[key]) !== JSON.stringify(second[key])) throw new Error(`FOG DIVERGENCE ${cfg.name}: final ${key} differs between the two runs`);
     }
     for (const name of fogMethods) fogTotals[name] += first.coverage[name];
+    for (const name of fogBotCounters) botTotals[name] += first.bots[name];
+    // Bots that buy Scouts see more for it.
+    if (first.bots.scoutsBought > 0 && !(first.bots.scoutCells > 0)) throw new Error(`FOG BOTS ${cfg.name}: ${first.bots.scoutsBought} Scouts bought and nothing discovered by them`);
     console.log(`${cfg.name}: 2 x ${cfg.ticks} ticks (${first.simulationTicks} simulation ticks), ${first.checkpoints.length} checkpoints identical, final hash ${first.checkpoints[first.checkpoints.length - 1].hash}, ownerFNV ${first.digest.ownerFNV}, ${((performance.now() - began) / 1000).toFixed(2)}s`);
     console.log('Vision:', JSON.stringify(first.stats));
+    console.log('Bots:', JSON.stringify({ ...first.bots, ...first.scouting }));
   }
   console.log('Coverage:', JSON.stringify(fogTotals));
+  console.log('Bot coverage:', JSON.stringify(botTotals));
+  // Every rule fogBotWatch enforces has to have been exercised by a bot, or
+  // passing it says nothing.
+  const idleBots = ['boats', 'nukes', 'nukeAims', 'warshipOrders', 'embargoes', 'allianceRequests', 'donations', 'neighbours', 'navalScores', 'provocations', 'scoutsBought', 'scoutOrders', 'scoutCells'].filter(name => botTotals[name] === 0);
+  if (idleBots.length && !only) throw new Error(`Fog bot coverage missing: ${idleBots.join(', ')}`);
   const missing = ['acceptAlliance', 'breakAlliance', 'detonateNuke', 'resolveLanding', 'markMet', 'visionAllianceFormed'].filter(name => fogTotals[name] === 0);
   if (missing.length && !only) throw new Error(`Fog coverage missing: ${missing.join(', ')}`);
   console.log(`FOG OK (${kept.length} scenarios run twice, ${kept.reduce((sum, s) => sum + s.ticks, 0) * 2} ticks), ${((performance.now() - start) / 1000).toFixed(2)}s`);

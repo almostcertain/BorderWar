@@ -37,27 +37,29 @@ const AI = {
   //   embargoLiftAt          relation at which a nation lifts an embargo it
   //                          placed on someone it came to hate. OpenFront:
   //                          Neutral, but Hard holds out for Friendly.
+  //   scouts                 fog of war only: how many Scouts it keeps afloat
+  //                          (see scoutThink). Never read with fog off.
   PROFILES: {
     easy: {
       thinkMult: 1.6, navalMult: 1.6,
       confusion: 10,
       betrayHelpless: 20, betrayOpportunist: false,
       nukes: false, nukeChance: 0, hydrogenChance: 4, mirvChance: 0, retaliateChance: 0,
-      embargoLiftAt: 0
+      embargoLiftAt: 0, scouts: 1
     },
     medium: {
       thinkMult: 1, navalMult: 1,
       confusion: 20,
       betrayHelpless: 10, betrayOpportunist: true,
       nukes: true, nukeChance: 8, hydrogenChance: 4, mirvChance: 6, retaliateChance: 2,
-      embargoLiftAt: 0
+      embargoLiftAt: 0, scouts: 2
     },
     hard: {
       thinkMult: 0.7, navalMult: 0.7,
       confusion: 0,
       betrayHelpless: 5, betrayOpportunist: true,
       nukes: true, nukeChance: 5, hydrogenChance: 3, mirvChance: 4, retaliateChance: 1,
-      embargoLiftAt: 50
+      embargoLiftAt: 50, scouts: 2
     }
   },
 
@@ -108,6 +110,10 @@ const AI = {
 
   update() {
     const prof = this.profile();
+    // Fog of war: the beach table, a slice a tick until it is built.
+    if (Game.fog && !(this._fogCoast && this._fogCoast.ready && this._fogCoast.map === GameMap.landmasses)) {
+      this.fogCoastStep(Math.ceil(2 * GameMap.height / this.FOG_COAST_TICKS));
+    }
     for (const p of Game.players) {
       if (!p.isBot || !p.alive) continue;
 
@@ -155,6 +161,9 @@ const AI = {
   updateRelationsFromEmbargoes(p) {
     for (const other of Game.players) {
       if (other === p || other.isTribe) continue;
+      // Fog of war: an embargo from a nation p has not met is from "Unknown
+      // nation", so there is nobody to hold it against yet.
+      if (Game.fog && !Game.hasMet(p.id, other.id)) continue;
       const embargoed = Game.hasEmbargoAgainst(other.id, p.id);
       const applied = p.embargoMalusFrom.has(other.id);
       if (embargoed && !applied) {
@@ -175,6 +184,10 @@ const AI = {
     const liftAt = this.profile().embargoLiftAt;
     for (const other of Game.players) {
       if (other === p || !other.alive || other.isTribe) continue;
+      // Fog of war: the contact rule a human's embargo goes through
+      // (Game.embargoBlockReason). A relation can sour before contact (a
+      // nuke angers its target at launch), so this is not a formality.
+      if (Game.fog && !Game.hasMet(p.id, other.id)) continue;
       const rel = Game.relation(p, other.id);
       const has = Game.hasEmbargoAgainst(p.id, other.id);
       if (rel < this.HOSTILE && !has) Game.addEmbargo(p.id, other.id, false);
@@ -279,6 +292,11 @@ const AI = {
     const confusion = this.profile().confusion;
     if (confusion && this.chance(confusion)) return this.chance(2);
 
+    // Fog of war: an offer from a nation p has not met arrives as coming from
+    // "Unknown nation". p may still answer it, but not by reading the
+    // sender's army, land, record or standing.
+    if (Game.fog && !Game.hasMet(p.id, other.id)) return this.strangerDecision(p);
+
     // Nearly always refuse a traitor. This is the sharpest edge of the betrayal
     // penalty: for half a minute nobody will deal with you.
     if (Game.isTraitor(other) && this.pct() >= 10) return false;
@@ -296,6 +314,15 @@ const AI = {
     if (Game.elapsed < 180 && this.pct() >= 30) return true;
 
     return this.similarlyStrong(p, other);
+  },
+
+  // Fog of war only: allianceDecision for a sender p knows nothing about.
+  // The two tests that need no knowledge of the other side are kept as they
+  // are; the strength comparison that would settle the rest becomes a coin.
+  strangerDecision(p) {
+    if (p.allies.size >= this.range(4, 6)) return false;
+    if (Game.elapsed < 180 && this.pct() >= 30) return true;
+    return this.chance(2);
   },
 
   // Worth allying with if they bring comparable weight — measured on the whole
@@ -439,7 +466,8 @@ const AI = {
       const owner = GameMap.owner[b.tile];
       if (b.type === 'silo') {
         if (owner === p.id) ownSilos++;
-        else if (owner >= 0 && !Game.areAllied(p.id, owner)) rivalSilos++;
+        // Fog of war: only a Silo p can see is a reason to buy cover.
+        else if (owner >= 0 && !Game.areAllied(p.id, owner) && (!Game.fog || Game.isDiscovered(p.id, b.tile))) rivalSilos++;
       } else if (b.type === 'sam' && owner === p.id) {
         ownSams++;
       }
@@ -574,6 +602,10 @@ const AI = {
       if (site >= 0) Game.buildWarship(p.id, site);
     }
 
+    // Fog of war: a Scout, once scoutThink has somewhere to send one. After
+    // the build order above, so it is paid for out of what that leaves.
+    if (Game.fog) { this.scoutPoll(p); this.buyScout(p); }
+
     this.maybeNuke(p);
   },
 
@@ -632,7 +664,7 @@ const AI = {
     if (best < 0) return;
 
     const target = Game.players[best];
-    const targetTile = this.nukeTarget(target);
+    const targetTile = this.nukeTarget(target, p);
     if (targetTile < 0) return;
 
     const hydrogenWorthy = target.tiles.size > p.tiles.size || target.troops > p.troops;
@@ -690,6 +722,10 @@ const AI = {
       if (a.target !== p.id || a.retreating || a.attacker < 0 || a.troops <= biggest) continue;
       const t = Game.players[a.attacker];
       if (!t || !t.alive || t.isTribe || Game.areAllied(p.id, a.attacker)) continue;
+      // Fog of war: only a nation p has met. An attack is itself contact
+      // (Game.launchAttack, Game.resolveLanding), so this holds for every
+      // attacker; it is here so the rule does not rest on that.
+      if (Game.fog && !Game.hasMet(p.id, a.attacker)) continue;
       biggest = a.troops; hitter = a.attacker;
     }
     if (hitter < 0) return false;
@@ -718,10 +754,17 @@ const AI = {
   // ours — rejects it outright, since maybeBreakNukeAlliances would fire on
   // either. Returns -1 when no candidate is clean enough; the bot then holds
   // fire rather than crater itself.
+  //
+  // Fog of war: p aims only at what it has discovered. An aim point, a
+  // structure or a tile of the blast that lies in the black is not there as
+  // far as p knows, so it is neither a candidate nor counted in a score. p's
+  // own land and its allies' is always discovered, so the checks that keep
+  // the blast off them lose nothing.
   RETALIATE_FRONT_SAMPLES: 12,
   RETALIATE_OWN_LIMIT: 0.1,
 
   retaliationTarget(p, attackerId, type) {
+    const fog = Game.fog;
     const mag = Game.NUKE_MAGNITUDES[type];
     const w = GameMap.width, h = GameMap.height;
     const candidates = [];
@@ -749,11 +792,13 @@ const AI = {
         for (const d of depths) {
           const x = Math.round((f % w) + dx / len * d), y = Math.round(((f / w) | 0) + dy / len * d);
           if (x < 0 || y < 0 || x >= w || y >= h) continue;
+          if (fog && !Game.isDiscovered(p.id, y * w + x)) continue;
           if (GameMap.owner[y * w + x] === attackerId) candidates.push(y * w + x);
         }
       }
     }
     for (const b of Game.buildings.values()) {
+      if (fog && !Game.isDiscovered(p.id, b.tile)) continue;
       if (b.built && GameMap.owner[b.tile] === attackerId && this.NUKE_TARGET_PRIORITY[b.type]) candidates.push(b.tile);
     }
 
@@ -767,6 +812,7 @@ const AI = {
         for (let x = Math.max(0, cx - mag.outer); x <= Math.min(w - 1, cx + mag.outer); x += step) {
           const d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
           if (d2 > outer2) continue;
+          if (fog && !Game.isDiscovered(p.id, y * w + x)) continue;
           const o = GameMap.owner[y * w + x];
           const wt = d2 <= inner2 ? 2 : 1;
           if (o === attackerId) theirs += wt;
@@ -778,6 +824,7 @@ const AI = {
       let score = theirs - mine * 5;
       for (const b of Game.buildings.values()) {
         if (Game.tileDistSq(c, b.tile) >= outer2) continue;
+        if (fog && !Game.isDiscovered(p.id, b.tile)) continue;
         const o = GameMap.owner[b.tile];
         if (o === p.id || (o >= 0 && Game.areAllied(p.id, o))) { score = -1; break; }
         if (o === attackerId) score += (this.NUKE_TARGET_PRIORITY[b.type] || 0) * 20;
@@ -800,15 +847,21 @@ const AI = {
   //
   // Falls back to a random owned tile when the target has nothing built,
   // which is also the pre-existing behaviour for every target.
+  //
+  // Fog of war: `p`, the nation firing, aims only at what it has discovered:
+  // a structure it can see or, failing that, a tile of the target's it can
+  // see. -1 when it can see none of the target's land.
   NUKE_TARGET_PRIORITY: { silo: 4, sam: 3, city: 2, factory: 1, port: 1 },
 
-  nukeTarget(target) {
+  nukeTarget(target, p) {
+    const fog = Game.fog;
     let best = -1, bestScore = 0;
     for (const b of Game.buildings.values()) {
       if (!b.built) continue;
       if (GameMap.owner[b.tile] !== target.id) continue;
       const weight = this.NUKE_TARGET_PRIORITY[b.type] || 0;
       if (weight === 0) continue;
+      if (fog && !Game.isDiscovered(p.id, b.tile)) continue;
       // Jitter is strictly smaller than one priority step, so it shuffles
       // between equally-valuable targets without ever letting a Port outrank
       // a Silo.
@@ -819,6 +872,19 @@ const AI = {
 
     if (target.tiles.size === 0) return -1;
     let n = Math.floor(Game.rng() * target.tiles.size);
+    if (fog) {
+      // The same random start, then the first tile from there on that p has
+      // discovered, wrapping round to the start of the set.
+      let wrapped = -1;
+      for (const t of target.tiles) {
+        if (Game.isDiscovered(p.id, t)) {
+          if (n <= 0) return t;
+          if (wrapped < 0) wrapped = t;
+        }
+        n--;
+      }
+      return wrapped;
+    }
     for (const t of target.tiles) if (n-- <= 0) return t;
     return -1;
   },
@@ -1069,6 +1135,9 @@ const AI = {
     // A nuke inbound on p's land is an attack just like an army.
     for (const n of Game.nukes) {
       if (n.ownerId === p.id || GameMap.owner[n.dst] !== p.id) continue;
+      // Fog of war: until it lands, a nuke from a nation p has not met is
+      // from "Unknown nation".
+      if (Game.fog && !Game.hasMet(p.id, n.ownerId)) continue;
       const atk = Game.players[n.ownerId];
       if (atk && atk.alive && !atk.isTribe) out.add(n.ownerId);
     }
@@ -1102,6 +1171,8 @@ const AI = {
       const ally = Game.players[allyId];
       if (!ally || !ally.alive) continue;
       if (p.allies.has(allyId)) { f *= this.RISK_TIES_PENALTY; continue; }
+      // Fog of war: a backer p has never met is one it does not know of.
+      if (Game.fog && !Game.hasMet(p.id, allyId)) continue;
       backing += Game.totalTroops(ally) * (contact && contact.has(allyId) ? 1 : 0.5);
     }
     const ratio = backing / mine;
@@ -1327,6 +1398,11 @@ const AI = {
     const homeCoast = this.coastalTiles(p);
     if (homeCoast.length === 0) return;
 
+    // Fog of war: Scouts get their orders on this beat too, ahead of the
+    // returns below, so a nation with its hands full still explores.
+    const fog = Game.fog;
+    if (fog) this.scoutThink(p, homeCoast);
+
     const hostiles = this.hostiles(p, null);
     const reserve = hostiles.size > 0 ? this.NAVAL_RESERVE_UNDER_ATTACK : this.NAVAL_RESERVE;
     if (p.troops < Game.maxTroops(p) * reserve) return;
@@ -1340,9 +1416,15 @@ const AI = {
     for (const t of p.tiles) heldLandmasses.add(GameMap.landmassId[t]);
 
     const candidates = [];
+    // Fog of war: the beaches come from fogCoast instead of coastSample.
+    const beaches = fog ? this.fogCoast().beaches : null;
     for (const lm of GameMap.landmasses) {
       let bestTile = -1, bestTileScore = -Infinity, bestTarget = -1, bestDist = 0;
-      for (const tile of lm.coastSample) {
+      for (const tile of (beaches ? beaches[lm.id] : lm.coastSample)) {
+        // Fog of war: a beach p has not discovered is not a candidate. First,
+        // so nothing about it is read, ranked or routed to. Its owner, if it
+        // has one, is then a nation p has met (game/vision.js).
+        if (fog && !Game.isDiscovered(p.id, tile)) continue;
         const owner = GameMap.owner[tile];
         if (owner === p.id || p.allies.has(owner)) continue;
         // Same landmass we already hold ground on — think() already handles
@@ -1478,6 +1560,304 @@ const AI = {
       if (out.length >= this.NAVAL_COAST_SAMPLE_CAP) break;
     }
     return out;
+  },
+
+  // --- Fog of war: beaches (docs/fog-of-war.md) ------------------------------
+  // With the whole map in view navalThink ranks landmasses by a few sample
+  // tiles each, GameMap's coastSample: the first twelve coastal tiles in scan
+  // order, which is one landmass's northern tip. Under fog a nation may only
+  // weigh a beach it has discovered, and those twelve are the wrong sample
+  // for that: it could see the whole southern shore of the island next door
+  // and still have nothing to send a boat to. So a fog match samples the
+  // coast its own way, all the way round every landmass: one coastal tile
+  // for each vision cell (game/vision.js, the unit discovery is counted in)
+  // the coast runs through, thinned evenly to FOG_BEACH_CAP a landmass. A
+  // beach is somewhere to land a boat once it is discovered, and somewhere to
+  // send a Scout until then.
+  //
+  // Only coast on the ocean, the largest body of water, is sampled. A lake
+  // shore is no use to a nation that is not already on that lake, and a beach
+  // no Scout or boat can sail to would keep being picked and never reached.
+  //
+  // The table is fixed geography, worked out from the map alone, so it is the
+  // same on every client and is not sim state: it lives here on AI, not on
+  // Game, and nothing hashes it. The scan behind it reads every tile once
+  // (about 20 ms on a 2000x1000 map). update() runs it a slice a tick from
+  // the start of a fog match, so it is long finished by the first navalThink;
+  // fogCoast() finishes whatever is left before it answers, so what a caller
+  // gets never depends on how the slices fell.
+  FOG_BEACH_CAP: 24,
+  FOG_COAST_TICKS: 20,
+  _fogCoast: null,
+
+  // { beaches: one array of tiles per landmass (index = landmass id), ocean:
+  // that body of water's GameMap.waterComponentId }.
+  fogCoast() {
+    let fc = this._fogCoast;
+    while (!fc || fc.map !== GameMap.landmasses || !fc.ready) fc = this.fogCoastStep(Infinity);
+    return fc;
+  },
+
+  // Advances the scan by `rows` map rows. Two passes over the map: the size
+  // of every body of water, then the coast.
+  fogCoastStep(rows) {
+    let fc = this._fogCoast;
+    if (!fc || fc.map !== GameMap.landmasses) {
+      fc = this._fogCoast = {
+        map: GameMap.landmasses, ready: false, row: 0, ocean: -1,
+        sizes: [], seen: new Set(), beaches: GameMap.landmasses.map(() => [])
+      };
+    }
+    if (fc.ready) return fc;
+    const w = GameMap.width, h = GameMap.height;
+    const owner = GameMap.owner, wc = GameMap.waterComponentId, lmOf = GameMap.landmassId;
+    const cells = Game.visionCellsW * Game.visionCellsH;
+    const end = Math.min(2 * h, fc.row + rows);
+    for (; fc.row < end; fc.row++) {
+      if (fc.row < h) {
+        const sizes = fc.sizes;
+        for (let t = fc.row * w, e = t + w; t < e; t++) {
+          const c = wc[t];
+          if (c >= 0) sizes[c] = (sizes[c] || 0) + 1;
+        }
+        if (fc.row === h - 1) {
+          // The largest; the lowest id among equals.
+          let most = 0;
+          for (let c = 0; c < sizes.length; c++) if (sizes[c] > most) { most = sizes[c]; fc.ocean = c; }
+        }
+        continue;
+      }
+      const y = fc.row - h, ocean = fc.ocean;
+      for (let x = 0, t = y * w; x < w; x++, t++) {
+        if (owner[t] === WATER) continue;
+        if (!((x > 0 && wc[t - 1] === ocean) || (x < w - 1 && wc[t + 1] === ocean) ||
+              (y > 0 && wc[t - w] === ocean) || (y < h - 1 && wc[t + w] === ocean))) continue;
+        const lm = lmOf[t];
+        const key = lm * cells + Game.visionCellOf(t);
+        if (lm < 0 || fc.seen.has(key)) continue;
+        fc.seen.add(key);
+        fc.beaches[lm].push(t);
+      }
+    }
+    if (fc.row >= 2 * h) {
+      const cap = this.FOG_BEACH_CAP;
+      for (let i = 0; i < fc.beaches.length; i++) {
+        const all = fc.beaches[i];
+        if (all.length <= cap) continue;
+        const kept = [];
+        for (let k = 0; k < cap; k++) kept.push(all[Math.floor(k * all.length / cap)]);
+        fc.beaches[i] = kept;
+      }
+      fc.sizes = fc.seen = null;
+      fc.ready = true;
+    }
+    return fc;
+  },
+
+  // --- Fog of war: scouting (docs/fog-of-war.md) -----------------------------
+  // Border sight alone shows a nation very little coast, so a nation with a
+  // Port on the ocean keeps Scouts (game/scouts.js) at sea. Each is sent one
+  // voyage at a time to the beach the nation most wants to see: the
+  // undiscovered one nearest its own coast, by the same straight-line
+  // distance navalThink ranks beaches with. Everything the Scout passes on
+  // the way is revealed too, which is where most of a nation's contacts with
+  // other nations come from.
+  //
+  // What a nation knows going in is where the sample beaches are (fogCoast),
+  // never what is on them: nothing about an undiscovered tile is read here
+  // but its position. Whether a voyage worked is judged the way a player
+  // would judge it, by looking at the map afterwards:
+  //   - the beach is discovered: good, on to the next;
+  //   - the Scout has stopped and the beach is still black: it could not get
+  //     there, and that beach is written off (`tried`);
+  //   - the Scout is gone: the way there is watched, and every beach within
+  //     SCOUT_LOSS_RADIUS of the one it was sailing for is written off, so
+  //     the replacement is not sent after it.
+  // A Scout that fails SCOUT_MAX_FAILS voyages running has run out of coast
+  // it can get to (a Scout's route search gives up on the far side of a big
+  // continent) and is left where it is. Each failure costs a full route
+  // search, so the limit is also what bounds that.
+  //
+  // All of it is per nation, on `p.aiScout`, which only a nation with a Port
+  // in a fog match ever gets:
+  //   ships    one { id, tile, fails } per Scout afloat: its id, the beach it
+  //            is sailing for (-1 when it has no order) and how many voyages
+  //            in a row have failed
+  //   tried    beaches (tiles) written off
+  //   home     navalThink's last coastalTiles(p), for scoutPoll
+  //   want     the beach the next Scout should be bought for, or -1
+  //   bought   Scouts bought so far; lastBuy, the tick of the last purchase
+  //   done     nothing left to find, or nobody left to look: stop thinking
+  //
+  // Cost. scoutThink runs on navalThink's beat (once a nation every 15-25 s)
+  // and again when a voyage ends. Each run scans the sample beaches, under a
+  // thousand tiles on The World; the vision grid itself is never walked.
+  // scoutPoll and buyScout, on economy's beat, are a few comparisons.
+  //
+  // A replacement for a lost Scout waits SCOUT_REPLACE_TICKS after the last
+  // purchase, so a nation whose Scouts keep being sunk pays for one every two
+  // minutes at most.
+  SCOUT_REPLACE_TICKS: 1200,
+  SCOUT_MAX_FAILS: 3,
+  SCOUT_LOSS_RADIUS: 80,
+
+  scoutCap() {
+    return Math.min(Game.MAX_SCOUTS_PER_PLAYER, this.profile().scouts);
+  },
+
+  // navalThink's hook, fog matches only. `homeCoast` is navalThink's own
+  // coastalTiles(p) sample.
+  scoutThink(p, homeCoast) {
+    let st = p.aiScout;
+    if (!st) {
+      if (Game.unitsOwned(p, 'port') < 1) return;
+      st = p.aiScout = { ships: [], tried: new Set(), home: null, want: -1, bought: 0, lastBuy: 0, done: false };
+    }
+    if (st.done) return;
+    st.home = homeCoast;
+
+    // What became of each order since the last look. `taken` collects the
+    // beaches a Scout is still sailing for.
+    const taken = [];
+    for (let i = st.ships.length - 1; i >= 0; i--) {
+      const rec = st.ships[i];
+      const s = Game.scoutById(rec.id);
+      if (!s) {
+        if (rec.tile >= 0 && !Game.isDiscovered(p.id, rec.tile)) this.scoutWriteOff(st, rec.tile);
+        st.ships.splice(i, 1);
+        continue;
+      }
+      if (rec.tile >= 0 && !s.routing && s.pos >= s.path.length - 1) {
+        if (Game.isDiscovered(p.id, rec.tile)) rec.fails = 0;
+        else { rec.fails++; st.tried.add(rec.tile); }
+        rec.tile = -1;
+      }
+      if (rec.tile >= 0) taken.push(rec.tile);
+    }
+
+    // A Scout with no order is sent on, rather than a new one bought.
+    let none = false, retired = 0;
+    for (const rec of st.ships) {
+      if (rec.fails >= this.SCOUT_MAX_FAILS) { retired++; continue; }
+      if (rec.tile >= 0 || none) continue;
+      const tile = this.scoutTarget(p, homeCoast, st, taken);
+      if (tile < 0) { none = true; continue; }
+      if (!Game.moveScouts([Game.scoutById(rec.id)], tile, p.id)) continue;
+      rec.tile = tile;
+      taken.push(tile);
+    }
+
+    // Room for another: say which beach economy() should buy it for.
+    const room = st.ships.length < this.scoutCap();
+    st.want = room && !none ? this.scoutTarget(p, homeCoast, st, taken) : -1;
+    if (room && st.want < 0) none = true;
+    if ((none && taken.length === 0) || (!room && retired === st.ships.length)) st.done = true;
+  },
+
+  // A Scout bound for `tile` was sunk: write off that beach and its
+  // neighbours.
+  scoutWriteOff(st, tile) {
+    const w = GameMap.width, tx = tile % w, ty = (tile / w) | 0;
+    for (const list of this.fogCoast().beaches) {
+      for (const b of list) {
+        if (Math.abs((b % w) - tx) + Math.abs(((b / w) | 0) - ty) <= this.SCOUT_LOSS_RADIUS) st.tried.add(b);
+      }
+    }
+  },
+
+  // economy()'s hook, fog matches only: a Scout that has finished its voyage
+  // (or been sunk on it) gets scoutThink's attention now, on economy's 2-5 s
+  // beat, instead of drifting until the next navalThink.
+  scoutPoll(p) {
+    const st = p.aiScout;
+    if (!st || st.done || !st.home) return;
+    for (const rec of st.ships) {
+      if (rec.tile < 0) continue;
+      const s = Game.scoutById(rec.id);
+      if (!s || (!s.routing && s.pos >= s.path.length - 1)) { this.scoutThink(p, st.home); return; }
+    }
+  },
+
+  // The undiscovered beach nearest p's own coast, or -1. Skips beaches
+  // written off, and beaches a Scout already under way (`taken`, the tiles
+  // they are bound for) will reveal on arrival. Equal distances are settled
+  // by Game.rng, which is drawn from only then.
+  scoutTarget(p, homeCoast, st, taken) {
+    const w = GameMap.width, sight = Game.VISION_SIGHT_SCOUT * Game.VISION_CELL;
+    // nearestDist's distance, with the home coast's coordinates worked out
+    // once rather than once per beach: this is the scan's whole cost.
+    const n = homeCoast.length, hx = new Int32Array(n), hy = new Int32Array(n);
+    for (let i = 0; i < n; i++) { hx[i] = homeCoast[i] % w; hy[i] = (homeCoast[i] / w) | 0; }
+    let bestDist = Infinity;
+    const ties = [];
+    for (const list of this.fogCoast().beaches) {
+      for (const tile of list) {
+        if (Game.isDiscovered(p.id, tile) || st.tried.has(tile)) continue;
+        const tx = tile % w, ty = (tile / w) | 0;
+        let d = Infinity;
+        for (let i = 0; i < n; i++) {
+          let dx = hx[i] - tx, dy = hy[i] - ty;
+          if (dx < 0) dx = -dx;
+          if (dy < 0) dy = -dy;
+          if (dx + dy < d) d = dx + dy;
+        }
+        if (d > bestDist) continue;
+        let covered = false;
+        for (const t of taken) {
+          if (Math.abs((t % w) - tx) + Math.abs(((t / w) | 0) - ty) <= sight) { covered = true; break; }
+        }
+        if (covered) continue;
+        if (d < bestDist) { bestDist = d; ties.length = 0; }
+        ties.push(tile);
+      }
+    }
+    if (ties.length === 0) return -1;
+    return ties.length === 1 ? ties[0] : ties[Math.floor(Game.rng() * ties.length)];
+  },
+
+  // economy()'s hook, fog matches only: buys the Scout scoutThink asked for.
+  // Not held back by the savings reserve, for the reason the first Port and
+  // Warship are not (NAVY_EXEMPT_COUNT): at 25k it is a fortieth of a Silo.
+  //
+  // Bought toward the water beside one of p's own Ports on the ocean, and
+  // given its real order straight afterwards. Game.buildScout launches from
+  // the Port nearest the tile it is given, and a Scout launched into a lake
+  // would never leave it; given discovered water, it launches onto that body
+  // of water. The order comes from scoutThink rather than from `want`
+  // because the launch itself reveals the sea round the Port, which can be
+  // enough to show the beach that was wanted.
+  buyScout(p) {
+    const st = p.aiScout;
+    if (!st || st.want < 0) return;
+    if (Game.unitsOwned(p, 'port') < 1 || p.gold < Game.unitCost(p, 'scout')) return;
+    if (st.bought >= this.scoutCap() && Game.ticks - st.lastBuy < this.SCOUT_REPLACE_TICKS) return;
+    // One attempt per request: scoutThink asks again on its next beat.
+    const beach = st.want;
+    st.want = -1;
+    if (Game.isDiscovered(p.id, beach)) return;
+    const from = this.scoutLaunchWater(p, beach);
+    if (from < 0 || !Game.buildScout(p.id, from)) return;
+    st.ships.push({ id: Game.scouts[Game.scouts.length - 1].id, tile: -1, fails: 0 });
+    st.bought++;
+    st.lastBuy = Game.ticks;
+    this.scoutThink(p, st.home);
+  },
+
+  // An ocean tile beside p's built Port nearest `beach`, or -1 when p has no
+  // Port on the ocean. p's own shore, so always discovered.
+  scoutLaunchWater(p, beach) {
+    const ocean = this.fogCoast().ocean, wc = GameMap.waterComponentId, nb = Game.abuf;
+    let best = -1, bestDist = Infinity;
+    for (const b of Game.buildings.values()) {
+      if (b.type !== 'port' || !b.built || GameMap.owner[b.tile] !== p.id) continue;
+      const d = Game.tileDistSq(b.tile, beach);
+      if (d >= bestDist) continue;
+      const n = GameMap.neighbors(b.tile, nb);
+      for (let k = 0; k < n; k++) {
+        if (wc[nb[k]] === ocean) { best = nb[k]; bestDist = d; break; }
+      }
+    }
+    return best;
   },
 
   // Map of neighbouring owner -> number of contacted border tiles. Allies are

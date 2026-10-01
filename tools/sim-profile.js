@@ -31,7 +31,12 @@ wrap(AI,'update','AI.update');wrap(TribeAI,'update','TribeAI.update');
 // wrap AI sub-methods
 for(const k of Object.keys(AI)) if(typeof AI[k]==='function'&&k!=='update') wrap(AI,k,'AI.'+k);
 const rows=[];
-for(let t=1;t<=TICKS&&Game.winnerId===null;t++){for(const k in cur)delete cur[k];const s=performance.now();Game.tick();const dt=performance.now()-s;rows.push({t,dt,br:{...cur}});}
+// Fog of war: how many ticks each Scout order stands still waiting for its
+// route (its own search plus its turn: one search runs at a time, for the
+// whole match). Counted outside the timed part of the tick.
+const waiting=new Map(),waits=[];let scoutPeak=0;
+function scoutWaits(){scoutPeak=Math.max(scoutPeak,Game.scouts.length);const live=new Set();for(const s of Game.scouts){live.add(s.id);if(s.routing&&s.pos>=s.path.length-1)waiting.set(s.id,(waiting.get(s.id)||0)+1);else if(waiting.has(s.id)){waits.push(waiting.get(s.id));waiting.delete(s.id);}}for(const id of waiting.keys())if(!live.has(id))waiting.delete(id);}
+for(let t=1;t<=TICKS&&Game.winnerId===null;t++){for(const k in cur)delete cur[k];const s=performance.now();Game.tick();const dt=performance.now()-s;rows.push({t,dt,br:{...cur}});if(FOG)scoutWaits();}
 const dts=rows.map(r=>r.dt).sort((a,b)=>a-b);
 const q=p=>dts[Math.floor(p*(dts.length-1))].toFixed(2);
 console.log('ticks',rows.length,'mean',(dts.reduce((a,b)=>a+b)/dts.length).toFixed(2),'p50',q(.5),'p95',q(.95),'p99',q(.99),'max',q(1));
@@ -48,4 +53,5 @@ if(typeof gc==='function')gc();
 const mem=process.memoryUsage(),mb=n=>(n/1048576).toFixed(2);
 const vision=['visionGroupOf','visionCells','visionStamped','visionShare','visionMet','visionCount'].reduce((sum,k)=>sum+(Game[k]?Game[k].byteLength:0),0);
 console.log('memory MB: heapUsed',mb(mem.heapUsed),'arrayBuffers',mb(mem.arrayBuffers),'| vision arrays',mb(vision),'groups',Game.visionGroups,'words',Game.visionWords,'cells',Game.visionCellsW*Game.visionCellsH);
+if(FOG){waits.sort((a,b)=>a-b);const w=p=>waits.length?waits[Math.floor(p*(waits.length-1))]:0;console.log('scout route waits (ticks): orders',waits.length,'mean',(waits.reduce((a,b)=>a+b,0)/Math.max(1,waits.length)).toFixed(2),'p50',w(.5),'p95',w(.95),'p99',w(.99),'max',w(1),'| peak scouts afloat',scoutPeak);}
 console.log('final hash',Hash.compute(),'ticks',Game.ticks);
