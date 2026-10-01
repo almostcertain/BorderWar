@@ -497,6 +497,8 @@ const Game = {
     // Fog of war vision state (game/vision.js). Allocates nothing with fog
     // off. Before the first claim below, which already reveals.
     this.initVision();
+    // Fog of war's Scouts (game/scouts.js): an empty list every match.
+    this.initScouts();
 
     // Spawn-pick phase: every Nation/Tribe claims a provisional starting disc
     // immediately, then keeps re-rolling it to a new nearby spot every
@@ -952,6 +954,8 @@ const Game = {
     this.updatePortTrade();
     this.stepTradeShips();
     this.stepWarships();
+    // Fog of war's Scouts (game/scouts.js). None can exist with fog off.
+    if (this.fog) this.stepScouts();
     this.stepShells();
     // Must run before stepSAMs/stepNukes: a MIRV that splits this tick has
     // to land its fresh MIRVWarhead entries in this.nukes before either one

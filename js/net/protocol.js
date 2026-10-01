@@ -75,7 +75,7 @@ const Protocol = {
   // Which Game.* method that becomes is the Executor's business (MP-1.2).
   UNIT_TYPES: [
     'city', 'factory', 'port', 'fort', 'warship',
-    'silo', 'atombomb', 'hydrogenbomb', 'sam', 'mirv'
+    'silo', 'atombomb', 'hydrogenbomb', 'sam', 'mirv', 'scout'
   ],
 
   // The procedural generator's lobby knobs, carried as config.mapGen on
@@ -306,6 +306,15 @@ const Protocol = {
       openfront: 'MoveWarshipIntentSchema (single unitId there; a list here — '
         + 'this game shift-selects a fleet and moves it as one order)'
     },
+    move_scout: {
+      // Ours (fog of war, docs/fog-of-war.md). The same shape as move_warship
+      // and a separate intent on purpose: a Scout may be sent to any tile,
+      // a warship may not, and one intent with two sets of rules would have
+      // to ask what each id is before it knew which applied.
+      fields: { unitIds: 'entityIdList', tile: 'tile' },
+      from: 'Game.moveScouts',
+      openfront: null
+    },
     annex_region: {
       // Ours. The click carries only a tile; the Executor re-derives the target
       // nation from GameMap.owner[tile] exactly as ui.js does today, which is
@@ -513,6 +522,7 @@ const Protocol = {
     // Array.from(UI.selectedWarships) must not be able to mutate an intent
     // that has already been queued for a turn.
     moveWarship(unitIds, tile) { return { type: 'move_warship', unitIds: unitIds.slice(), tile: tile }; },
+    moveScout(unitIds, tile) { return { type: 'move_scout', unitIds: unitIds.slice(), tile: tile }; },
     annexRegion(tile) { return { type: 'annex_region', tile: tile }; },
     allianceRequest(recipient) { return { type: 'allianceRequest', recipient: recipient }; },
     allianceReject(requestor) { return { type: 'allianceReject', requestor: requestor }; },

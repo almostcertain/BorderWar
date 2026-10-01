@@ -451,6 +451,10 @@ Object.assign(Game, {
     for (let i = this.warships.length - 1; i >= 0; i--) {
       if (withinOuter(this.pathPos(this.warships[i]))) this.warships.splice(i, 1);
     }
+    // Fog of war's Scouts (game/scouts.js); an empty list with fog off.
+    for (let i = this.scouts.length - 1; i >= 0; i--) {
+      if (withinOuter(this.pathPos(this.scouts[i]))) this.scouts.splice(i, 1);
+    }
     for (let i = this.boats.length - 1; i >= 0; i--) {
       if (withinOuter(this.pathPos(this.boats[i]))) this.boats.splice(i, 1);
     }

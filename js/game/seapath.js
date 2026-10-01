@@ -333,4 +333,236 @@ Object.assign(Game, {
     return tiles;
   },
 
+  // --- Closest reachable water (fog of war scouts, game/scouts.js) -----------
+  //
+  // seaPath answers "is there a route to this tile" and says no for land, for
+  // a lake the ship cannot get into, and when its guard runs out. A Scout may
+  // never be told no because of terrain — the refusal itself would say what is
+  // under the fog (docs/fog-of-war.md) — so this is the search that always
+  // has an answer: sail toward a tile, whatever it is, and end on the closest
+  // water that can actually be reached.
+  //
+  // It is the same weighted A* as seaPath (same costs, heuristic weight,
+  // tie-breaker and smoothing) with two differences.
+  //
+  // IT KEEPS THE BEST TILE IT HAS SEEN, by straight grid distance to what it
+  // is steering for, and when it stops without arriving that tile is the
+  // answer. What it steers for (the "aim") is the goal itself when the ship
+  // can sail onto it; otherwise the nearest tile of the ship's own body of
+  // water within SEA_TOWARD_SNAP_DIST of the goal — the exact closest
+  // reachable water, found by a ring scan before the search starts, so a
+  // click on land or on a lake has a real destination to path to. Only when
+  // there is no such tile does the search run "blind": it steers at the goal
+  // itself, which it can never reach, and settles for the best tile within
+  // SEA_TOWARD_BLIND_NODES.
+  //
+  // IT NEVER EXCEEDS THE TICK'S SEA BUDGET. seaPath only checks the budget
+  // before it starts and then runs to its own 200k guard in one go. This runs
+  // in slices: seaTowardRun explores at most `slice` tiles per call, and
+  // inside tick() only runs at all when the whole slice (plus the fixed cost,
+  // on the first one) still fits in what SEA_PATH_NODE_BUDGET_PER_TICK has
+  // left. The search state survives between calls, so a long route is found
+  // over several ticks rather than not at all: the same 200k guard seaPath
+  // has, spent a slice at a time. Either a slice runs whole or it does not
+  // run, which keeps the route a ship gets independent of what else was
+  // searching that tick; only when it gets it moves.
+  //
+  // That is what the separate arena below is for: seaPath's own is wiped by
+  // every other search between one slice and the next. It holds ONE search at
+  // a time — starting a second wipes the first — so the caller owns the
+  // rule that only one is in flight (Game.scoutSearch).
+  //
+  // Deterministic: integer math over the map, a binary heap with a fixed push
+  // order, nothing from Game.rng. The state object and the arena are sim
+  // state like any other and are only advanced inside tick().
+  SEA_TOWARD_SNAP_DIST: 256,
+  SEA_TOWARD_BLIND_NODES: 40000,
+
+  // The arena seaTowardRun searches in. `mark` bit 0: the tile has a cost and
+  // a parent; bit 1: it is closed. Built on first use, so only a fog match
+  // with a Scout in it ever has one. The heap is sized to the guard: every
+  // pop pushes at most three tiles.
+  _seaTowardArena: null,
+  seaTowardArena(size) {
+    let a = this._seaTowardArena;
+    if (!a || a.size !== size) {
+      const cap = this.SEA_PATH_GUARD * 3 + 4;
+      a = this._seaTowardArena = {
+        size,
+        mark: new Uint8Array(size),
+        gVal: new Int32Array(size),
+        from: new Int32Array(size),
+        heapId: new Int32Array(cap),
+        heapPri: new Int32Array(cap)
+      };
+    }
+    return a;
+  },
+
+  // A new search from water tile `fromTile` toward `goalTile` (any tile on
+  // the map), not yet run. Costs nothing; seaTowardRun does the work.
+  //   done       the search is over and seaTowardPath has its answer
+  //   arrived    it ended on the tile it was steering for
+  //   exhausted  it ended because there was no sea left to explore, so the
+  //              best tile is the closest there is
+  //   nodes      tiles explored so far
+  seaTowardStart(fromTile, goalTile) {
+    return {
+      from: fromTile, goal: goalTile, aim: goalTile, reachable: false,
+      begun: false, done: false, arrived: false, exhausted: false,
+      limit: 0, nodes: 0, heapLen: 0, best: fromTile, bestH: 0
+    };
+  },
+
+  // Advances search `st` by at most `slice` explored tiles. Returns true when
+  // the search is over, false when it has more to do, and null when it did
+  // nothing because this tick's sea budget has no room for the slice (ask
+  // again next tick).
+  seaTowardRun(st, slice) {
+    if (st.done) return true;
+    const owner = GameMap.owner, shoreDist = GameMap.shoreDist, w = GameMap.width;
+    if (owner[st.from] !== WATER) { st.done = st.exhausted = true; return true; }
+
+    const budget = this.SEA_PATH_NODE_BUDGET_PER_TICK;
+    const fixed = st.begun ? 0 : this.SEA_PATH_SEARCH_COST;
+    let cap = Math.max(1, Math.min(slice | 0, budget - this.SEA_PATH_SEARCH_COST));
+    if (this._inTick) {
+      if (this._seaPathNodesThisTick + fixed + cap > budget) return null;
+      this._seaPathNodesThisTick += fixed;
+      if (!st.begun) this._seaPathSearchesThisTick++;
+    }
+
+    const arena = this.seaTowardArena(owner.length);
+    const mark = arena.mark, gVal = arena.gVal, from = arena.from;
+    const heapId = arena.heapId, heapPri = arena.heapPri;
+    let heapLen = st.heapLen;
+
+    // The same binary heap as seaPath's.
+    const heapPush = (id, pri) => {
+      let i = heapLen++;
+      heapId[i] = id; heapPri[i] = pri;
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (heapPri[p] <= heapPri[i]) break;
+        const tid = heapId[p]; heapId[p] = heapId[i]; heapId[i] = tid;
+        const tpr = heapPri[p]; heapPri[p] = heapPri[i]; heapPri[i] = tpr;
+        i = p;
+      }
+    };
+    const heapPop = () => {
+      const top = heapId[0];
+      const lastId = heapId[--heapLen], lastPri = heapPri[heapLen];
+      if (heapLen > 0) {
+        heapId[0] = lastId; heapPri[0] = lastPri;
+        let i = 0;
+        const n = heapLen;
+        while (true) {
+          let l = i * 2 + 1, r = l + 1, smallest = i;
+          if (l < n && heapPri[l] < heapPri[smallest]) smallest = l;
+          if (r < n && heapPri[r] < heapPri[smallest]) smallest = r;
+          if (smallest === i) break;
+          const tid = heapId[smallest]; heapId[smallest] = heapId[i]; heapId[i] = tid;
+          const tpr = heapPri[smallest]; heapPri[smallest] = heapPri[i]; heapPri[i] = tpr;
+          i = smallest;
+        }
+      }
+      return top;
+    };
+
+    const COST_SCALE = this.SEA_COST_SCALE, BASE_COST = COST_SCALE, weight = this.SEA_HEURISTIC_WEIGHT;
+    if (!st.begun) {
+      st.begun = true;
+      // What to steer for — see the section comment.
+      const wc = GameMap.waterComponentId, comp = wc[st.from];
+      st.reachable = wc[st.goal] === comp;
+      if (!st.reachable) {
+        const near = this.nearestWaterInComponent(st.goal, comp, this.SEA_TOWARD_SNAP_DIST);
+        if (near >= 0) { st.aim = near; st.reachable = true; }
+      }
+      st.limit = st.reachable ? this.SEA_PATH_GUARD : this.SEA_TOWARD_BLIND_NODES;
+      st.bestH = Math.abs((st.aim % w) - (st.from % w)) + Math.abs(((st.aim / w) | 0) - ((st.from / w) | 0));
+      mark.fill(0);
+      mark[st.from] = 1; gVal[st.from] = 0; from[st.from] = -1;
+      heapPush(st.from, weight * BASE_COST * st.bestH);
+    }
+
+    const aim = st.aim, reachable = st.reachable;
+    const goalX = aim % w, goalY = (aim / w) | 0;
+    const dxGoal = goalX - (st.from % w), dyGoal = goalY - ((st.from / w) | 0);
+    const crossNorm = Math.max(1, Math.abs(dxGoal) + Math.abs(dyGoal));
+    let best = st.best, bestH = st.bestH;
+
+    cap = Math.min(cap, st.limit - st.nodes);
+    const nb = new Int32Array(4);
+    let left = cap, arrived = false;
+    while (heapLen > 0 && left > 0) {
+      left--;
+      const current = heapPop();
+      if (mark[current] & 2) continue;
+      mark[current] |= 2;
+      if (reachable && current === aim) { arrived = true; break; }
+
+      const currentG = gVal[current];
+      const n = GameMap.neighbors(current, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (owner[j] !== WATER || (mark[j] & 2)) continue;
+        const tentativeG = currentG + BASE_COST + this.shoreCostPenalty(shoreDist[j]);
+        if (!mark[j] || tentativeG < gVal[j]) {
+          mark[j] = 1; gVal[j] = tentativeG; from[j] = current;
+          const dxN = (j % w) - goalX, dyN = ((j / w) | 0) - goalY;
+          const h = Math.abs(dxN) + Math.abs(dyN);
+          // The closest tile reached so far. Strictly closer only, so among
+          // equals the first one the search came to wins.
+          if (h < bestH) { bestH = h; best = j; }
+          heapPush(j, tentativeG + weight * BASE_COST * h
+            + Math.floor((Math.abs(dxGoal * dyN - dyGoal * dxN) * (COST_SCALE - 1)) / crossNorm / crossNorm));
+        }
+      }
+    }
+    const used = cap - left;
+    st.nodes += used;
+    st.heapLen = heapLen; st.best = best; st.bestH = bestH;
+    if (this._inTick) this._seaPathNodesThisTick += used;
+
+    if (arrived) st.done = st.arrived = true;
+    else if (heapLen === 0) st.done = st.exhausted = true;
+    else if (st.nodes >= st.limit) st.done = true;
+    return st.done;
+  },
+
+  // The route a finished search found: water tiles from where it started to
+  // its best tile, smoothed like a seaPath route. `[from]` alone when it found
+  // nothing closer than where it started. Must be read before another search
+  // starts in the arena.
+  seaTowardPath(st) {
+    if (!st.begun) return [st.from];
+    const from = this._seaTowardArena.from;
+    let path = [];
+    for (let cur = st.best; cur !== -1; cur = from[cur]) path.push(cur);
+    path.reverse();
+    if (path.length > 3) path = this.losSmoothSeaPath(this.losSmoothSeaPath(path, 2), 3);
+    return path;
+  },
+
+  // The closest tile to `tile` (straight grid distance, at most `maxDist`,
+  // `tile` itself excluded) that belongs to water body `comp`, or -1. Walks
+  // the diamond rings outward in a fixed order, so equal distances always
+  // resolve the same way. Plain array reads, about 2 * maxDist^2 of them at
+  // worst (131k at 256), which is what seaTowardRun's fixed cost pays for.
+  nearestWaterInComponent(tile, comp, maxDist) {
+    const w = GameMap.width, h = GameMap.height, wc = GameMap.waterComponentId;
+    const tx = tile % w, ty = (tile / w) | 0;
+    for (let d = 1; d <= maxDist; d++) {
+      for (let dx = -d; dx <= d; dx++) {
+        const x = tx + dx;
+        if (x < 0 || x >= w) continue;
+        const dy = d - (dx < 0 ? -dx : dx);
+        if (ty - dy >= 0 && wc[(ty - dy) * w + x] === comp) return (ty - dy) * w + x;
+        if (dy > 0 && ty + dy < h && wc[(ty + dy) * w + x] === comp) return (ty + dy) * w + x;
+      }
+    }
+    return -1;
+  },
+
 });

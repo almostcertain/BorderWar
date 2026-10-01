@@ -208,7 +208,10 @@ const UI = {
   // the innerHTML at 60Hz would kill :active and the button's own press state.
   setupBuildBar() {
     const bar = document.getElementById('buildBar');
-    bar.innerHTML = Game.UNITS.map(u =>
+    // Entries marked fogOnly (the Scout) are left out: this bar is built once,
+    // before any match has said whether it has fog, and the unit cannot be
+    // bought in a fog-off match.
+    bar.innerHTML = Game.UNITS.filter(u => !u.fogOnly).map(u =>
       `<button class="buildBtn" data-type="${u.type}">
          <span class="bbKey">${u.hotkey}</span>
          <span class="bbIcon">${iconHtml(this.UNIT_ICONS[u.type] || u.type)}</span>

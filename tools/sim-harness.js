@@ -46,7 +46,9 @@ if (only && mode === 'neutral') {
 // pre-existing field that is meant to differ (e.g. a new UNITS entry) goes in
 // NEUTRAL_ALLOWED with a reason.
 const neutralDir = path.join(root, 'tools/.neutral');
-const NEUTRAL_ALLOWED = [];
+const NEUTRAL_ALLOWED = [
+  'UNITS' // fog task 5: the table gained the Scout entry, which a fog-off match can never buy
+];
 function keyDigests(Game) {
   const omitted = new Set(Game.COSMETIC_STATE);
   const keys = {};
@@ -101,7 +103,7 @@ function boot(cfg) {
   for (const { file, bytes } of sources) {
     vm.runInContext(bytes.toString('utf8'), ctx, { filename: file });
   }
-  const sim = vm.runInContext('({ Game, GameMap, Hash, Executor })', ctx);
+  const sim = vm.runInContext('({ Game, GameMap, Hash, Executor, Protocol })', ctx);
   if (cfg.map === 'world') {
     // No fetch() in this harness (nor in the sim it's checking, on purpose —
     // see js/net/worldmap.js) — read the same static asset a browser would
@@ -615,6 +617,443 @@ function fogOff() {
   console.log(`fog-off: nothing allocated, no vision code reached in ${cfg.ticks} ticks (${JSON.stringify(coverage)}): ok`);
 }
 
+// --- `fog`: Scouts and warship sight (fog task 5) ---------------------------
+// Bots do not buy Scouts, so this drives them itself, through the Executor:
+// four humans and no bots or tribes, which leaves a match where nothing
+// happens unless an intent says so. One human is the scouting nation, one
+// its ally, one a bystander and one an enemy with a warship.
+//   fogScoutsRun  one pass over the whole script, checking as it goes
+//   fogScouts     runs it twice in fresh contexts and compares the hashes
+//   fogScoutsOff  a fog-off match can hold no Scout and reaches none of this
+const fogScoutCfg = { name: 'fog-scouts-small-67890', size: 'small', seed: 67890 };
+
+function fogScoutsRun(second) {
+  const cfg = fogScoutCfg;
+  const sim = boot(cfg);
+  const { Game, GameMap, Hash, Executor, Protocol } = sim;
+  const expect = (ok, msg) => { if (!ok) throw new Error(`FOG SCOUTS: ${msg}`); };
+  const roster = [0, 1, 2, 3].map(id => ({ clientID: `scout-harness-${id}`, username: `Human ${id}`, playerId: id }));
+  Game.init({ gameID: cfg.name, seed: cfg.seed, config: { mapSize: cfg.size, bots: 0, tribes: 0, fogOfWar: true }, players: roster }, 0);
+  expect(Game.fog === true && Game.scouts.length === 0, 'the match did not start with fog on and no Scouts');
+  Executor.setRoster(roster);
+  // Every order below goes the way a click does: an intent, stamped, applied.
+  const send = (id, intent) => {
+    const stamped = Protocol.stamp(intent, roster[id].clientID);
+    expect(Protocol.validateIntent(stamped) === null, `intent ${intent.type} is not valid on the wire: ${Protocol.validateIntent(stamped)}`);
+    return Executor.apply(stamped);
+  };
+
+  const w = GameMap.width, owner = GameMap.owner, wc = GameMap.waterComponentId, WATER = -2;
+  const xy = t => `${t % w},${(t / w) | 0}`;
+  const dist = (a, b) => Math.abs((a % w) - (b % w)) + Math.abs(((a / w) | 0) - ((b / w) | 0));
+  const count = id => Game.visionCount[Game.visionGroupOf[id]];
+  // Is the whole disc of `r` cells around `tile` discovered by `id`?
+  const discSeen = (id, tile, r) => {
+    const C = Game.VISION_CELL, cx = ((tile % w) / C) | 0, cy = (((tile / w) | 0) / C) | 0;
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const x = cx + dx, y = cy + dy;
+      if (dx * dx + dy * dy > r * r + r || x < 0 || y < 0 || x >= Game.visionCellsW || y >= Game.visionCellsH) continue;
+      if (!Game.isDiscovered(id, y * C * w + x * C)) return false;
+    }
+    return true;
+  };
+
+  // Every route search: inside its own cap, inside the tick's budget, and a
+  // real route (water only, one step at a time).
+  const budget = Game.SEA_PATH_NODE_BUDGET_PER_TICK;
+  const search = { searches: 0, slices: 0, budgetWaits: 0, slotWaits: 0, mostSlices: 0, worstSlice: 0, worstSearch: 0, worstTickNodes: 0, blind: 0, unfinished: 0 };
+  const slicesOf = new WeakMap();
+  const towardRun = Game.seaTowardRun, towardPath = Game.seaTowardPath;
+  Game.seaTowardRun = function (st, slice) {
+    const had = st.nodes, begun = st.begun;
+    const r = towardRun.call(this, st, slice);
+    if (r === null) { search.budgetWaits++; expect(st.nodes === had && st.begun === begun, 'a search that had no room in the tick ran anyway'); return r; }
+    search.slices++;
+    slicesOf.set(st, (slicesOf.get(st) || 0) + 1);
+    search.worstSlice = Math.max(search.worstSlice, st.nodes - had);
+    expect(st.nodes - had <= slice && st.nodes - had + Game.SEA_PATH_SEARCH_COST <= budget, `one slice of a route search explored ${st.nodes - had} tiles`);
+    expect(this._inTick, 'a Scout route search ran outside the tick');
+    search.worstTickNodes = Math.max(search.worstTickNodes, this._seaPathNodesThisTick);
+    expect(this._seaPathNodesThisTick <= budget, `a route search took its tick to ${this._seaPathNodesThisTick} tiles, over the budget of ${budget}`);
+    if (r) {
+      search.searches++;
+      search.mostSlices = Math.max(search.mostSlices, slicesOf.get(st));
+      search.worstSearch = Math.max(search.worstSearch, st.nodes);
+      if (!st.reachable) search.blind++;
+      if (!st.arrived && !st.exhausted) search.unfinished++;
+      expect(st.nodes <= Game.SEA_PATH_GUARD, `a route search explored ${st.nodes} tiles in all`);
+    }
+    return r;
+  };
+  // Every route: starts where the ship is, water only, one step at a time.
+  Game.seaTowardPath = function (st) {
+    const route = towardPath.call(this, st);
+    expect(route[0] === st.from, 'a route does not start where the ship is');
+    for (let i = 0; i < route.length; i++) {
+      expect(owner[route[i]] === WATER, `a route crosses land at ${xy(route[i])}`);
+      if (i) expect(dist(route[i - 1], route[i]) === 1, `a route jumps from ${xy(route[i - 1])} to ${xy(route[i])}`);
+    }
+    return route;
+  };
+
+  // One tick, then everything that must hold after any tick.
+  const checkpoints = [];
+  let ally = -1, probeTile = 0, scoutShells = 0, ticks = 0;
+  const step = () => {
+    Game.tick();
+    ticks++;
+    for (const s of Game.scouts) {
+      const t = Game.scoutTile(s);
+      expect(owner[t] === WATER, `Scout ${s.id} is on land at ${xy(t)}`);
+      expect(discSeen(s.owner, t, Game.VISION_SIGHT_SCOUT), `Scout ${s.id} has not revealed its sight radius at ${xy(t)}`);
+      if (ally >= 0 && Game.areAllied(s.owner, ally)) expect(discSeen(ally, t, Game.VISION_SIGHT_SCOUT), `the ally cannot see what Scout ${s.id} revealed at ${xy(t)}`);
+    }
+    for (const ws of Game.warships) {
+      const t = ws.path[Math.min(ws.path.length - 1, Math.floor(ws.pos))];
+      expect(discSeen(ws.owner, t, Game.VISION_SIGHT_WARSHIP), `warship ${ws.id} has not revealed its sight radius at ${xy(t)}`);
+    }
+    for (const sh of Game.shells) if (sh.targetKind === 'scout') scoutShells++;
+    // One search at a time: whoever holds it is still owed a route, and any
+    // other Scout owed one is waiting its turn.
+    const held = Game.scoutSearch;
+    if (held) {
+      const holder = Game.scoutById(held.scoutId);
+      if (holder) {
+        expect(holder.routing, `a route search is held for Scout ${holder.id}, which is not waiting for one`);
+        for (const s of Game.scouts) if (s !== holder && s.routing && s.pos >= s.path.length - 1) search.slotWaits++;
+      }
+    }
+    // Run 2 also asks the read-only questions a UI would, which must change nothing.
+    if (second) {
+      for (const p of roster) {
+        Game.scoutBlockReason(p.playerId, probeTile); Game.canBuildScout(p.playerId, probeTile); Game.scoutCount(p.playerId);
+      }
+      Game.scoutById(1); Game.scoutById(ticks);
+      probeTile = (probeTile + 7919) % owner.length;
+    }
+    if (ticks % 50 === 0) checkpoints.push({ tick: ticks, hash: Hash.compute() });
+  };
+  const run = n => { for (let i = 0; i < n; i++) step(); };
+  const arrive = (s, limit, what) => {
+    let n = 0;
+    while (Game.scouts.includes(s) && (s.routing || s.pos < s.path.length - 1)) {
+      expect(n++ < limit, `${what}: the Scout is still under way after ${limit} ticks`);
+      step();
+    }
+    expect(Game.scouts.includes(s), `${what}: the Scout was lost on the way`);
+    return Game.scoutTile(s);
+  };
+
+  // Setup. The humans take their reserved spawns, then anyone not yet on the
+  // main sea expands over neutral land until they are.
+  while (Game.spawning) Game.tick();
+  const seaSizes = new Map();
+  for (let t = 0; t < wc.length; t++) if (wc[t] >= 0) seaSizes.set(wc[t], (seaSizes.get(wc[t]) || 0) + 1);
+  const bySize = [...seaSizes].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  const sea = bySize[0][0];
+  const nb = new Int32Array(4);
+  const seaCoast = id => {
+    for (const t of Game.players[id].tiles) {
+      const n = GameMap.neighbors(t, nb);
+      for (let k = 0; k < n; k++) if (wc[nb[k]] === sea) return t;
+    }
+    return -1;
+  };
+  for (let i = 0; roster.some(p => seaCoast(p.playerId) < 0); i++) {
+    expect(i < 3000, 'the humans did not all reach the main sea');
+    if (i % 20 === 0) for (const p of roster) {
+      const me = Game.players[p.playerId];
+      if (seaCoast(p.playerId) < 0) send(p.playerId, Protocol.intent.attack(Protocol.NEUTRAL_TARGET, Math.floor(me.troops / 2), me.tiles.values().next().value));
+    }
+    step();
+  }
+  for (let i = 0; Game.attacks.length && i < 3000; i++) step();
+  expect(Game.attacks.length === 0, 'the opening land grabs never finished');
+
+  // A scouts, B is its ally, E (the human furthest from A) is the enemy, C watches.
+  const A = 0;
+  const home = id => Game.players[id].tiles.values().next().value;
+  const others = [1, 2, 3].sort((p, q) => dist(home(q), home(A)) - dist(home(p), home(A)) || p - q);
+  const E = others[0], B = others[1], C = others[2];
+  const me = Game.players[A];
+  const portA = seaCoast(A), portE = seaCoast(E);
+  const pick = (ok, score) => {
+    let best = -1, bestScore = -Infinity;
+    for (let t = 0; t < owner.length; t++) {
+      if (!ok(t)) continue;
+      const sc = score(t);
+      if (sc > bestScore) { best = t; bestScore = sc; }
+    }
+    expect(best >= 0, 'the map has no tile this script needs');
+    return best;
+  };
+  // Every tile's straight grid distance to the main sea: what "the closest
+  // water it can reach" has to mean for a Scout that sails that sea.
+  const seaFar = new Int32Array(owner.length).fill(-1);
+  {
+    const queue = new Int32Array(owner.length);
+    let head = 0, tail = 0;
+    for (let t = 0; t < owner.length; t++) if (wc[t] === sea) { seaFar[t] = 0; queue[tail++] = t; }
+    while (head < tail) {
+      const t = queue[head++], n = GameMap.neighbors(t, nb);
+      for (let k = 0; k < n; k++) if (seaFar[nb[k]] < 0) { seaFar[nb[k]] = seaFar[t] + 1; queue[tail++] = nb[k]; }
+    }
+  }
+  const seaDist = t => seaFar[t];
+
+  // 1. No Port, no Scout.
+  me.gold = 1e6;
+  expect(Game.scoutBlockReason(A, portA) === 'Build a Port first', `without a Port the reason is ${Game.scoutBlockReason(A, portA)}`);
+  expect(send(A, Protocol.intent.buildUnit('scout', portA)) === false && Game.scouts.length === 0 && me.gold === 1e6, 'a Scout was bought without a Port');
+  expect(send(A, Protocol.intent.moveScout([1], portA)) === false, 'a Scout that does not exist took an order');
+
+  // Ports for A and E, and an alliance between A and B.
+  for (const [id, tile] of [[A, portA], [E, portE]]) {
+    Game.players[id].gold = 1e6;
+    expect(send(id, Protocol.intent.buildUnit('port', tile)) === true, `human ${id} could not place a Port`);
+  }
+  run(100);
+  expect(Game.buildings.get(portA).built && Game.buildings.get(portE).built, 'the Ports did not finish');
+  expect(Game.acceptAlliance({ from: A, to: B }) === true, 'alliance refused');
+  ally = B;
+
+  // 2. Nothing about the tile changes the answer: with a Port, the cap not
+  // reached and the gold in hand, a Scout can be bought toward any tile on
+  // the map, and the same goes for the other reasons.
+  me.gold = Game.unitCost(me, 'scout') - 1;
+  for (let t = 0; t < owner.length; t += 97) expect(Game.scoutBlockReason(A, t) === 'Not enough gold', `the reason depends on the tile at ${xy(t)}`);
+  expect(send(A, Protocol.intent.buildUnit('scout', portA)) === false && Game.scouts.length === 0, 'a Scout was bought without the gold');
+  me.gold = 1e6;
+  const kinds = { discoveredWater: 0, undiscoveredWater: 0, discoveredLand: 0, undiscoveredLand: 0, lake: 0 };
+  for (let t = 0; t < owner.length; t += 97) {
+    expect(Game.scoutBlockReason(A, t) === null, `a Scout order toward ${xy(t)} is refused: ${Game.scoutBlockReason(A, t)}`);
+    kinds[owner[t] === WATER && wc[t] !== sea ? 'lake' : (Game.isDiscovered(A, t) ? 'discovered' : 'undiscovered') + (owner[t] === WATER ? 'Water' : 'Land')]++;
+  }
+  expect(Object.values(kinds).every(n => n > 0), `the sweep missed a kind of tile: ${JSON.stringify(kinds)}`);
+  expect(Game.scoutBlockReason(A, -1) === 'Off the map' && Game.scoutBlockReason(A, owner.length) === 'Off the map', 'an off-map tile was accepted');
+
+  // 3. Open water the nation can see: the Scout sails there and stops on it.
+  const open = pick(t => wc[t] === sea && Game.isDiscovered(A, t) && GameMap.shoreDist[t] >= 3 && dist(t, portA) >= 15 && dist(t, portA) <= 40, t => -dist(t, portA));
+  let before = count(A);
+  expect(send(A, Protocol.intent.buildUnit('scout', open)) === true, 'a Scout toward open water was refused');
+  expect(Game.scouts.length === 1 && me.gold === 1e6 - 25000, 'buying a Scout did not cost 25,000 for one Scout');
+  const s1 = Game.scouts[0];
+  expect(s1.owner === A && s1.destTile === open && s1.health === Game.SCOUT_MAX_HEALTH && dist(Game.scoutTile(s1), portA) === 1, 'the Scout did not launch beside its Port');
+  expect(discSeen(A, Game.scoutTile(s1), Game.VISION_SIGHT_SCOUT) && discSeen(B, Game.scoutTile(s1), Game.VISION_SIGHT_SCOUT), 'the launch did not reveal');
+  expect(arrive(s1, 400, 'open water') === open, `the Scout sent to open water ${xy(open)} stopped at ${xy(Game.scoutTile(s1))}`);
+
+  // The hash covers Scouts.
+  const h0 = Hash.compute();
+  s1.health -= 1; const h1 = Hash.compute(); s1.health += 1;
+  s1.destTile += 1; const h2 = Hash.compute(); s1.destTile -= 1;
+  expect(h1 !== h0 && h2 !== h0 && Hash.compute() === h0, 'the hash does not cover Scouts');
+
+  // 4. Land in the black: never refused, and the Scout ends on the water
+  // closest to the click.
+  const inland = pick(t => owner[t] !== WATER && !Game.isDiscovered(A, t) && !Game.isDiscovered(B, t), t => seaFar[t]);
+  expect(send(A, Protocol.intent.buildUnit('scout', inland)) === true, 'a Scout toward undiscovered land was refused');
+  const s2 = Game.scouts[1];
+  const inlandEnd = arrive(s2, 2000, 'undiscovered land');
+  expect(owner[inlandEnd] === WATER && s2.destTile === inland, 'the Scout sent to land did not end on water');
+  expect(dist(inlandEnd, inland) === seaDist(inland), `the Scout sent to land at ${xy(inland)} stopped ${dist(inlandEnd, inland)} tiles off at ${xy(inlandEnd)}; the closest water is ${seaDist(inland)} off`);
+  expect(count(A) > before && Game.isDiscovered(A, inlandEnd) && Game.isDiscovered(B, inlandEnd), 'the voyage to land revealed nothing');
+
+  // 5. The cap.
+  expect(Game.scoutCount(A) === Game.MAX_SCOUTS_PER_PLAYER, 'this script expects the cap to be two');
+  for (let t = 0; t < owner.length; t += 97) expect(Game.scoutBlockReason(A, t) === 'Scout limit reached', `at the cap the reason depends on the tile at ${xy(t)}`);
+  before = me.gold;
+  expect(send(A, Protocol.intent.buildUnit('scout', open)) === false && Game.scouts.length === 2 && me.gold === before, 'a third Scout was bought');
+
+  // 6. A lake the Scout cannot sail into: never refused, and it ends on the
+  // sea, as close to the lake as the sea gets. Somebody else's Scout, and a
+  // list with a dead id in it, are not this player's to move.
+  expect(bySize.length > 1, 'this map has no lake');
+  const lake = pick(t => wc[t] >= 0 && wc[t] !== sea, t => seaFar[t]);
+  expect(send(B, Protocol.intent.moveScout([s1.id], lake)) === false && s1.destTile === open, 'another player moved the Scout');
+  expect(send(A, Protocol.intent.moveScout([999, s1.id], lake)) === true && s1.destTile === lake && s1.routing, 'a Scout order toward a lake was refused');
+  const lakeEnd = arrive(s1, 2000, 'lake');
+  expect(wc[lakeEnd] === sea, 'the Scout sent to a lake left the sea');
+  expect(dist(lakeEnd, lake) === seaDist(lake), `the Scout sent to the lake at ${xy(lake)} stopped ${dist(lakeEnd, lake)} tiles off at ${xy(lakeEnd)}; the sea comes within ${seaDist(lake)}`);
+
+  // A goal too far from the Scout's sea to have a known closest point is
+  // searched for blind: the search steers at the goal itself and takes the
+  // best tile it finds. No map this size has such a goal, so the snap
+  // distance is shortened for this one voyage.
+  const snap = Game.SEA_TOWARD_SNAP_DIST, blindFrom = Game.scoutTile(s1);
+  Game.SEA_TOWARD_SNAP_DIST = 8;
+  expect(send(A, Protocol.intent.moveScout([s1.id], inland)) === true, 'a Scout order toward land far from the sea was refused');
+  const blindEnd = arrive(s1, 3000, 'blind');
+  Game.SEA_TOWARD_SNAP_DIST = snap;
+  expect(search.blind > 0 && search.unfinished > 0, 'the blind search did not run');
+  expect(wc[blindEnd] === sea && dist(blindEnd, inland) <= dist(blindFrom, inland), 'the Scout searching blind ended further from its goal than it began');
+
+  // Any tile at all is an order a Scout takes.
+  for (const t of [0, owner.length - 1, inland, lake, open, portA]) {
+    expect(send(A, Protocol.intent.moveScout([s1.id], t)) === true, `a Scout order toward ${xy(t)} was refused`);
+  }
+  // Land just behind a coast nobody on A's side has seen: it stops off that coast.
+  const beach = pick(t => owner[t] !== WATER && seaFar[t] >= 3 && seaFar[t] <= 20 && !Game.isDiscovered(A, t), t => -dist(t, Game.scoutTile(s1)));
+  // Both Scouts are sent in one order, with the search slowed to a crawl so
+  // that it takes several ticks: one Scout has to wait for the other's route.
+  const perTick = Game.SCOUT_PATH_NODES, waited = search.slotWaits, sliced = search.slices;
+  Game.SCOUT_PATH_NODES = 200;
+  expect(send(A, Protocol.intent.moveScout([s1.id, s2.id], beach)) === true && s1.routing && s2.routing, 'a Scout order toward an unseen coast was refused');
+  for (let i = 0; s1.routing || s2.routing; i++) {
+    expect(i < 2000, 'two Scouts sent together never both found a route');
+    step();
+  }
+  Game.SCOUT_PATH_NODES = perTick;
+  expect(search.slotWaits > waited && search.slices - sliced > 2, 'no Scout waited for the other one\'s search');
+  const beachEnd = arrive(s1, 2000, 'unseen coast');
+  expect(wc[beachEnd] === sea && dist(beachEnd, beach) === seaFar[beach], `the Scout sent to the coast at ${xy(beach)} stopped ${dist(beachEnd, beach)} tiles off; the sea is ${seaFar[beach]} off`);
+  expect(dist(arrive(s2, 2000, 'unseen coast, second Scout'), beach) === seaFar[beach], 'the second Scout sent to the same coast stopped somewhere else');
+  expect(Game.isDiscovered(A, beach) && Game.isDiscovered(B, beach), 'the Scout did not reveal the coast it stopped off');
+
+  // 7. Off into unexplored sea, and redirected half way. Both targets are far
+  // from where the enemy's warship will be, so this Scout outlives it.
+  const unseen = t => wc[t] === sea && ![A, B, C, E].some(id => Game.isDiscovered(id, t));
+  const far1 = pick(unseen, t => dist(t, Game.scoutTile(s2)));
+  const far2 = pick(t => unseen(t) && dist(t, far1) > 60, t => Math.min(dist(t, portE), 2 * Game.WARSHIP_TARGET_RANGE) * 1000 + dist(t, far1));
+  expect(dist(far2, portE) > Game.WARSHIP_TARGET_RANGE + Game.WARSHIP_PATROL_RANGE, 'no unexplored sea out of the warship\'s reach');
+  before = count(A);
+  const beforeB = count(B), beforeC = count(C);
+  expect(send(A, Protocol.intent.moveScout([s2.id], far1)) === true, 'a Scout order into unexplored sea was refused');
+  run(40);
+  expect(s2.pos > 0 && s2.pos < s2.path.length - 1, 'the Scout is not under way');
+  const turnedAt = Game.scoutTile(s2);
+  expect(send(A, Protocol.intent.moveScout([s2.id], far2)) === true && s2.destTile === far2 && s2.routing && Game.scoutTile(s2) === turnedAt, 'the redirect did not take');
+  expect(arrive(s2, 3000, 'unexplored sea') === far2, `the Scout sent to ${xy(far2)} stopped at ${xy(Game.scoutTile(s2))}`);
+  expect(count(A) > before && count(B) > beforeB, 'the voyage into unexplored sea revealed nothing');
+  expect(Game.isDiscovered(A, far2) && Game.isDiscovered(B, far2), 'the owner and its ally cannot see where the Scout is');
+  expect(count(C) === beforeC && !Game.isDiscovered(C, far2), 'a bystander saw what the Scout revealed');
+  fogInvariants(sim, null, `${cfg.name} after the voyages`);
+
+  // 8. A warship reveals as it sails, and sinks the Scout that comes near.
+  const enemy = Game.players[E];
+  const station = pick(t => wc[t] === sea && Game.isDiscovered(E, t), t => dist(t, portE));
+  enemy.gold = 1e6;
+  before = count(E);
+  const landE = enemy.tiles.size;
+  expect(send(E, Protocol.intent.buildUnit('warship', station)) === true && Game.warships.length === 1, 'the enemy could not launch a warship');
+  const ship = Game.warships[0];
+  expect(discSeen(E, ship.path[0], Game.VISION_SIGHT_WARSHIP), 'launching a warship did not reveal');
+  // The Scout goes looking for the warship, wherever that has got to (it may
+  // be off chasing a trade ship), until it is close enough to be shot at.
+  const shipTile = () => ship.path[Math.min(ship.path.length - 1, Math.floor(ship.pos))];
+  for (let i = 0; Game.scouts.includes(s1); i++) {
+    if (i % 50 === 0) expect(send(A, Protocol.intent.moveScout([s1.id], shipTile())) === true, 'a Scout order toward the enemy was refused');
+    expect(i < 4000, `the enemy warship never sank the Scout (Scout at ${xy(Game.scoutTile(s1))}, health ${s1.health}; warship at ${xy(shipTile())})`);
+    step();
+  }
+  for (let i = 0; ship.ordered && i < 2000; i++) step();
+  expect(!ship.ordered, 'the enemy warship never reached its station');
+  expect(scoutShells > 0 && s1.health <= 0, 'the Scout was not sunk by shells');
+  expect(Game.scouts.length === 1 && Game.scouts[0] === s2 && Game.scoutCount(A) === 1, 'the wrong Scout was sunk');
+  expect(Game.warships.includes(ship) && ship.health === Game.WARSHIP_MAX_HEALTH, 'the unarmed Scout hurt the warship');
+  expect(count(E) > before && enemy.tiles.size === landE, 'the warship revealed nothing as it sailed');
+  me.gold = 1e6;
+  expect(Game.scoutBlockReason(A, open) === null, 'a sunk Scout did not free its slot');
+  fogInvariants(sim, null, `${cfg.name} after the sinking`);
+
+  // 9. The budget rule, asked directly: a search waits when the tick has no
+  // room for its whole cap, runs when it has exactly enough, and is clamped
+  // to the budget however much it is offered.
+  expect(Game.scoutSearch === null, 'a route search is still in flight with every Scout at rest');
+  const fixed = Game.SEA_PATH_SEARCH_COST, slice = Game.SCOUT_PATH_NODES, here = Game.scoutTile(s2);
+  const scratch = [Game._seaPathNodesThisTick, Game._seaPathSearchesThisTick];
+  const probe = Game.seaTowardStart(here, beach);
+  Game._inTick = true;
+  Game._seaPathNodesThisTick = budget - fixed - slice + 1;
+  expect(towardRun.call(Game, probe, slice) === null && !probe.begun && probe.nodes === 0, 'a search started without room in the tick');
+  Game._seaPathNodesThisTick = budget - fixed - slice;
+  let over = towardRun.call(Game, probe, slice);
+  expect(over !== null && probe.begun && (over ? probe.nodes <= slice : probe.nodes === slice), 'a search that just fits did not run its slice');
+  expect(Game._seaPathNodesThisTick === budget - slice + probe.nodes, 'a search did not count its tiles against the tick');
+  if (!over) {
+    // A later slice has no fixed cost to pay, and still waits for room.
+    expect(towardRun.call(Game, probe, slice) === null && probe.nodes === slice, 'a second slice ran without room in the tick');
+    Game._seaPathNodesThisTick = 0;
+    over = towardRun.call(Game, probe, 1e9);
+    expect(probe.nodes - slice <= budget - fixed && Game._seaPathNodesThisTick === probe.nodes - slice, `a slice offered any number of tiles explored ${probe.nodes - slice}`);
+  }
+  while (!over) { Game._seaPathNodesThisTick = 0; over = towardRun.call(Game, probe, slice); }
+  expect(probe.nodes <= Game.SEA_PATH_GUARD && probe.arrived && dist(probe.aim, beach) === seaFar[beach], 'the probe search did not arrive at the water closest to its goal');
+  Game._inTick = false;
+  [Game._seaPathNodesThisTick, Game._seaPathSearchesThisTick] = scratch;
+
+  // 10. Losing the Port changes nothing for a Scout afloat; losing the nation
+  // takes its Scouts with it, as it does its warships.
+  Game.setOwner(portA, E);
+  expect(owner[portA] === E && Game.scoutBlockReason(A, open) === 'Build a Port first', 'the Port did not change hands');
+  expect(send(A, Protocol.intent.moveScout([s2.id], far1)) === true, 'a Scout with no Port left refused an order');
+  run(50);
+  expect(Game.scouts.includes(s2) && s2.pos > 0, 'a Scout with no Port left stopped sailing');
+  Game.eliminatePlayer(me);
+  run(1);
+  expect(Game.scouts.length === 0, 'a dead nation kept its Scout');
+  while (ticks % 50) step();
+
+  expect(search.mostSlices > 1 && search.worstSlice === Game.SCOUT_PATH_NODES, 'no route search ran a full slice and carried on, so the budget went untested');
+  return { checkpoints, digest: digest(Game, GameMap), ticks, search, budget, scoutShells,
+    ends: { open: xy(open), inland: `${xy(inland)} -> ${xy(inlandEnd)}`, lake: `${xy(lake)} -> ${xy(lakeEnd)}`,
+      blind: `${xy(inland)} from ${xy(blindFrom)} (${dist(blindFrom, inland)} off) -> ${xy(blindEnd)} (${dist(blindEnd, inland)} off, closest possible ${seaFar[inland]})`, coast: `${xy(beach)} -> ${xy(beachEnd)}`, sea: `${xy(far1)} then ${xy(far2)}` } };
+}
+
+function fogScouts() {
+  const began = performance.now();
+  const first = fogScoutsRun(false), second = fogScoutsRun(true);
+  if (first.checkpoints.length !== second.checkpoints.length) throw new Error('FOG SCOUTS DIVERGENCE: the two runs took a different number of ticks');
+  for (let i = 0; i < first.checkpoints.length; i++) {
+    const p = first.checkpoints[i], q = second.checkpoints[i];
+    if (p.hash !== q.hash) throw new Error(`FOG SCOUTS DIVERGENCE tick ${p.tick}: run 1 ${p.hash}, run 2 ${q.hash}`);
+  }
+  if (JSON.stringify(first.digest) !== JSON.stringify(second.digest)) throw new Error('FOG SCOUTS DIVERGENCE: final digest differs between the two runs');
+  console.log(`${fogScoutCfg.name}: 2 x ${first.ticks} ticks, ${first.checkpoints.length} checkpoints identical, final hash ${first.checkpoints[first.checkpoints.length - 1].hash}, ${((performance.now() - began) / 1000).toFixed(2)}s`);
+  console.log('Scout voyages:', JSON.stringify(first.ends));
+  console.log(`Scout route searches: ${JSON.stringify(first.search)}, tick budget ${first.budget}, ${first.scoutShells} shell-ticks at Scouts`);
+  console.log('fog-scouts: Port and cap, no refusal for terrain, open water, land, lake, unexplored sea, redirect, ally sight, warship sight, sinking, lost Port, lost nation, budget: ok');
+}
+
+function fogScoutsOff() {
+  const cfg = { name: 'fog-off-scouts-small-12345', size: 'small', seed: 12345, bots: 8, tribes: 12, ticks: 6000 };
+  const { Game, GameMap, Hash, Executor, Protocol } = boot(cfg);
+  const fail = msg => { throw new Error(`FOG OFF SCOUTS: ${msg}`); };
+  Game.init(Hash._syntheticGameStartInfo(cfg), 0);
+  if (!Game.chooseSpawn(Hash.firstLegalSpawn())) fail('no legal human spawn');
+  const scout = Game.UNITS.find(u => u.type === 'scout');
+  if (!scout || !scout.action || !scout.fogOnly || scout.hotkey !== undefined) fail('the Scout entry is not marked action, fogOnly and without a hotkey');
+  // Everything Scout- or sight-related that does work. A fog-off match must
+  // not get to any of it.
+  for (const name of ['stepScouts', 'scoutRoute', 'seaTowardStart', 'seaTowardRun', 'seaTowardPath', 'seaTowardArena', 'nearestWaterInComponent', 'scoutTargetFor', 'warshipReveal']) {
+    Game[name] = () => fail(`${name} was reached in a fog-off match`);
+  }
+  const human = Game.players[0];
+  const buy = Protocol.stamp(Protocol.intent.buildUnit('scout', 0), Executor.LOCAL_CLIENT_ID);
+  const move = Protocol.stamp(Protocol.intent.moveScout([1], 0), Executor.LOCAL_CLIENT_ID);
+  let warships = 0;
+  for (let tick = 1; tick <= cfg.ticks; tick++) {
+    if (tick % 100 === 0) {
+      const gold = human.gold;
+      human.gold = 1e9;
+      const reason = Game.scoutBlockReason(0, tick);
+      if (human.alive && reason !== 'Scouts need fog of war') fail(`the block reason is ${reason}`);
+      if (Executor.apply(buy) !== false || Executor.apply(move) !== false || human.gold !== 1e9) fail('a Scout order was accepted');
+      human.gold = gold;
+    }
+    Game.tick();
+    warships = Math.max(warships, Game.warships.length);
+    if (Game.scouts.length !== 0 || Game.nextScoutId !== 1 || Game.scoutSearch !== null || Game._seaTowardArena !== null) fail('a Scout or its search exists');
+  }
+  if (!warships) fail('no warship sailed, so warship sight went untested');
+  if (Game.warships.some(ws => 'visionCell' in ws)) fail('a warship carries vision state');
+  // The fog-off digest does not read Game.scouts at all.
+  const h = Hash.compute();
+  Game.scouts.push({ id: 1, owner: 0, path: [0], pos: 0, destTile: 0, routing: false, health: 1 });
+  if (Hash.compute() !== h) fail('the fog-off hash reads Game.scouts');
+  Game.scouts.pop();
+  console.log(`fog-off-scouts: no Scout bought, moved or stepped and no warship sight in ${cfg.ticks} ticks (peak ${warships} warships): ok`);
+}
+
 // --- fog gating (task 7): the rules of "What is blocked" and "Meeting a nation"
 // in docs/fog-of-war.md, driven through the real intent path (Executor.apply)
 // wherever an intent exists. Self-contained: each function boots its own match.
@@ -868,6 +1307,8 @@ function runFog() {
   fogGating();
   fogSpawnControl();
   fogSpawnMultiHuman();
+  fogScoutsOff();
+  fogScouts();
   const fogTotals = Object.fromEntries(fogMethods.map(k => [k, 0]));
   for (const cfg of kept) {
     const began = performance.now();
