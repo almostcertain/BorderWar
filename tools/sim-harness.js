@@ -443,11 +443,255 @@ function fogOff() {
   console.log(`fog-off: nothing allocated, no vision code reached in ${cfg.ticks} ticks (${JSON.stringify(coverage)}): ok`);
 }
 
+// --- fog gating (task 7): the rules of "What is blocked" and "Meeting a nation"
+// in docs/fog-of-war.md, driven through the real intent path (Executor.apply)
+// wherever an intent exists. Self-contained: each function boots its own match.
+function fogGatingHarness(cfg) {
+  const sim = boot(cfg);
+  const { Game, GameMap, Hash } = sim;
+  // Executor, Protocol and WATER are top-level bindings of the sim context, so
+  // they are reachable through that context's own Function constructor.
+  const inCtx = name => Game.constructor.constructor(`return ${name}`)();
+  const Executor = inCtx('Executor'), Protocol = inCtx('Protocol'), WATER = inCtx('WATER');
+  const expect = (ok, msg) => { if (!ok) throw new Error(`FOG GATING: ${msg}`); };
+  // One intent, as `playerId`'s client, through grammar, actor and handler.
+  const act = (playerId, intent) => {
+    Executor.setRoster([{ clientID: 'gate', playerId }]);
+    try { return Executor.apply({ ...intent, clientID: 'gate' }); } finally { Executor.reset(); }
+  };
+  Game.init(Hash._syntheticGameStartInfo(cfg), 0);
+  expect(Game.chooseSpawn(Hash.firstLegalSpawn()), 'no legal human spawn');
+  while (Game.spawning) Game.tick();
+  const nations = () => Game.players.filter(p => !p.isTribe && p.alive && p.tiles.size > 0).map(p => p.id);
+  const strangers = () => {
+    const ids = nations();
+    for (const a of ids) for (const b of ids) {
+      if (a < b && !Game.hasMet(a, b) && !Game.hasMet(b, a) && !Game.areAllied(a, b)) return [a, b];
+    }
+    throw new Error('FOG GATING: no two nations that have not met');
+  };
+  const tileOf = id => Game.players[id].tiles.values().next().value;
+  const coastOf = id => {
+    for (const t of Game.players[id].tiles) if (GameMap.isCoastal(t) && !Game.buildings.has(t)) return t;
+    return -1;
+  };
+  return { Game, GameMap, Protocol, WATER, expect, act, nations, strangers, tileOf, coastOf };
+}
+
+function fogGatingDiplomacy() {
+  const { Game, Protocol: P, expect, act, strangers } = fogGatingHarness({ name: 'fog-gating', size: 'small', seed: 12345, bots: 8, tribes: 12, fogOfWar: true });
+  const requested = (from, to) => Game.pendingRequest(from, to) !== null;
+
+  // Alliance request: only toward a nation the sender has met.
+  let [a, b] = strangers();
+  expect(!act(a, P.intent.allianceRequest(b)) && !requested(a, b), 'an alliance request to an unmet nation went through');
+  expect(Game.canRequestAlliance(a, b) === false && Game.allianceBlockReason(a, b) === 'Not met', 'canRequestAlliance/allianceBlockReason do not refuse an unmet nation');
+  Game.markMet(a, b);
+  expect(Game.allianceBlockReason(a, b) === null && act(a, P.intent.allianceRequest(b)) && requested(a, b), 'an alliance request to a met nation was refused');
+  expect(!Game.hasMet(b, a), 'receiving a request made the recipient meet the sender');
+  // The recipient has not met the sender, so it may not request back, but it can accept.
+  expect(!Game.canRequestAlliance(b, a), 'the unmet recipient could send its own request');
+  expect(act(b, P.intent.allianceAccept(a)) && Game.areAllied(a, b), 'a request from an unmet sender could not be accepted');
+  expect(Game.hasMet(a, b) && Game.hasMet(b, a), 'accepting did not make both sides meet');
+  // Declining works just as well and does not make the decliner meet the sender.
+  const [c, d] = strangers();
+  Game.markMet(c, d);
+  expect(act(c, P.intent.allianceRequest(d)) && act(d, P.intent.allianceReject(c)) && !requested(c, d), 'a request from an unmet sender could not be declined');
+  expect(!Game.hasMet(d, c), 'declining made the decliner meet the sender');
+
+  // Embargo: one nation at a time, and embargo-all.
+  [a, b] = strangers();
+  expect(!act(a, P.intent.embargo(b, 'start')) && !Game.hasEmbargoAgainst(a, b) && Game.embargoBlockReason(a, b) === 'Not met', 'an embargo on an unmet nation went through');
+  Game.markMet(a, b);
+  expect(act(a, P.intent.embargo(b, 'start')) && Game.hasEmbargoAgainst(a, b) && Game.embargoBlockReason(a, b) === null, 'an embargo on a met nation was refused');
+  expect(act(a, P.intent.embargo(b, 'stop')) && !Game.hasEmbargoAgainst(a, b), 'an embargo on a met nation could not be lifted');
+  [a, b] = strangers();
+  const met = [], unmet = [];
+  for (const p of Game.players) {
+    if (p.isTribe || p.id === a || !p.alive) continue;
+    (Game.hasMet(a, p.id) ? met : unmet).push(p.id);
+  }
+  expect(unmet.length > 0, 'the embargo-all test needs an unmet nation');
+  if (!met.length) { Game.markMet(a, unmet[0]); met.push(unmet.shift()); }
+  expect(act(a, P.intent.embargoAll('start')), 'embargo-all with someone met was refused');
+  expect(met.every(id => Game.hasEmbargoAgainst(a, id)), 'embargo-all missed a met nation');
+  expect(unmet.every(id => !Game.hasEmbargoAgainst(a, id)), 'embargo-all reached an unmet nation');
+
+  // Target marking.
+  [a, b] = strangers();
+  expect(!act(a, P.intent.targetPlayer(b)) && Game.targetBlockReason(a, b) === 'Not met' && Game.players[a].targets.length === 0, 'a target mark on an unmet nation went through');
+  Game.markMet(a, b);
+  expect(act(a, P.intent.targetPlayer(b)) && Game.players[a].targets.length === 1, 'a target mark on a met nation was refused');
+  console.log('fog-gating diplomacy: alliance request, accept and decline, embargo, embargo-all, target mark: ok');
+}
+
+function fogGatingDonate() {
+  const cfg = { name: 'fog-gating-teams', size: 'small', seed: 12345, bots: 8, tribes: 12, gameMode: 'team', playerTeams: 4, fogOfWar: true };
+  const { Game, Protocol: P, expect, act, strangers } = fogGatingHarness(cfg);
+  expect(Game.teams, 'the donation test needs a team match');
+  // Allies always have met, so the gate can only be seen by forcing two nations
+  // into an ally state that skips the alliance handshake.
+  const [a, b] = strangers();
+  const A = Game.players[a], B = Game.players[b];
+  A.allies.add(b);
+  B.allies.add(a);
+  A.gold = 1e6; A.troops = Math.max(A.troops, 5000); B.troops = 0;
+  const gold = B.gold, troops = A.troops;
+  expect(!act(a, P.intent.donateGold(b, 1000)) && B.gold === gold && Game.donateBlockReason(a, b) === 'Not met', 'a donation to an unmet ally went through');
+  expect(!act(a, P.intent.donateTroops(b, 100)) && A.troops === troops, 'a troop donation to an unmet ally went through');
+  Game.markMet(a, b);
+  expect(Game.donateBlockReason(a, b) === null && act(a, P.intent.donateGold(b, 1000)) && B.gold === gold + 1000, 'a donation to a met ally was refused');
+  A.lastDonationAt.delete(b);   // the gold gift above started the donation cooldown
+  expect(act(a, P.intent.donateTroops(b, 100)) && A.troops < troops, 'a troop donation to a met ally was refused');
+  console.log('fog-gating donations: refused toward an unmet ally, allowed once met: ok');
+}
+
+function fogGatingActions() {
+  const { Game, GameMap, Protocol: P, WATER, expect, act, nations, tileOf, coastOf } = fogGatingHarness({ name: 'fog-gating', size: 'small', seed: 12345, bots: 8, tribes: 12, fogOfWar: true });
+  const sum = () => Game.visionCount.reduce((s, v) => s + v, 0);
+  // A water tile `id` has (or has not) discovered, reachable by sea from `from`.
+  const waterTile = (id, from, wantDiscovered) => {
+    for (let t = 0; t < GameMap.owner.length; t += 37) {
+      if (GameMap.owner[t] === WATER && Game.isDiscovered(id, t) === wantDiscovered && Game.seaPath([from], t)) return t;
+    }
+    return -1;
+  };
+  // The two coastal strangers furthest apart, so the ticks it takes to build
+  // things do not bring them into contact.
+  let pair = null, far = -1;
+  for (const a of nations()) for (const b of nations()) {
+    if (a >= b || Game.hasMet(a, b) || Game.hasMet(b, a) || coastOf(a) < 0 || coastOf(b) < 0) continue;
+    const d = Game.tileDistSq(tileOf(a), tileOf(b));
+    if (d > far) { far = d; pair = [a, b]; }
+  }
+  expect(pair, 'no two coastal strangers');
+  const [p1, p2] = pair;
+  const A = Game.players[p1], B = Game.players[p2];
+  A.gold = B.gold = 1e10; A.troops = Math.max(A.troops, 100000);
+
+  // A Port each, a Silo and a City for p1, a City for p2: placed now, built by ticking.
+  const free = id => [...Game.players[id].tiles].find(t => !Game.buildings.has(t));
+  const portA = coastOf(p1), portB = coastOf(p2);
+  expect(Game.build(p1, 'port', portA) && Game.build(p2, 'port', portB), 'could not place the Ports');
+  const siloTile = free(p1);
+  expect(Game.build(p1, 'silo', siloTile), 'could not place the Silo');
+  const cityA = free(p1), cityB = free(p2);
+  expect(Game.build(p1, 'city', cityA) && Game.build(p2, 'city', cityB), 'could not place the Cities');
+  const built = () => [portA, portB, siloTile].every(t => Game.buildings.get(t).built);
+  for (let i = 0; i < 200 && !built(); i++) Game.tick();
+  expect(built(), 'the buildings were not finished');
+  expect(!Game.hasMet(p1, p2) && !Game.hasMet(p2, p1), 'the two nations met while the buildings went up');
+  A.gold = B.gold = 1e10; A.troops = Math.max(A.troops, 100000);
+  const PA = Game.buildings.get(portA), PB = Game.buildings.get(portB);
+
+  // --- Naval invasion: an undiscovered landing is refused, a discovered one is not.
+  let U = -1;
+  for (let t = 0; t < GameMap.owner.length && U < 0; t += 11) {
+    if (!GameMap.isLand(t) || !GameMap.isCoastal(t) || Game.isDiscovered(p1, t)) continue;
+    if (GameMap.owner[t] === p1 || Game.areAllied(p1, GameMap.owner[t]) || Game.nearestOwnedCoast(t) !== t) continue;
+    if (Game.nearestCoastPath(p1, t)) U = t;
+  }
+  expect(U >= 0, 'no undiscovered coast to invade');
+  const boats = Game.boats.length, troops = A.troops;
+  expect(Game.navalInvasionBlockReason(p1, U, 1000) === 'Undiscovered', 'the invasion reason for an undiscovered coast is not "Undiscovered"');
+  expect(!act(p1, P.intent.boat(U, 1000)) && Game.boats.length === boats && A.troops === troops, 'an invasion onto an undiscovered coast launched');
+  Game.revealAround(p1, U, 1);
+  expect(Game.navalInvasionBlockReason(p1, U, 1000) === null, 'the invasion reason for a discovered coast is not null');
+  expect(act(p1, P.intent.boat(U, 1000)) && Game.boats.length === boats + 1 && A.troops === troops - 1000, 'an invasion onto a discovered coast did not launch');
+  // A refusal never says what is under the fog: inland, water and coast clicks
+  // the sender cannot see all get the same reason.
+  let inland = -1, sea = -1;
+  for (let t = 0; t < GameMap.owner.length && (inland < 0 || sea < 0); t += 13) {
+    if (Game.isDiscovered(p1, t)) continue;
+    if (inland < 0 && GameMap.isLand(t) && !GameMap.isCoastal(t)) inland = t;
+    if (sea < 0 && GameMap.owner[t] === WATER) sea = t;
+  }
+  expect(inland >= 0 && sea >= 0 && Game.navalInvasionBlockReason(p1, inland, 1000) === 'Undiscovered' && Game.navalInvasionBlockReason(p1, sea, 1000) === 'Undiscovered', 'an inland or water click under the fog was described by a terrain reason');
+
+  // --- Warships: launch and move, discovered water only.
+  const W = waterTile(p1, portA, false);
+  expect(W >= 0, 'no undiscovered water to send a warship to');
+  const warships = Game.warships.length, gold = A.gold;
+  expect(Game.warshipBlockReason(p1, W) === 'Undiscovered' && Game.resolveWarshipLaunch(p1, W).reason === 'Undiscovered', 'the warship reason for undiscovered water is not "Undiscovered"');
+  expect(!act(p1, P.intent.buildUnit('warship', W)) && Game.warships.length === warships && A.gold === gold, 'a warship launched toward undiscovered water');
+  const seen = waterTile(p1, portA, true);
+  expect(seen >= 0 && Game.warshipBlockReason(p1, seen) === null, 'a warship cannot be sent to discovered water');
+  expect(act(p1, P.intent.buildUnit('warship', seen)) && Game.warships.length === warships + 1, 'a warship toward discovered water was refused');
+  const warship = Game.warships[Game.warships.length - 1];
+  const W2 = waterTile(p1, warship.path[0], false);
+  expect(W2 >= 0, 'no undiscovered water to move a warship to');
+  const path = warship.path, patrol = warship.patrolTile;
+  expect(!act(p1, P.intent.moveWarship([warship.id], W2)) && warship.path === path && warship.patrolTile === patrol, 'a warship was moved to undiscovered water');
+  Game.revealAround(p1, W2, 1);
+  expect(act(p1, P.intent.moveWarship([warship.id], W2)) && warship.patrolTile !== patrol, 'a warship could not be moved to water that is now discovered');
+
+  // --- Nukes: any tile is a legal target, and a launch reveals nothing.
+  let N = -1;
+  for (let t = 0; t < GameMap.owner.length && N < 0; t += 29) if (!Game.isDiscovered(p1, t)) N = t;
+  expect(N >= 0, 'no undiscovered tile to nuke');
+  const nukes = Game.nukes.length, seenBefore = sum();
+  expect(Game.nukeBlockReason(p1, 'atombomb', N) === null, 'nukeBlockReason refuses an undiscovered tile');
+  expect(act(p1, P.intent.buildUnit('atombomb', N)) && Game.nukes.length === nukes + 1 && sum() === seenBefore, 'a nuke at an undiscovered tile was refused or revealed something');
+
+  // --- Trade: Ports, trade ships and trains.
+  const trades = (from, to) => Game.tradingPorts(from).includes(to);
+  expect(!Game.canTrade(p1, p2) && !trades(PA, PB) && !trades(PB, PA), 'two nations that have not met can trade');
+  const tradeShip = (owner, src, dst) => ({ owner, srcPort: src, dstPort: dst, path: Array(400).fill(src), pos: 0 });
+  const unmetShip = tradeShip(p1, portA, portB);
+  Game.tradeShips.push(unmetShip);
+  Game.stepTradeShips();
+  expect(!Game.tradeShips.includes(unmetShip), 'a trade ship to a nation the sender has not met was not scrapped');
+  // Rail: a nation's own stations always pay; a stranger's never do.
+  expect(Game.tradeAvailable(p1, p1) && Game.tradeAvailable(p2, p2) && !Game.tradeAvailable(p2, p1) && !Game.tradeAvailable(p1, p2), 'tradeAvailable is wrong for own and unmet stations');
+  const train = (owner, stopTile) => ({ id: 9e6 + Game.trains.length, owner, waypoints: [stopTile, stopTile], cum: [0, 1], stops: [{ dist: 0.001, tile: stopTile }], pos: 0, nextStop: 0, stopsVisited: 0 });
+  const own = train(p1, cityA), foreign = train(p1, cityB);
+  Game.trains.push(own, foreign);
+  const aBefore = A.gold, bBefore = B.gold;
+  Game.stepTrains();
+  expect(!Game.trains.includes(foreign) && B.gold === bBefore, 'a train toward an unmet nation was not stopped');
+  expect(!Game.trains.includes(own) && A.gold - aBefore === Game.trainGold(0, 'self'), 'a train between a nation\'s own stations did not pay');
+  // One side meeting is not enough; both is.
+  Game.markMet(p1, p2);
+  expect(!Game.canTrade(p1, p2) && !Game.canTrade(p2, p1) && !trades(PA, PB) && !trades(PB, PA), 'trade opened after only one side had met');
+  Game.markMet(p2, p1);
+  expect(Game.canTrade(p1, p2) && Game.canTrade(p2, p1) && trades(PA, PB) && trades(PB, PA), 'two nations that have met each other cannot trade');
+  const metShip = tradeShip(p1, portA, portB);
+  Game.tradeShips.push(metShip);
+  Game.stepTradeShips();
+  expect(Game.tradeShips.includes(metShip), 'a trade ship between two nations that have met was scrapped');
+  const aGold = A.gold, bGold = B.gold;
+  Game.trains.push(train(p1, cityB));
+  Game.stepTrains();
+  expect(A.gold > aGold && B.gold > bGold, 'a train between two nations that have met did not pay both');
+  // An embargo still stops trade between nations that have met.
+  Game.addEmbargo(p1, p2, false);
+  expect(!Game.canTrade(p1, p2) && !trades(PA, PB), 'an embargo no longer stops trade between nations that have met');
+  console.log('fog-gating actions: invasion, warship launch and move, nukes, trade, trains, trade ships: ok');
+}
+
+// The same actions in a fog-off match are unchanged: no contact needed.
+function fogGatingOff() {
+  const { Game, Protocol: P, expect, act, nations } = fogGatingHarness({ name: 'fog-gating-off', size: 'small', seed: 12345, bots: 8, tribes: 12 });
+  expect(Game.fog === false, 'fog is on');
+  const [a, b] = nations();
+  expect(Game.canTrade(a, b) && act(a, P.intent.allianceRequest(b)) && Game.pendingRequest(a, b) !== null, 'a fog-off match gates trade or diplomacy');
+  expect(act(a, P.intent.embargo(b, 'start')) && Game.hasEmbargoAgainst(a, b) && act(a, P.intent.targetPlayer(b)), 'a fog-off match gates embargoes or target marks');
+  console.log('fog-gating off: no contact needed in a fog-off match: ok');
+}
+
+function fogGating() {
+  fogGatingDiplomacy();
+  fogGatingDonate();
+  fogGatingActions();
+  fogGatingOff();
+}
+
 function runFog() {
   const kept = only ? fogScenarios.filter(s => only.some(part => s.name.includes(part))) : fogScenarios;
   if (!kept.length) throw new Error(`--only matched no fog scenario: ${only.join(',')}`);
   fogOff();
   fogRules();
+  fogGating();
   const fogTotals = Object.fromEntries(fogMethods.map(k => [k, 0]));
   for (const cfg of kept) {
     const began = performance.now();

@@ -177,8 +177,14 @@ Object.assign(Game, {
     }
     if (p.gold < this.unitCost(p, 'warship')) return { ok: false, reason: 'Not enough gold' };
 
+    // Fog of war: a warship can only be ordered to discovered water. The click
+    // is checked before the water search so a refusal never says what is under
+    // the fog; the snapped destination is checked too, since it can lie in a
+    // different cell from the click.
+    if (this.fog && !this.isDiscovered(playerId, clickTile)) return { ok: false, reason: 'Undiscovered' };
     const dest = this.nearestWaterNear(clickTile, this.NEAREST_COAST_MAX_DIST);
     if (dest < 0) return { ok: false, reason: 'No open water there' };
+    if (this.fog && !this.isDiscovered(playerId, dest)) return { ok: false, reason: 'Undiscovered' };
 
     ports.sort((a, c) => this.tileDistSq(a.tile, dest) - this.tileDistSq(c.tile, dest));
     for (let i = 0; i < Math.min(ports.length, this.WARSHIP_LAUNCH_PORT_ATTEMPTS); i++) {
@@ -259,8 +265,11 @@ Object.assign(Game, {
   // resolved from the intent's stamped clientID.
   moveWarships(list, clickTile, playerId) {
     const owner = playerId === undefined ? this.me : playerId;
+    // Fog of war: same rule as resolveWarshipLaunch — discovered water only.
+    if (this.fog && !this.isDiscovered(owner, clickTile)) return false;
     const tile = this.nearestWaterNear(clickTile, this.NEAREST_COAST_MAX_DIST);
     if (tile < 0) return false;
+    if (this.fog && !this.isDiscovered(owner, tile)) return false;
     let moved = false;
     for (const w of list) {
       if (!this.warships.includes(w) || w.owner !== owner) continue;
