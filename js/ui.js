@@ -66,6 +66,9 @@ const UI = {
   // Fog matches have Scouts to select as well.
   FOG_DEFAULT_HINT: 'Tap land to attack · right-click or hold for diplomacy/boat · shift-drag to select ships · drag to pan',
 
+  // Touch devices get a short one-line version: no right-click or shift-drag.
+  TOUCH_HINT: 'Tap land to attack · hold for diplomacy · drag to pan · pinch to zoom',
+
   // Hotkeys for entries whose Game.UNITS row carries none (the Scout: its row
   // is sim data and was left alone). 'e' for explore; the digits, P and the
   // WASD pan keys are taken.
@@ -1395,7 +1398,8 @@ const UI = {
       hintEl.textContent = this.selectedWarships.size + ' warship' + (this.selectedWarships.size > 1 ? 's' : '') +
         ' selected — tap open water to relocate · shift-drag to reselect · Esc to deselect';
     } else {
-      hintEl.textContent = Game.fog ? this.FOG_DEFAULT_HINT : this.DEFAULT_HINT;
+      hintEl.textContent = window.matchMedia('(pointer: coarse)').matches ? this.TOUCH_HINT
+        : Game.fog ? this.FOG_DEFAULT_HINT : this.DEFAULT_HINT;
     }
   },
 

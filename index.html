@@ -18,7 +18,10 @@
 
 <!-- Dev-only, like the panel it opens: UI.update shows both only on a local
      transport, and the panel additionally stays closed until this is clicked. -->
+<div id="topBtns">
 <button id="debugToggle" class="hidden" type="button" title="Toggle debug panel">Debug ▸</button>
+<button id="pauseBtn" class="hidden" type="button" title="Pause (P)"><img class="ic" src="assets/icons/pause.svg" alt="" draggable="false"> Pause</button>
+</div>
 
 <div id="debugPanel" class="hidden">
   <div id="debugLabel">Debug</div>
@@ -33,7 +36,6 @@
 
 <!-- Singleplayer only (UI.update hides it on a networked transport): pauses
      LocalServer's turn pump. Toggled by click or the P key. -->
-<button id="pauseBtn" class="hidden" type="button" title="Pause (P)"><img class="ic" src="assets/icons/pause.svg" alt="" draggable="false"> Pause</button>
 
 <div id="hoverPanel" class="hidden">
   <div id="hpTop">

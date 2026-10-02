@@ -306,12 +306,18 @@ html, body {
 
 /* --- Debug panel: dev-only gold cheats, top-right ------------------------- */
 
-#debugToggle {
+/* Top-right button row: Debug toggle (dev only) beside Pause. */
+#topBtns {
   position: fixed;
-  /* Sits below #pauseBtn, which owns the top-right corner. */
-  top: calc(env(safe-area-inset-top) + 42px);
+  top: calc(env(safe-area-inset-top) + 6px);
   right: 8px;
   z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#debugToggle {
   padding: 4px 10px;
   font-size: 11px;
   font-weight: 700;
@@ -328,7 +334,7 @@ html, body {
 #debugPanel {
   position: fixed;
   /* Sits below #debugToggle. */
-  top: calc(env(safe-area-inset-top) + 74px);
+  top: calc(env(safe-area-inset-top) + 42px);
   right: 8px;
   /* Without a width cap, this row of six buttons is wider than most phones
      and a narrow desktop window — it used to just run off the left edge of
@@ -378,10 +384,6 @@ html, body {
 /* --- Pause button (singleplayer) ------------------------------------------ */
 
 #pauseBtn {
-  position: fixed;
-  top: calc(env(safe-area-inset-top) + 6px);
-  right: 8px;
-  z-index: 8;
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 700;
@@ -911,6 +913,7 @@ html, body {
    a build lands somewhere it cannot go. */
 #hint { font-size: 11px; opacity: 0.45; text-align: center; }
 #hint.warn { color: #ffb46b; opacity: 0.95; }
+@media (pointer: coarse) { #hint { white-space: nowrap; font-size: 10px; } }
 
 #overlay {
   position: fixed;
@@ -939,7 +942,7 @@ html, body {
 #menuBg:has(~ #overlay.hidden) { display: none; }
 /* The overlay is translucent now, so keep the game's own layers from showing
    through it (the HUD on first load, the finished match after Play Again). */
-body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #pauseBtn, #hoverPanel, #debugToggle, #debugPanel) {
+body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel, #debugPanel) {
   visibility: hidden;
 }
 
@@ -1453,7 +1456,7 @@ body:has(#overlay:not(.hidden)) #perfStats { visibility: hidden; }
 
 /* UI scale: only the edge-anchored HUD pieces scale; the radial menu and the
    canvas are positioned from the cursor and stay as they are. */
-:is(#topbar, #hud, #pauseBtn, #hoverPanel, #debugToggle, #debugPanel) { zoom: var(--ui-scale, 1); }
+:is(#topbar, #hud, #topBtns, #hoverPanel, #debugPanel) { zoom: var(--ui-scale, 1); }
 
 /* Hide hint bar: a placement refusal (.warn) still shows. */
 body.noHint #hint:not(.warn) { display: none; }
