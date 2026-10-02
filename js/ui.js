@@ -28,6 +28,7 @@ function ordinal(n) {
 const UI = {
   ratio: 0.2, // kept equal to DEFAULT_RATIO
   lastLeaderboard: 0,
+  lbMobileOpen: false, // phones only: whole board hidden until tapped
   lbOpenTeams: new Set(), // team ids expanded in the leaderboard; collapsed by default
   diplo: null,        // the offer currently on the banner, if any
   dismissed: new Set(),
@@ -116,6 +117,11 @@ const UI = {
     // rewritten wholesale every 500ms (see update()), which would drop
     // per-row listeners as fast as they were attached.
     document.getElementById('leaderboard').addEventListener('click', e => {
+      if (e.target.closest('.lbToggle')) {
+        this.lbMobileOpen = !this.lbMobileOpen;
+        this.renderLeaderboard();
+        return;
+      }
       const row = e.target.closest('.lbTeamRow');
       // Fog: a row marked `unmet` (a leader the viewer has not met) takes no
       // action. Opening a team's roster is the only row action there is today;
@@ -1273,9 +1279,20 @@ const UI = {
     }).join('') + (unknownTeams ? this.unknownRowHtml(unknownTeams, 'team') : '');
   },
 
+  // Phones: the board is hidden behind a tap-to-open toggle so it doesn't
+  // cover the map. Wider screens always show it.
+  lbCollapsed() {
+    return window.matchMedia('(max-width: 700px)').matches && !this.lbMobileOpen;
+  },
+
   renderLeaderboard() {
-    document.getElementById('leaderboard').innerHTML = Game.isTeamGame()
-      ? this.teamLeaderboardHtml() : this.flatLeaderboardHtml();
+    const mobile = window.matchMedia('(max-width: 700px)').matches;
+    const toggle = mobile
+      ? `<div class="lbRow lbToggle"><div class="lbCaret${this.lbMobileOpen ? ' open' : ''}">&#9656;</div>
+          <div class="lbName">Leaderboard</div></div>` : '';
+    const body = this.lbCollapsed() ? ''
+      : Game.isTeamGame() ? this.teamLeaderboardHtml() : this.flatLeaderboardHtml();
+    document.getElementById('leaderboard').innerHTML = toggle + body;
   },
 
   // Cost, count and affordability, plus the hint line under the bar — which is

@@ -62,6 +62,7 @@ html, body {
 
 .lbRow.me { outline: 1px solid rgba(255, 255, 255, 0.35); }
 
+.lbToggle { cursor: pointer; pointer-events: auto; font-weight: 600; padding: 4px 8px; }
 .lbTeamRow { cursor: pointer; font-weight: 600; }
 .lbTeamRow:hover { background: rgba(8, 14, 26, 0.85); }
 
