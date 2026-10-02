@@ -205,8 +205,12 @@ Object.assign(Game, {
     if (myBoats >= this.MAX_BOATS_PER_PLAYER) {
       return 'Boat limit reached';
     }
+    // Fog of war: the click is checked before anything terrain-dependent is
+    // resolved from it, so a refusal never says what is under the fog.
+    if (this.fog && !this.isDiscovered(attackerId, tile)) return 'Undiscovered';
     const landingTile = this.nearestOwnedCoast(tile);
     if (landingTile < 0) return 'No coast nearby';
+    if (this.fog && !this.isDiscovered(attackerId, landingTile)) return 'Undiscovered';
     const targetOwner = GameMap.owner[landingTile];
     if (targetOwner === attackerId) return 'Already yours';
     if (this.areAllied(attackerId, targetOwner)) return 'Allied';
@@ -303,6 +307,8 @@ Object.assign(Game, {
     // OpenFront lands a boat by starting an AttackExecution, which brings its
     // temporary embargo with it — see embargoOnAttack.
     this.embargoOnAttack(boat.attacker, boat.target);
+    // Fog of war: a landing is an attack, so the target has met the attacker.
+    if (this.fog) this.markMet(boat.target, boat.attacker);
 
     // A normal attack, seeded from the landing tile's own border — it's real
     // owned territory now (setOwner just ran), so no special-casing is needed

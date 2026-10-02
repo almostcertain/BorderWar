@@ -778,7 +778,10 @@ class GameServer {
         // Issue #31: team modes, in OpenFront's shape (js/game/teams.js).
         // Whitelisted here too, so every client is handed the same teams.
         gameMode: config.gameMode === 'team' ? 'team' : 'ffa',
-        playerTeams: GameServer.normalizePlayerTeams(config.playerTeams)
+        playerTeams: GameServer.normalizePlayerTeams(config.playerTeams),
+        // Fog of war (docs/fog-of-war.md): a strict boolean. The auto lobby
+        // passes none, so it is always off.
+        fogOfWar: config.fogOfWar === true
       },
       players: players
     };

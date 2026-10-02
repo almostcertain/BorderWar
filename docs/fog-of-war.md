@@ -1,7 +1,9 @@
 # Fog of war (design)
 
-Status: **design agreed, nothing built.** No ticket numbers yet. This doc is the
-source for the tickets; update it as decisions change.
+Status: **built on the `feature/fog-of-war` branch, not yet playtested by a
+person.** Tasks 1 to 10 are done; 11 (Radio Tower) is a follow-up and not
+started. No ticket numbers. Where the build differs from the
+design below, "As built" near the end says how.
 
 A match option. When it is on, the map starts black, each nation sees only what
 it has discovered, and the sea is explored with a new Scout unit. When it is
@@ -181,8 +183,8 @@ it goes in the desync hash.
   On the large map (2000x1000) that is 31,250 cells. Per-tile tracking for
   ~110 groups would cost about 27 MB; the cell grid costs about 0.5 MB.
 - **Layout.** One bitmask of groups per cell (`Uint32Array`,
-  `cells * ceil(groups / 32)` words). `Game.isDiscovered(group, tile)` is one
-  bit test. Cell-major layout makes the "met" check below cheap.
+  `cells * ceil(groups / 32)` words). `Game.isDiscovered(playerId, tile)` is
+  one bit test. Cell-major layout makes the "met" check below cheap.
 - **Reveal on ownership change.** `setOwner` (`core.js:703`) is the single
   path for territory changes. When a group gains a tile in a cell it has not
   yet stamped from, stamp a disc of cells around it. A second bitmask records
@@ -201,10 +203,65 @@ it goes in the desync hash.
 Starting values, all tuning dials: cell 8 tiles, border sight 3 cells, scout
 sight 5 cells, warship sight 3 cells, radio tower sight 12 cells.
 
+#### As built (task 2)
+
+All state is top-level on `Game`, `null`/`0` in a fog-off match, and only
+`vision.js` writes it.
+
+| Field | Shape | Meaning |
+|---|---|---|
+| `visionGroupOf` | `Int16Array[players]` | Player id to group id, `-1` for tribes. Teams take the first ids in `Game.teams` order; everyone else follows in player-id order, so in a free-for-all a nation's group is its player id. |
+| `visionCells` | `Uint32Array[cells * visionWords]` | Groups that have discovered each cell. |
+| `visionStamped` | same | Groups that have already stamped border sight from a tile in the cell. |
+| `visionShare` | `Uint32Array[groups * visionWords]` | The bits a group's stamp sets: its own plus its current allies'. Rebuilt from `Game.alliances` whenever one forms or ends. |
+| `visionMet` | `Uint32Array[players * visionWords]` | Groups that have met each player. |
+| `visionCount` | `Uint32Array[groups]` | Cells each group has discovered. Changes exactly when the group's discovered set does, so render uses it as a revision counter. |
+| `visionCellsW`, `visionCellsH`, `visionGroups`, `visionWords` | numbers | Grid size, group count, words per bitmask. |
+
+Cell index is `cy * visionCellsW + cx`; a group's bit is word `g >>> 5`, bit
+`g & 31`.
+
+API (read-only unless marked):
+
+- `Game.isDiscovered(playerId, tile)`: true with fog off and for tribes.
+- `Game.hasMet(a, b)`: has `a` met `b`. True with fog off, for `a === b`, for
+  teammates, and when `a` is a tribe. A tribe as `b` is met like any other
+  land owner. False if either id is not a player.
+- `Game.visionGroup(playerId)`: group id, or `-1` (tribe, not a player, fog
+  off).
+- `Game.visionCellOf(tile)`: cell index, for noticing a unit has changed cell.
+- `Game.revealAround(playerId, tile, radiusCells)` (sim only): reveal a disc
+  to the player's group and its current allies. Scouts, warships and the
+  radio tower call this with `VISION_SIGHT_SCOUT` / `_WARSHIP` / `_RADIO`.
+- `Game.markMet(observerId, subjectId)` (sim only): the attack half of
+  contact. Called from `launchAttack`, `resolveLanding` and `detonateNuke`.
+
+Choices made while building:
+
+- A disc of radius `r` cells is every cell with `dx*dx + dy*dy <= r*r + r`
+  (radius `r + 0.5`), so small discs are round rather than a plus shape.
+- Contact belongs to the vision group, so a team shares its contacts as well
+  as its map. Allies still do not.
+- Sharing is direct. When A and B ally, each gets the other's whole map as it
+  stands, including what B was given by an earlier ally C; after that A gets
+  B's new stamps but not C's.
+- Vision is live during the spawn countdown, so until task 3 fixes spawns a
+  bot's wobbling provisional spawn (and a human re-picking) leaves a trail of
+  discovered cells and contacts.
+- An alliance forming scans the whole grid once (a few ms on the large map).
+  Everything else is proportional to what is newly revealed.
+
 ### Hash and goldens
 
 - Add vision state and `Game.scouts` to `Hash.INPUT_FIELDS` (`js/net/hash.js`)
-  so a vision desync is caught.
+  so a vision desync is caught. Vision state is in (task 2), only when fog is
+  on: `visionCount`, `visionMet` and `visionShare` whole, the two cell grids
+  sampled every `Hash.VISION_STRIDE` words. A fog-off digest is unchanged.
+- `node tools/sim-harness.js fog` checks fog-on matches: each scenario twice
+  in fresh contexts with identical hashes, the vision invariants, the contact
+  and sharing rules, and that a fog-off match allocates nothing. `--perturb`
+  is its negative control. `node tools/sim-harness.js neutral` checks fog-off
+  behaviour against a pre-fog baseline.
 - **The goldens will need a re-record.** `tools/sim-harness.js` digests every
   non-cosmetic field on `Game` and checks the source hash of `js/ai.js`, so
   new state fields and the bot changes fail `compare` even with fog off. Before
@@ -312,6 +369,190 @@ Much of the bot logic is already border-based (`borderTargets`, `think`,
 `UNITS` entry `radio`, placed on owned land through the ordinary `build` path.
 Cheap, not upgradable, only in fog matches. On completion it stamps one large
 disc. Discovery survives the tower being captured or destroyed.
+
+## As built
+
+Where the build differs from, or had to interpret, the design above. Task 2's
+notes are under "Vision state".
+
+### Lobby (task 1)
+
+- Players who join a hosted lobby see only a roster and a status line, with
+  no settings and no preview, so there was nothing to hide for them. The auto
+  lobby is always fog off.
+
+### Spawn (task 3)
+
+- The camera opens centred on the player's spawn at about 100 tiles across
+  the shorter screen side.
+- A tap during the countdown flashes "Spawns are random in fog of war".
+- Teammates can start far apart, because spawns are random.
+
+### Gating (task 7)
+
+- The clicked tile is checked before any terrain lookup, as well as the
+  resolved landing or destination tile, so a refusal never says whether a
+  black tile is land, water or coast. The reason is `'Undiscovered'`.
+- Contact refusals read `'Not met'`.
+- "Embargo all" skips nations the sender has not met.
+- The donation gate is redundant in practice: donating needs an alliance, and
+  an alliance makes both sides meet.
+
+### Scouts (task 5)
+
+- **An order does no pathfinding.** Buying or moving a scout only records the
+  tile; the route is found in `stepScouts`, so an order cannot be refused for
+  terrain by construction.
+- **The route search is spread over ticks**, 20,000 tiles a slice, inside
+  `SEA_PATH_NODE_BUDGET_PER_TICK`. The design's single capped search often
+  could not get a scout round its own continent (167 of 200 test voyages
+  arrived on the World map; sliced, 198 of 200). One search runs at a time
+  across all nations; other scouts wait. A scout sits still while its route
+  is found.
+- The search has its own arena: about 23 MB on a 2000x1000 map, allocated on
+  the first scout search of a fog match.
+- A click on land or a lake resolves to the nearest tile of the scout's own
+  sea within 256 tiles; beyond that it sails toward the best tile seen and
+  retries.
+- Launch Port: the nearest to the click in a straight line. Terrain is used
+  to pick the Port only when the click is water the buyer has discovered.
+- Health 400, so two warship shells sink one. Warships rank targets boat,
+  warship, scout, trade ship. A nuke blast sinks scouts as it does warships.
+- An eliminated owner's scouts are removed on the next tick. Losing the last
+  Port changes nothing, as for warships.
+- The `UNITS` entry is marked `fogOnly` and has no hotkey; `buildScout`
+  refuses with fog off.
+
+### Rendering (task 4)
+
+- **`Render.fogActive()`** is the single switch: false with fog off, once the
+  match is over, for an eliminated viewer, and for a viewer with no vision
+  group. `Render.canSee(tile)` is the per-tile test. The UI gates every
+  filter on these.
+- **The layer has one pixel per cell corner** (251x126 on the large map), not
+  per cell, so undiscovered cells are fully opaque and the soft edge sits
+  inside the outermost discovered cells. Clear sight is therefore about 2
+  cells past the border with a fading third, not 3.
+- The fog colour is the canvas backdrop (`FOG_COLOR`, `#060a14`), so the map
+  edge does not show as an outline.
+- In fog matches labels, badges, front numbers and popups are drawn over the
+  fog and culled by their anchor tile. A nation is named on the map only once
+  its label anchor (the centre of its largest landmass) is discovered.
+- The placement ghost is drawn over the fog, since nukes and scouts aim
+  blind. A warship ghost is refused unless the hovered tile and its
+  destination are both discovered.
+- Blasts and SAM flashes are culled on their centre. The incoming-nuke target
+  ring is always drawn. "Own" missiles means the viewer's, not teammates'.
+- **Spectators and replays do not exist in the game today.** A client that is
+  not on the roster is treated as player 0 and gets that player's fog.
+
+### UI (tasks 6 and 8)
+
+- **Leaderboard.** Six rows as today: the top 3, then met nations in rank
+  order, the viewer always present, then "+N unknown nations". Rows show
+  their true rank among all nations. An unmet top-3 row shows name and land
+  share only, not gold or status icons. Tribes are in the ranking, so early
+  on the top 3 can be tribes. Teams: the top 3 teams always, lower teams only
+  if a member is met, then "+N unknown teams".
+- A plain tap on an undiscovered tile does nothing.
+- An unmet nation's boat in discovered water shows no hover panel.
+- **Camera jumps.** A front chip jumps to a visible contested tile if the
+  front's centre is in the black. An own boat in the black jumps to its
+  landing tile. Someone else's boat still in the black does not jump and
+  flashes "Not in sight yet".
+- **Scout controls.** Hotkey E, fog matches only. The ghost colour comes only
+  from `scoutBlockReason`, which never depends on terrain. The route is never
+  drawn; a diamond marks the clicked destination for the owner. Shift-click
+  and shift-drag select scouts with warships. A mixed order sends scouts
+  anywhere and warships only to discovered water.
+- Known rough edges: the "No trade" badge also shows when the other nation
+  has not met the viewer; an inbound boat's chip (labelled "Unknown nation")
+  appears from launch, before the boat is visible; a nuke that raises the
+  alert but hits none of the viewer's tiles leaves the launcher unknown; the
+  nuke alert row still jumps the camera to the impact point.
+
+### Bots (task 9)
+
+- **Beaches, not `coastSample`.** `coastSample` is the 12 northernmost coastal
+  tiles of each landmass, so a fog bot could see an island's near shore and
+  still have nothing to target. Fog matches use `AI.fogCoast()`: one ocean
+  coast tile per vision cell, at most 24 per landmass. Both `navalThink` and
+  scouting use it. Lake shores are left out, so lake islands are never
+  fog-mode naval targets.
+- A bot knows where the sample beaches are and nothing about what is on them.
+- **Scouts.** One on Easy, two otherwise. Bought after the normal build order
+  and exempt from the savings reserve. Launched from an ocean Port and sent
+  to the nearest undiscovered beach to the home coast, ties by `Game.rng`. An
+  idle scout is redirected before a new one is bought. A beach that cannot be
+  reached, or lies within 80 tiles of where a scout was lost, is written off.
+  A replacement waits 2 minutes. Three failed voyages retire a scout.
+- An alliance offer from an unmet nation is answered blind (`strangerDecision`).
+  `handleEmbargoes` skips unmet nations. SAM savings count only Silos the bot
+  can see. Nukes and retaliation aim only at discovered tiles of met nations.
+- Bots do not use warships to explore.
+- **Measured against fog-off on the same seeds** (`tools/fog-activity.js`):
+  land war is unchanged. Overseas invasions run at about half until Ports and
+  scouts arrive (a Port is a bot's second purchase, so scouts appear around
+  tick 2500 to 3000), then 80 to 90% on small and World maps and about half
+  on medium and on large with 60 bots. No invasion check is refused as
+  undiscovered any more.
+- **Weak case: one giant continent.** The scout route search cannot round the
+  continent inside its 200k-node guard, so about 40% of voyages fail, bots
+  retire scouts, and the median nation discovers 38% of the map. Fixing it is
+  a `scouts.js` change.
+- Most bot scouts are eventually sunk by warships (about 95% on big maps).
+
+### Verification (task 10)
+
+What was checked on the final code, in a Chromium pane (no Firefox there):
+
+- `sim-harness.js neutral` and `fog` both pass. `Hash.verifyDeterminism` takes
+  `fogOfWar: true` and skips the spawn step in a fog match. Fog-on and fog-off
+  dual runs agree in the browser, a flipped vision bit is caught at the turn it
+  is flipped, and three browser runs end on the same hash as the same scenario
+  in node (`fog-small-12345`, `fog-medium-67890`, `fog-late-medium-24680`).
+- Three two-client matches on the node server (two FFA, one Teams): every hash
+  compared between the two clients matched (301, 800 and 1196 of them), and
+  the server flagged nothing. A client that has been eliminated (no fog) stays in
+  step with one that is still fogged.
+- Elimination and the end of the match lift the fog in FFA and Teams. A fog
+  match after a fog-off one, and the reverse, start clean.
+- Large map, 82 bots and 400 tribes, 6000 ticks: a tick averages 2.9 ms with
+  fog and 3.4 ms without, worst 28 and 29 ms. The scout route search costs at
+  most 4 ms in a tick. `Hash.compute` goes from 0.8 to 1.0 ms. The search arena
+  is 21.7 MB and the vision grids 0.7 MB.
+- Not caused by fog, but found while measuring: on The World the annexation
+  sweep (every 20 ticks) costs 60 to 80 ms a time for about the first 100
+  seconds of a match, fog on or off.
+
+Fixed in this task (render and UI only):
+
+- The City, Factory and Port ghost drew its rail link through the black
+  whenever the real map had land all the way, so sweeping the cursor showed
+  land from water up to 110 tiles from a station. `Render.fogRailPreview` now
+  only counts discovered land, and a City or Port needs a Factory the viewer
+  can see.
+- With a structure armed, the hint line read "Tap to upgrade this City" over a
+  hidden enemy City of the same type.
+- The leaderboard kept the previous match's standings through the next match's
+  countdown.
+- Join Lobby sent the click event as the join code (not a fog bug; it stopped
+  anyone joining by code).
+
+Known leaks left in, both in sim code:
+
+- **Boat wedge.** On a discovered tile the wedge reads "Undiscovered" when the
+  nearest coast it would land on is hidden, and "No coast nearby" when there is
+  none within 50 tiles. The difference says whether there is coast in the
+  black. A plain tap on land you do not border flashes the same reasons.
+  Fixing it means making `nearestOwnedCoast` skip tiles the attacker has not
+  discovered, which changes where a boat goes.
+- **Warship order.** The same, weaker: a click on discovered land whose
+  nearest water is hidden reads "Undiscovered".
+
+Not checked: real Firefox, a rejoin during a fog match, a real touch device,
+and a bot launching a nuke in a two-client match (bot nukes were covered by
+the dual run, 111 launches a run).
 
 ## Tasks
 

@@ -69,6 +69,9 @@ Object.assign(Game, {
     // no equivalent), so a request against one would just sit until it times
     // out. Block it up front instead of leaving a dead offer on the table.
     if (from.isTribe || to.isTribe) return false;
+    // Fog of war: only the sender needs contact. The recipient may answer a
+    // request from someone it has not met (acceptAlliance is not gated).
+    if (this.fog && !this.hasMet(fromId, toId)) return false;
     if (this.areAllied(fromId, toId)) return false;
     if (this.pendingRequest(fromId, toId)) return false;
     if (this.pendingRequest(toId, fromId)) return true;
@@ -81,6 +84,7 @@ Object.assign(Game, {
   allianceBlockReason(fromId, toId) {
     const to = this.players[toId];
     if (to && to.isTribe) return 'Tribes do not ally';
+    if (this.fog && !this.hasMet(fromId, toId)) return 'Not met';
     if (this.onSameTeam(fromId, toId)) return 'Teammate';
     if (this.areAllied(fromId, toId)) return null;
     if (this.pendingRequest(fromId, toId)) return 'Offer already pending';
@@ -130,6 +134,8 @@ Object.assign(Game, {
       expiresAt: this.elapsed + this.ALLIANCE_DURATION,
       extendA: false, extendB: false
     });
+    // Fog of war: the two have now met, and share their maps while this lasts.
+    if (this.fog) this.visionAllianceFormed(a.id, b.id);
     // A deal signed while the armies are already in the field has to recall
     // them, or the front carries on eating your new ally's land. Boats are
     // deliberately NOT recalled here — OpenFront's own TransportShipExecution
@@ -160,6 +166,8 @@ Object.assign(Game, {
     if (i >= 0) this.alliances.splice(i, 1);
     this.players[al.a].allies.delete(al.b);
     this.players[al.b].allies.delete(al.a);
+    // Fog of war: map sharing stops; both keep what they have discovered.
+    if (this.fog) this.visionRefreshShare();
   },
 
   // OpenFront marks the breaker a traitor unless the other side already is one,
@@ -254,6 +262,9 @@ Object.assign(Game, {
   // own stations check a === b first, as TrainStation.tradeAvailable does.
   canTrade(a, b) {
     if (a < 0 || b < 0 || a === b) return false;
+    // Fog of war: trade needs contact on both sides. Contact is permanent, so
+    // a deal that was legal when it started cannot be un-met mid-crossing.
+    if (this.fog && !(this.hasMet(a, b) && this.hasMet(b, a))) return false;
     return !this.hasEmbargoAgainst(a, b) && !this.hasEmbargoAgainst(b, a);
   },
 
@@ -292,6 +303,7 @@ Object.assign(Game, {
     const from = this.players[fromId], to = this.players[toId];
     if (!from || !to || !from.alive || !to.alive) return 'Invalid';
     if (to.isTribe) return 'Tribes do not trade';
+    if (this.fog && !this.hasMet(fromId, toId)) return 'Not met';
     return null;
   },
 
@@ -314,6 +326,9 @@ Object.assign(Game, {
     const out = [];
     for (const p of this.players) {
       if (p.id === fromId || !p.alive || p.isTribe || this.onSameTeam(fromId, p.id)) continue;
+      // Fog of war: embargo-all reaches only the nations the sender has met,
+      // the same rule setEmbargo applies one at a time.
+      if (this.fog && !this.hasMet(fromId, p.id)) continue;
       out.push(p.id);
     }
     return out;
@@ -378,6 +393,7 @@ Object.assign(Game, {
     const from = this.players[fromId], to = this.players[toId];
     if (!from || !to || !from.alive || !to.alive) return false;
     if (!this.teams || !this.areAllied(fromId, toId)) return false;
+    if (this.fog && !this.hasMet(fromId, toId)) return false;
     const last = from.lastDonationAt.get(toId);
     return last === undefined || this.elapsed - last >= this.DONATE_COOLDOWN;
   },
@@ -389,6 +405,7 @@ Object.assign(Game, {
     if (!from || !to || !from.alive || !to.alive) return 'Invalid';
     if (!this.teams) return 'Team games only';
     if (!this.areAllied(fromId, toId)) return 'Not allied';
+    if (this.fog && !this.hasMet(fromId, toId)) return 'Not met';
     const last = from.lastDonationAt.get(toId);
     if (last !== undefined) {
       const wait = this.DONATE_COOLDOWN - (this.elapsed - last);
@@ -499,6 +516,7 @@ Object.assign(Game, {
     const from = this.players[fromId], to = this.players[toId];
     if (!from || !to || !from.alive || !to.alive) return 'Invalid';
     if (this.spawning) return 'Not started';
+    if (this.fog && !this.hasMet(fromId, toId)) return 'Not met';
     if (this.areAllied(fromId, toId)) return 'Allied';
     for (const t of from.targets) {
       const wait = this.TARGET_COOLDOWN - (this.elapsed - t.at);

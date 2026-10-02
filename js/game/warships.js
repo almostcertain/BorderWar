@@ -177,8 +177,14 @@ Object.assign(Game, {
     }
     if (p.gold < this.unitCost(p, 'warship')) return { ok: false, reason: 'Not enough gold' };
 
+    // Fog of war: a warship can only be ordered to discovered water. The click
+    // is checked before the water search so a refusal never says what is under
+    // the fog; the snapped destination is checked too, since it can lie in a
+    // different cell from the click.
+    if (this.fog && !this.isDiscovered(playerId, clickTile)) return { ok: false, reason: 'Undiscovered' };
     const dest = this.nearestWaterNear(clickTile, this.NEAREST_COAST_MAX_DIST);
     if (dest < 0) return { ok: false, reason: 'No open water there' };
+    if (this.fog && !this.isDiscovered(playerId, dest)) return { ok: false, reason: 'Undiscovered' };
 
     ports.sort((a, c) => this.tileDistSq(a.tile, dest) - this.tileDistSq(c.tile, dest));
     for (let i = 0; i < Math.min(ports.length, this.WARSHIP_LAUNCH_PORT_ATTEMPTS); i++) {
@@ -240,6 +246,7 @@ Object.assign(Game, {
       target: null, targetKind: null,
       lastShellAt: -Infinity, lastPathAt: this.elapsed
     });
+    if (this.fog) this.warshipReveal(this.warships[this.warships.length - 1]);
     return true;
   },
 
@@ -259,8 +266,11 @@ Object.assign(Game, {
   // resolved from the intent's stamped clientID.
   moveWarships(list, clickTile, playerId) {
     const owner = playerId === undefined ? this.me : playerId;
+    // Fog of war: same rule as resolveWarshipLaunch — discovered water only.
+    if (this.fog && !this.isDiscovered(owner, clickTile)) return false;
     const tile = this.nearestWaterNear(clickTile, this.NEAREST_COAST_MAX_DIST);
     if (tile < 0) return false;
+    if (this.fog && !this.isDiscovered(owner, tile)) return false;
     let moved = false;
     for (const w of list) {
       if (!this.warships.includes(w) || w.owner !== owner) continue;
@@ -310,6 +320,10 @@ Object.assign(Game, {
     }
     if (best) { w.target = best; w.targetKind = 'warship'; return; }
 
+    // Fog of war: an unfriendly Scout (game/scouts.js) comes next. It is shot
+    // from where the warship stands, like a boat or a warship, never chased.
+    if (this.fog && this.scoutTargetFor(w, pos, rangeSq)) return;
+
     best = null; bestDist = Infinity;
     for (const s of this.tradeShips) {
       if (s.owner === w.owner || this.areAllied(w.owner, s.owner)) continue;
@@ -346,7 +360,7 @@ Object.assign(Game, {
       born: this.elapsed,
       targetKind: w.targetKind,
       target: w.target,
-      damage: w.targetKind === 'warship' ? this.warshipShellDamage() : null
+      damage: w.targetKind === 'warship' || w.targetKind === 'scout' ? this.warshipShellDamage() : null
     });
   },
 
@@ -440,8 +454,8 @@ Object.assign(Game, {
 
     if (w.target) {
       const kind = w.targetKind;
-      const arr = kind === 'boat' ? this.boats : kind === 'warship' ? this.warships : this.tradeShips;
-      let ok = arr.includes(w.target) && (kind !== 'warship' || w.target.health > 0);
+      const arr = kind === 'boat' ? this.boats : kind === 'warship' ? this.warships : kind === 'scout' ? this.scouts : this.tradeShips;
+      let ok = arr.includes(w.target) && ((kind !== 'warship' && kind !== 'scout') || w.target.health > 0);
       if (ok) {
         const tp = this.pathPos(w.target);
         const d = (tp.x - pos.x) ** 2 + (tp.y - pos.y) ** 2;
@@ -458,13 +472,13 @@ Object.assign(Game, {
     // A relocation order (or the launch voyage) is never interrupted: the ship
     // keeps sailing and shoots what it passes, but doesn't stop or chase.
     if (w.ordered) {
-      if (w.targetKind === 'boat' || w.targetKind === 'warship') this.warshipShootAt(w);
+      if (w.targetKind === 'boat' || w.targetKind === 'warship' || w.targetKind === 'scout') this.warshipShootAt(w);
       else { w.target = null; w.targetKind = null; }
       w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * this.TICK_DT);
       return;
     }
 
-    if (w.targetKind === 'boat' || w.targetKind === 'warship') {
+    if (w.targetKind === 'boat' || w.targetKind === 'warship' || w.targetKind === 'scout') {
       this.warshipShootAt(w);
       return;
     }
@@ -490,8 +504,8 @@ Object.assign(Game, {
     const step = this.WARSHIP_SHELL_SPEED * this.TICK_DT;
     for (let i = this.shells.length - 1; i >= 0; i--) {
       const s = this.shells[i];
-      const arr = s.targetKind === 'boat' ? this.boats : this.warships;
-      const alive = arr.includes(s.target) && (s.targetKind !== 'warship' || s.target.health > 0);
+      const arr = s.targetKind === 'boat' ? this.boats : s.targetKind === 'scout' ? this.scouts : this.warships;
+      const alive = arr.includes(s.target) && (s.targetKind === 'boat' || s.target.health > 0);
       if (!alive) { this.shells.splice(i, 1); continue; }
 
       const tp = this.pathPos(s.target);
@@ -527,7 +541,23 @@ Object.assign(Game, {
         continue;
       }
       this.warshipTick(w);
+      if (this.fog) this.warshipReveal(w);
     }
+  },
+
+  // Fog of war (docs/fog-of-war.md): a warship uncovers VISION_SIGHT_WARSHIP
+  // cells around itself, for its owner and its owner's allies. Called when it
+  // is launched and after each of its ticks, and stamps only when the ship is
+  // in a different vision cell from the one it last stamped from — which
+  // covers a relocation or a repath putting it on a new tile as well as plain
+  // sailing. `visionCell` exists only on warships in fog matches; nothing
+  // reaches this with fog off.
+  warshipReveal(w) {
+    const tile = w.path[Math.min(w.path.length - 1, Math.floor(w.pos))];
+    const cell = this.visionCellOf(tile);
+    if (cell === w.visionCell) return;
+    w.visionCell = cell;
+    this.revealAround(w.owner, tile, this.VISION_SIGHT_WARSHIP);
   },
 
 });

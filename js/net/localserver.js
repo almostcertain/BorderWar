@@ -199,7 +199,9 @@ const LocalServer = {
         // Issue #31. Game.init (via Teams.normalize) treats anything but
         // 'team' as free-for-all.
         gameMode: opts.gameMode === 'team' ? 'team' : 'ffa',
-        playerTeams: opts.playerTeams
+        playerTeams: opts.playerTeams,
+        // Fog of war (docs/fog-of-war.md): a strict boolean, off by default.
+        fogOfWar: opts.fogOfWar === true
       },
       players: [{
         clientID: this.clientID,

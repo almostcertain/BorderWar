@@ -54,6 +54,12 @@ const Radial = {
   open(sx, sy, targetId, tile) {
     if (performance.now() - this.lastHide < this.REOPEN_MS) return;
     if (targetId === Game.me) return;
+    // Fog of war: no menu on the black. Opening one at all would say whether
+    // the tile is someone's land, unclaimed or sea. A tile the viewer can see
+    // always belongs to a nation they have met (docs/fog-of-war.md), so the
+    // name in the hub needs no further check; UI.knows() is asked anyway, so
+    // the menu can never introduce a nation.
+    if (!Render.canSee(tile) || (targetId >= 0 && !UI.knows(targetId))) return;
     if (targetId >= 0) {
       const p = Game.players[targetId];
       if (!p || !p.alive) return;

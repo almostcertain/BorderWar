@@ -107,6 +107,8 @@ Object.assign(Game, {
     if (targetId >= 0) {
       this.provokeByAttack(attacker, this.players[targetId]);
       this.noteFreshFront(attacker, this.players[targetId]);
+      // Fog of war: being attacked tells the victim who it was.
+      if (this.fog) this.markMet(targetId, attackerId);
     }
     return true;
   },
