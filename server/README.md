@@ -26,6 +26,40 @@ node index.js
 default; override with `PORT=<n> node index.js`. Ctrl+C sends `SIGINT`, which
 the server handles gracefully (terminates open sockets, then exits).
 
+### Mac quick start
+
+Prereqs (once): Node (`brew install node`) and, for internet play,
+`brew install cloudflared`. Then:
+
+- **Local only** (no multiplayer, static page): double-click `local-mac.command`
+  → `http://localhost:8123`.
+- **Local multiplayer server** (no tunnel): double-click `mac-server.command`.
+  It installs `server/node_modules` on first run, starts the server on
+  `http://localhost:8124` and opens it in your browser. Ctrl+C stops it.
+- **Live server (borderwar.io)**: double-click `tools/live-mac.command`. It
+  opens one Terminal window for the server and one for the Cloudflare tunnel.
+  Close a window or press Ctrl+C to stop that piece.
+- **borderwar.io (one-time setup)**: `tools/live-mac.command` serves `https://borderwar.io`
+  once a named tunnel called `borderwar` exists on this Mac; until then it falls
+  back to a random quick-tunnel link. `borderwar.io` must be a zone in your
+  Cloudflare account.
+  ```
+  cloudflared tunnel login                      # browser: pick borderwar.io
+  cloudflared tunnel create borderwar
+  cloudflared tunnel route dns borderwar borderwar.io
+  ```
+  If the tunnel already exists (e.g. from the Windows machine), skip `create`
+  and `route dns`; copy its `<uuid>.json` credentials file and `cert.pem` into
+  `~/.cloudflared/` instead. Don't run it on both machines at once, or
+  Cloudflare splits visitors between them.
+- **Stay awake while hosting** (a sleep kills running matches): run
+  `caffeinate -i` in another Terminal tab, Ctrl+C when done.
+- **LAN play**: macOS asks "allow incoming connections for node?" the first
+  time; click Allow. Find your IP with `ipconfig getifaddr en0` and browse to
+  `http://<ip>:8124` from the other device.
+- First double-click of a `.command` file may be blocked by Gatekeeper;
+  right-click → Open once, or run `chmod +x *.command`.
+
 ---
 
 ## Tier 1 — Same machine
