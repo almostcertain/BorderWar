@@ -36,6 +36,12 @@ const PORT = Number(process.env.PORT) || 8124;
 // serve (index.html, js/, css/) live at that root, not under server/.
 const REPO_ROOT = path.join(__dirname, '..');
 
+// The only parts of the repo the web server hands out (buildinfo.json is
+// answered separately, below). Add to these if index.html starts loading
+// something from a new place.
+const PUBLIC_FILES = new Set(['index.html', 'version.json', 'LICENSE']);
+const PUBLIC_DIRS = new Set(['js', 'css', 'assets', 'maps']);
+
 // Minimal content-type table. Just enough for what index.html's own loader
 // actually requests (see its script list) plus the page and its stylesheet —
 // this is not a general-purpose static file server, it is the same handful
@@ -86,6 +92,19 @@ function serveStatic(req, res) {
   if (filePath !== REPO_ROOT && !filePath.startsWith(REPO_ROOT + path.sep)) {
     res.writeHead(403, { 'Content-Type': 'text/plain' });
     res.end('Forbidden');
+    return;
+  }
+
+  // The server is public, so serve only what the game itself loads. Anything
+  // else under the repo (.git, .claude, docs, server, tools, marketing, any
+  // stray .env or log) answers 404, exactly like a file that does not exist.
+  const rel = path.relative(REPO_ROOT, filePath).split(path.sep);
+  const allowed = rel.length === 1
+    ? PUBLIC_FILES.has(rel[0])
+    : PUBLIC_DIRS.has(rel[0]) && !rel.some(seg => seg.startsWith('.'));
+  if (!allowed) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found');
     return;
   }
 

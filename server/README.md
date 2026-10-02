@@ -97,15 +97,15 @@ host argument) binds every interface, so nothing here needs changing to make
 LAN reachability possible in principle.
 
 **(b) This machine's LAN-facing IP.** From `ipconfig`, the Ethernet adapter's
-IPv4 address is **`192.168.4.22`** (there's also a Radmin VPN virtual adapter
-at `26.109.144.156`, irrelevant here).
+IPv4 address is a private `192.168.x.x` address (a VPN virtual adapter
+also shows up in `ipconfig`, irrelevant here).
 
 **(c) A scripted client connecting to that IP instead of `localhost`.** Real
 output:
 
 ```
-HTTP GET http://192.168.4.22:18125/ -> 200 5757 bytes
-WS OPEN via ws://192.168.4.22:18125/ws
+HTTP GET http://192.168.x.x:18125/ -> 200 5757 bytes
+WS OPEN via ws://192.168.x.x:18125/ws
 sent join message over the LAN-IP socket
 WS opened and join sent via LAN IP with no error/close in 1.5s -- OK
 ```
@@ -153,7 +153,7 @@ netsh advfirewall firewall add rule name="BorderWar Server (LAN)" dir=in action=
 ```
 
 Then from another device on the same private network, browse to
-`http://192.168.4.22:8124` (substitute this machine's actual current LAN IP —
+`http://192.168.x.x:8124` (substitute this machine's actual current LAN IP —
 it can change between sessions on most home routers).
 
 ---
