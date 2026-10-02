@@ -62,7 +62,9 @@ Object.assign(Game, {
   // directly.
   NUKE_MAGNITUDES: {
     atombomb: { inner: 12, outer: 30 },
-    hydrogenbomb: { inner: 80, outer: 100 },
+    // core/tendril: tile-destroy solid disc and spike gain, for blasts whose
+    // 20-tile band is too thin to read as tendrils (see nukeBlastTiles).
+    hydrogenbomb: { inner: 80, outer: 100, core: 65, tendril: 2.4 },
     mirvwarhead: { inner: 12, outer: 18 }
   },
   // Config.ts's nukeAllianceBreakThreshold(): a flat 100 for every nuke
@@ -311,20 +313,22 @@ Object.assign(Game, {
   },
 
   // The "radiating" blast footprint: a solid disc out to the inner radius,
-  // then an edge that wanders between inner and outer by bearing — three
-  // low-frequency harmonics with random phases — so the crater is irregular
-  // but always one solid blob. OpenFront's per-tile coin flip in that band
+  // then an edge that wanders between inner and outer by bearing — five
+  // harmonics with random phases, the high ones sharpened into tendrils — so
+  // the crater is irregular but always one solid, hole-free shape. OpenFront's per-tile coin flip in that band
   // (rand.chance(2)) was ported here first, and it peppered the rim with
   // survivors and one-tile fallout holes: cleaning up after a hit meant
   // tapping them one at a time. The band still averages half its width, so
-  // the total area lands where the coin flip's did. Draws a fixed three
+  // the total area lands near where the coin flip's did. Draws a fixed five
   // rng() values per blast, so lockstep clients stay in step.
   nukeBlastTiles(dst, magnitude) {
-    const inner2 = magnitude.inner * magnitude.inner;
+    const core = magnitude.core ?? magnitude.inner;
+    const inner2 = core * core;
     const w = GameMap.width, h = GameMap.height;
     const cx = dst % w, cy = (dst / w) | 0;
-    const band = magnitude.outer - magnitude.inner;
-    const phase = [this.rng() * 2 * Math.PI, this.rng() * 2 * Math.PI, this.rng() * 2 * Math.PI];
+    const band = magnitude.outer - core;
+    const phase = [];
+    for (let i = 0; i < 5; i++) phase.push(this.rng() * 2 * Math.PI);
     const reach = Math.ceil(magnitude.outer);
     const result = new Set();
     for (let y = Math.max(0, cy - reach); y <= Math.min(h - 1, cy + reach); y++) {
@@ -333,8 +337,13 @@ Object.assign(Game, {
         const d2 = dx * dx + dy * dy;
         if (d2 > inner2) {
           const a = Math.atan2(dy, dx);
-          const s = 0.5 + 0.5 * (Math.sin(2 * a + phase[0]) * 0.5 + Math.sin(3 * a + phase[1]) * 0.3 + Math.sin(5 * a + phase[2]) * 0.2);
-          const r = magnitude.inner + band * s;
+          // Low harmonics give the lopsided base; the high ones (7/11/17
+          // lobes) plus the squaring below turn the peaks into narrow
+          // tendrils reaching toward the outer radius.
+          const v = 0.5 + 0.5 * (Math.sin(2 * a + phase[0]) * 0.2 + Math.sin(3 * a + phase[1]) * 0.2 +
+            Math.sin(7 * a + phase[2]) * 0.25 + Math.sin(11 * a + phase[3]) * 0.2 + Math.sin(17 * a + phase[4]) * 0.15);
+          const s = Math.min(1, v * v * (magnitude.tendril ?? 1.8));
+          const r = core + band * s;
           if (d2 > r * r) continue;
         }
         result.add(y * w + x);
