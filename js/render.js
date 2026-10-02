@@ -723,8 +723,8 @@ const Render = {
   // from outside a frame (the hit-tests) goes through canSee().
   FOG_COLOR: [6, 10, 20],        // the backdrop draw() clears to, so the fog and the void past the map's edge are one
   FOG_BITMAP_SETTLE: 30,
-  FOG_SUB: 4,                    // layer pixels per vision cell each way
-  FOG_EDGE_LO: 0.55,             // blended corner opacity at or below which a pixel is clear
+  FOG_SUB: 8,                    // layer pixels per vision cell each way
+  FOG_EDGE_LO: 0.8,              // blended corner opacity at or below which a pixel is clear
   FOG_EDGE_HI: 0.95,             // ... and at or above which it is solid; the gap is the edge's width
   fogCorners: null,              // Uint8Array per vision-grid corner: 1 while any cell touching it is undiscovered
   fogged: false,                 // fogActive(), sampled once per draw()
