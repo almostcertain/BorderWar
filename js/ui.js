@@ -1320,6 +1320,7 @@ const UI = {
       els.btn.classList.toggle('armed', this.placing === u.type);
       els.btn.classList.toggle('locked',
         (u.type === 'atombomb' || u.type === 'hydrogenbomb' || u.type === 'mirv') && Game.unitsOwned(me, 'silo') < 1 ||
+        (u.type === 'warship' && Game.unitsOwned(me, 'port') < 1) ||
         (isScout && (this.scoutReason() === 'Build a Port first' || this.scoutReason() === 'Scout limit reached')));
     }
 
