@@ -723,6 +723,10 @@ const Render = {
   // from outside a frame (the hit-tests) goes through canSee().
   FOG_COLOR: [6, 10, 20],        // the backdrop draw() clears to, so the fog and the void past the map's edge are one
   FOG_BITMAP_SETTLE: 30,
+  FOG_SUB: 4,                    // layer pixels per vision cell each way
+  FOG_EDGE_LO: 0.55,             // blended corner opacity at or below which a pixel is clear
+  FOG_EDGE_HI: 0.95,             // ... and at or above which it is solid; the gap is the edge's width
+  fogCorners: null,              // Uint8Array per vision-grid corner: 1 while any cell touching it is undiscovered
   fogged: false,                 // fogActive(), sampled once per draw()
   fogCanvas: null,
   fogCtx: null,
@@ -745,17 +749,20 @@ const Render = {
     const cw = Game.visionCellsW, ch = Game.visionCellsH;
     if (!this.fogCanvas || this.fogW !== cw || this.fogH !== ch) {
       this.fogCanvas = document.createElement('canvas');
-      this.fogCanvas.width = cw + 1;
-      this.fogCanvas.height = ch + 1;
+      const S = this.FOG_SUB;
+      this.fogCanvas.width = cw * S + 1;
+      this.fogCanvas.height = ch * S + 1;
       this.fogCtx = this.fogCanvas.getContext('2d');
-      this.fogImage = this.fogCtx.createImageData(cw + 1, ch + 1);
+      this.fogImage = this.fogCtx.createImageData(cw * S + 1, ch * S + 1);
       this.fogPixels = new Uint32Array(this.fogImage.data.buffer);
       this.fogSeen = new Uint8Array(cw * ch);
+      this.fogCorners = new Uint8Array((cw + 1) * (ch + 1));
       this.fogW = cw;
       this.fogH = ch;
     }
     const c = this.FOG_COLOR;
     this.fogSeen.fill(0);
+    this.fogCorners.fill(1);
     this.fogSeenCount = 0;
     this.fogPixels.fill(this.packed(c[0], c[1], c[2]));
     this.fogCtx.putImageData(this.fogImage, 0, 0);
@@ -787,7 +794,32 @@ const Render = {
       const row = j * cw + i;
       clear = (!left || seen[row - 1] !== 0) && (!right || seen[row] !== 0);
     }
-    if (clear) this.fogPixels[j * (cw + 1) + i] = 0;
+    if (clear) this.fogCorners[j * (cw + 1) + i] = 0;
+  },
+
+  // Repaints the layer's pixels for corners i0..i1, j0..j1 (inclusive) and the
+  // cells around them. Each pixel is the bilinear blend of its cell's four
+  // corners, pushed through a steep smoothstep: the edge is a fraction of a
+  // cell wide instead of the whole cell a plain stretch would give. The ramp
+  // starts well inside the discovered cell (t = 0.95 is nearly at the
+  // undiscovered boundary), so undiscovered ground stays fully covered.
+  fogPaint(i0, j0, i1, j1) {
+    const cw = this.fogW, ch = this.fogH, S = this.FOG_SUB, stride = cw * S + 1;
+    const corners = this.fogCorners, cs = cw + 1, px = this.fogPixels, c = this.FOG_COLOR;
+    const lo = this.FOG_EDGE_LO, hi = this.FOG_EDGE_HI, rgb = this.packed(c[0], c[1], c[2], 0);
+    const pxMin = Math.max(0, (i0 - 1) * S), pxMax = Math.min(cw * S, (i1 + 1) * S);
+    const pyMin = Math.max(0, (j0 - 1) * S), pyMax = Math.min(ch * S, (j1 + 1) * S);
+    for (let py = pyMin; py <= pyMax; py++) {
+      const j = Math.min((py / S) | 0, ch), j1c = Math.min(j + 1, ch), fy = py / S - j;
+      for (let p = pxMin; p <= pxMax; p++) {
+        const i = Math.min((p / S) | 0, cw), i1c = Math.min(i + 1, cw), fx = p / S - i;
+        const top = corners[j * cs + i] * (1 - fx) + corners[j * cs + i1c] * fx;
+        const bot = corners[j1c * cs + i] * (1 - fx) + corners[j1c * cs + i1c] * fx;
+        let t = (top * (1 - fy) + bot * fy - lo) / (hi - lo);
+        t = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+        px[py * stride + p] = rgb | ((t * 255 + 0.5) << 24);
+      }
+    }
   },
 
   updateFog() {
@@ -823,7 +855,11 @@ const Render = {
     }
     this.fogSeenCount = count;
     if (maxX < 0) return;
-    this.fogCtx.putImageData(this.fogImage, 0, 0, minX, minY, maxX - minX + 2, maxY - minY + 2);
+    const S = this.FOG_SUB;
+    this.fogPaint(minX, minY, maxX + 1, maxY + 1);
+    const dx = Math.max(0, (minX - 1) * S), dy = Math.max(0, (minY - 1) * S);
+    this.fogCtx.putImageData(this.fogImage, 0, 0, dx, dy,
+      Math.min(this.fogW * S, (maxX + 2) * S) - dx + 1, Math.min(this.fogH * S, (maxY + 2) * S) - dy + 1);
     this.fogChanged();
   },
 
@@ -887,7 +923,8 @@ const Render = {
     ctx.setTransform(s, 0, 0, s, cw / 2 - this.cam.x * s, ch / 2 - this.cam.y * s);
     // Corner i is pixel i, whose centre is at i + 0.5 in the image: the half
     // pixel of offset lines the pixel centres up with the cell corners.
-    ctx.drawImage(this.fogBmp || this.fogCanvas, x0 + 0.5, y0 + 0.5, x1 - x0, y1 - y0,
+    const S = this.FOG_SUB;
+    ctx.drawImage(this.fogBmp || this.fogCanvas, x0 * S + 0.5, y0 * S + 0.5, (x1 - x0) * S, (y1 - y0) * S,
                   x0 * C, y0 * C, (x1 - x0) * C, (y1 - y0) * C);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = smooth;
