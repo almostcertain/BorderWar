@@ -369,6 +369,8 @@
       // — §4's `error` message. Surfaced on whichever lobby panel is open;
       // harmless if none is (the element simply sits hidden with old text).
       UI.setLobbyError(msg.message || msg.error || 'Server error.');
+      // Mid-match the lobby error is hidden, so say it where it can't be missed.
+      if (msg.error === 'version-mismatch' && !inLobby) alert(msg.message);
       return;
     }
 

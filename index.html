@@ -369,7 +369,7 @@
   // serving that copy through every later CSS edit regardless of reload.
   const V = Date.now();
   fetch('buildinfo.json?v=' + V).then(r => r.ok ? r.json() : Promise.reject())
-    .then(b => { document.getElementById('buildInfo').textContent = 'v' + b.version + (b.commit ? ' · ' + b.commit + (b.dirty ? '+' : '') : ''); })
+    .then(b => { window.BUILD_ID = b.id; document.getElementById('buildInfo').textContent = 'v' + b.version + (b.commit ? ' · ' + b.commit + (b.dirty ? '+' : '') : ''); })
     .catch(() => {});
   document.getElementById('mainStyle').href = 'css/style.css?v=' + V;
   // Nested paths work as-is: the entry is just spliced into 'js/<name>.js'.

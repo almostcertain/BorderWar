@@ -411,7 +411,7 @@ const Protocol = {
     join: {
       dir: 'c2s',
       fields: { gameID: 'str', username: 'str', persistentID: 'str' },
-      optional: { spectator: 'bool', public: 'bool' },
+      optional: { spectator: 'bool', public: 'bool', build: 'str' },
       notes: 'lobby only; the server assigns clientID. `public` (MP-5.1, narrow '
         + 'scope: issue #9) is only honored from the creator\'s own join — see '
         + 'GameServer.joinClient — the same "first joiner wins" rule as '
@@ -420,6 +420,7 @@ const Protocol = {
     rejoin: {
       dir: 'c2s',
       fields: { gameID: 'str', lastTurn: 'uint', persistentID: 'str' },
+      optional: { build: 'str' },
       notes: 'server replies `start` with turns.slice(lastTurn)'
     },
     intent: {
@@ -539,14 +540,19 @@ const Protocol = {
 
   msg: {
     // Client -> Server
-    join(gameID, username, persistentID, spectator, isPublic) {
+    // `build` is the client's build id (tools/build-info.js); the server refuses
+    // a join/rejoin whose build differs from its own, since lockstep needs one build.
+    join(gameID, username, persistentID, spectator, isPublic, build) {
       const m = { type: 'join', gameID: gameID, username: username, persistentID: persistentID };
       if (spectator !== undefined) m.spectator = !!spectator;
       if (isPublic !== undefined) m.public = !!isPublic;
+      if (build !== undefined) m.build = build;
       return m;
     },
-    rejoin(gameID, lastTurn, persistentID) {
-      return { type: 'rejoin', gameID: gameID, lastTurn: lastTurn, persistentID: persistentID };
+    rejoin(gameID, lastTurn, persistentID, build) {
+      const m = { type: 'rejoin', gameID: gameID, lastTurn: lastTurn, persistentID: persistentID };
+      if (build !== undefined) m.build = build;
+      return m;
     },
     intent(intent) { return { type: 'intent', intent: intent }; },
     hash(turnNumber, hash) { return { type: 'hash', turnNumber: turnNumber, hash: hash }; },

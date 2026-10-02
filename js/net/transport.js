@@ -70,6 +70,13 @@ function getPersistentID() {
   }
 }
 
+// The build this page was loaded from (index.html reads it from /buildinfo.json
+// at page load, so a tab left open across a server update keeps its old id).
+// Undefined if that fetch hasn't landed, which the server treats as a mismatch.
+function getBuildID() {
+  return (typeof window !== 'undefined' && typeof window.BUILD_ID === 'string' && window.BUILD_ID) || undefined;
+}
+
 const Transport = {
 
   // Route selector. True routes every call to LocalServer, in this page; false
@@ -451,7 +458,7 @@ const Transport = {
     this.connected = true;
 
     this._wireSocket(this.ws, {
-      firstMessage: Protocol.msg.join(gameID, username, persistentID, spectator, isPublic),
+      firstMessage: Protocol.msg.join(gameID, username, persistentID, spectator, isPublic, getBuildID()),
       isRejoin: false,
       // "the link is up" — mirrors LocalServer.start's onconnect timing
       // (called once the connection exists, before any server message is
@@ -542,6 +549,11 @@ const Transport = {
         if (this._pingSentAt !== null) this.rtt = Math.round(performance.now() - this._pingSentAt);
         return;
       }
+
+      // This page is on an older build than the server. Retrying would be
+      // refused the same way, so drop the reconnect target (the close that
+      // follows then schedules nothing) and let the error reach the UI.
+      if (msg.type === 'error' && msg.error === 'version-mismatch') this._lastRemoteOpts = null;
 
       if (this._deliver) this._deliver(msg);
     };
@@ -639,7 +651,7 @@ const Transport = {
     this.connected = true;
 
     this._wireSocket(this.ws, {
-      firstMessage: Protocol.msg.rejoin(opts.gameID, Runner.currTurn, persistentID),
+      firstMessage: Protocol.msg.rejoin(opts.gameID, Runner.currTurn, persistentID, getBuildID()),
       isRejoin: true
       // no onOpenOnce — see _wireSocket's doc on why a reconnect must not
       // fire main.js's onConnect.

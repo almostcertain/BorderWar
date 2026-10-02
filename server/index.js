@@ -138,7 +138,7 @@ const server = http.createServer((req, res) => {
 // the tunnelled deployment (§6.1) has exactly one thing to point at.
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
-const gameManager = new GameManager();
+const gameManager = new GameManager({ buildID: JSON.parse(BUILD_INFO).id });
 
 // Basic flood resistance for a server now reachable from the open internet
 // (§6.1's tunnelled deployment), not a security control — matching MP-4.3's

@@ -18,6 +18,9 @@ function getBuildInfo() {
     info.commit = git('rev-parse', '--short', 'HEAD');
     info.dirty = git('status', '--porcelain', '--untracked-files=no') !== '';
   } catch (e) { /* not a git checkout (or no git): version only */ }
+  // The id clients send on join and the server compares (multiplayer needs every
+  // client on the server's exact build): version, plus commit when known.
+  info.id = info.version + (info.commit ? '-' + info.commit + (info.dirty ? '+' : '') : '');
   return info;
 }
 

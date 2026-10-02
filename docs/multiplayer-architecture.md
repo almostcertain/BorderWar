@@ -189,8 +189,14 @@ Server-stamped `clientID` — the client never sends its own id, exactly as in
 
 | type | fields | notes |
 |---|---|---|
-| `join` | `gameID, username, persistentID, spectator?` | lobby only; server assigns clientID |
-| `rejoin` | `gameID, lastTurn, persistentID` | reconnect; server replies `start` with `turns.slice(lastTurn)` |
+| `join` | `gameID, username, persistentID, spectator?, build?` | lobby only; server assigns clientID |
+| `rejoin` | `gameID, lastTurn, persistentID, build?` | reconnect; server replies `start` with `turns.slice(lastTurn)` |
+
+`build` is the client's build id (`tools/build-info.js`: version + commit, `+` if the tree
+was dirty). The page reads it from `/buildinfo.json` at load, so a tab left open across a
+server update keeps its old id. The server refuses any `join`/`rejoin` whose `build` is
+missing or differs from its own with `error: version-mismatch`; the client stops
+reconnecting and tells the player to refresh. Lockstep needs every client on one build.
 | `intent` | `intent` | see intent table |
 | `ping` | — | every 5 s, keeps `lastPing` fresh |
 | `hash` | `turnNumber, hash` | desync detection |

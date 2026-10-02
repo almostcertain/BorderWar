@@ -54,7 +54,10 @@ class GameManager {
   // an *existing* lobby is never affected — see the check's own comment.
   static MAX_CONCURRENT_GAMES = 100;
 
-  constructor() {
+  // `opts.buildID`: when set, a join/rejoin must carry this same build id or it
+  // is refused with `version-mismatch` (lockstep needs every client on one build).
+  constructor(opts) {
+    this.buildID = opts && opts.buildID;
     this.games = new Map(); // gameID -> GameServer
 
     // unref() so this timer alone never keeps a Node process (or a test
@@ -218,6 +221,13 @@ class GameManager {
         log.warn('server', 'rejected connection: first message was "' + msg.type + '", not join/rejoin');
         Client.closeWithError(ws, 'bad-first-message',
           'first message must be "join" or "rejoin", got "' + msg.type + '"');
+        return;
+      }
+
+      if (this.buildID && msg.build !== this.buildID) {
+        log.warn('server', 'rejected ' + msg.type + ': client build ' + msg.build + ' != server build ' + this.buildID);
+        Client.closeWithError(ws, 'version-mismatch',
+          'BorderWar has been updated. Refresh the page (Ctrl+Shift+R) to play.');
         return;
       }
 
