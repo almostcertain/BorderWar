@@ -3,6 +3,7 @@
 # https://borderwar.io, each in its own Terminal window. Double-click from Finder.
 # (For a local-only server, use mac-server.command in the repo root.)
 # Close a window (or press Ctrl+C in it) to stop that piece.
+# The Mac is kept awake for as long as the server window is running.
 
 PORT=8124
 TUNNEL_NAME=borderwar   # named tunnel routed to borderwar.io (see server/README.md)
@@ -36,7 +37,8 @@ end tell
 EOF
 }
 
-open_window "cd '$DIR/server' && node index.js"
+# caffeinate runs the server as a child: no sleep while it runs, normal sleep after.
+open_window "cd '$DIR/server' && caffeinate -dims node index.js"
 
 # Give the server a moment to start listening before the tunnel connects.
 sleep 3

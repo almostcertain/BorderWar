@@ -52,8 +52,9 @@ Prereqs (once): Node (`brew install node`) and, for internet play,
   and `route dns`; copy its `<uuid>.json` credentials file and `cert.pem` into
   `~/.cloudflared/` instead. Don't run it on both machines at once, or
   Cloudflare splits visitors between them.
-- **Stay awake while hosting** (a sleep kills running matches): run
-  `caffeinate -i` in another Terminal tab, Ctrl+C when done.
+- **Stay awake while hosting** (a sleep kills running matches):
+  `tools/live-mac.command` does this automatically while its server window is
+  open. For `mac-server.command`, run `caffeinate -dims` in another tab.
 - **LAN play**: macOS asks "allow incoming connections for node?" the first
   time; click Allow. Find your IP with `ipconfig getifaddr en0` and browse to
   `http://<ip>:8124` from the other device.
