@@ -337,6 +337,16 @@
   document.getElementById('hostLeaveBtn').addEventListener('click', leaveLobby);
   document.getElementById('joinLeaveBtn').addEventListener('click', leaveLobby);
 
+  // Invite links (UI.copyLobbyCode) look like https://borderwar.io/?join=CODE.
+  // Opening one lands straight in that lobby. The param is stripped afterwards
+  // so a refresh or a copied address bar doesn't re-join a dead lobby.
+  const inviteMatch = /[?&]join=([A-Za-z0-9_-]{1,32})/.exec(location.search);
+  if (inviteMatch) {
+    history.replaceState(null, '', location.pathname);
+    document.querySelector('.modeTab[data-mode="join"]').click();
+    joinLobby(inviteMatch[1].toUpperCase());
+  }
+
   // The link is up. Nothing has arrived on it yet — `start` is the next thing
   // to be delivered — so this is where the things that must be empty *before*
   // the first turn lands get emptied. LocalServer.start announces the

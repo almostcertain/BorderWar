@@ -2333,13 +2333,14 @@ const UI = {
     el.classList.toggle('ok', !!ok);
   },
 
-  // Nothing is written to the clipboard unless the browser allows it; the code
-  // is on screen either way, so a refusal is not worth an error.
+  // Copies a direct invite link (main.js opens ?join=CODE straight into the
+  // lobby). Nothing is written to the clipboard unless the browser allows it;
+  // the code is on screen either way, so a refusal is not worth an error.
   copyLobbyCode() {
     const code = document.getElementById('lobbyCode').textContent;
     if (!code || !navigator.clipboard) return;
-    navigator.clipboard.writeText(code).then(() => {
-      this.setLobbyStatus('host', 'Join code copied — share it with your friends.', true);
+    navigator.clipboard.writeText('https://borderwar.io/?join=' + encodeURIComponent(code)).then(() => {
+      this.setLobbyStatus('host', 'Invite link copied — share it with your friends.', true);
     }, () => { /* clipboard blocked */ });
   },
 
