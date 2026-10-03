@@ -560,7 +560,7 @@ function fogRun(cfg, second) {
     Game[name] = function (...args) { coverage[name]++; return original.apply(this, args); };
   }
   const bots = fogBotWatch(sim, cfg.name);
-  // Right after an alliance forms the two sides have met and hold one map.
+  // Right after an alliance forms the two sides have met and each holds what the other saw itself.
   const accept = Game.acceptAlliance;
   Game.acceptAlliance = function (req) {
     const ok = accept.call(this, req);
@@ -568,7 +568,8 @@ function fogRun(cfg, second) {
     const ga = this.visionGroupOf[req.from], gb = this.visionGroupOf[req.to];
     if (!this.hasMet(req.from, req.to) || !this.hasMet(req.to, req.from)) throw new Error(`FOG INVARIANT ${cfg.name}: new allies ${req.from} and ${req.to} have not met`);
     for (let base = 0; base < this.visionCells.length; base += this.visionWords) {
-      if (fogHas(this.visionCells, base, ga) !== fogHas(this.visionCells, base, gb)) throw new Error(`FOG INVARIANT ${cfg.name}: new allies ${req.from} and ${req.to} hold different maps`);
+      if (fogHas(this.visionOwn, base, ga) && !fogHas(this.visionCells, base, gb)) throw new Error(`FOG INVARIANT ${cfg.name}: new ally ${req.to} lacks a cell ${req.from} saw itself`);
+      if (fogHas(this.visionOwn, base, gb) && !fogHas(this.visionCells, base, ga)) throw new Error(`FOG INVARIANT ${cfg.name}: new ally ${req.from} lacks a cell ${req.to} saw itself`);
     }
     return ok;
   };

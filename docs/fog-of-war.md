@@ -191,8 +191,10 @@ it goes in the desync hash.
   "already stamped", so the cost after the first tile in a cell is one test.
 - **Reveal from scouts and warships.** Stamp a disc each time one enters a
   new cell. The warship stamp is in `stepWarships` and gated on `Game.fog`.
-- **Sharing.** When an alliance forms, OR each side's cells into the other.
-  While it lasts, each stamp is applied to allied groups too.
+- **Sharing.** When an alliance forms, OR each side's *own-sighted* cells
+  (`visionOwn`: stamped by its own border, scouts, ships or radio, not shown
+  by an ally) into the other. While it lasts, each stamp is applied to allied
+  groups too. Vision is direct only: an ally's ally's sight never reaches you.
 - **Met.** Per player, a bitmask of groups that have met them. Updated in two
   places: when a cell is revealed (scan its 64 tiles for owners), and in
   `setOwner` (`cellGroups[cell] & ~metBy[newOwner]`, a few word operations).

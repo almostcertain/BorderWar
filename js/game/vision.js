@@ -65,6 +65,10 @@ Object.assign(Game, {
   // tile they own in each cell, so the steady-state cost of gaining a tile is
   // one test (see visionTileGained).
   visionStamped: null,
+  // Same shape: cells a group has seen from its own sources (border, scouts,
+  // ships, radio) — not ones an ally showed it. Only this crosses over when an
+  // alliance forms, so an ally's ally's map never reaches you.
+  visionOwn: null,
   // Uint32Array, visionGroups * visionWords: the bits one of this group's
   // stamps sets — its own, plus every group it is currently allied with.
   visionShare: null,
@@ -77,7 +81,7 @@ Object.assign(Game, {
   // tile. Draws nothing from Game.rng.
   initVision() {
     this.visionCellsW = this.visionCellsH = this.visionGroups = this.visionWords = 0;
-    this.visionGroupOf = this.visionCells = this.visionStamped = null;
+    this.visionGroupOf = this.visionCells = this.visionStamped = this.visionOwn = null;
     this.visionShare = this.visionMet = this.visionCount = null;
     if (!this.fog) return;
 
@@ -104,6 +108,7 @@ Object.assign(Game, {
     this.visionGroupOf = groupOf;
     this.visionCells = new Uint32Array(cw * ch * W);
     this.visionStamped = new Uint32Array(cw * ch * W);
+    this.visionOwn = new Uint32Array(cw * ch * W);
     this.visionShare = new Uint32Array(groups * W);
     this.visionMet = new Uint32Array(n * W);
     this.visionCount = new Uint32Array(groups);
@@ -205,8 +210,8 @@ Object.assign(Game, {
   // r + 0.5 — so a small disc is round instead of a plus with four spikes.
   visionStamp(g, cx, cy, r) {
     const cw = this.visionCellsW, ch = this.visionCellsH, W = this.visionWords;
-    const cells = this.visionCells, share = this.visionShare, count = this.visionCount;
-    const sb = g * W, r2 = r * r + r;
+    const cells = this.visionCells, share = this.visionShare, count = this.visionCount, own = this.visionOwn;
+    const sb = g * W, r2 = r * r + r, ow = g >>> 5, ob = 1 << (g & 31);
     for (let dy = -r; dy <= r; dy++) {
       const y = cy + dy;
       if (y < 0 || y >= ch) continue;
@@ -215,6 +220,7 @@ Object.assign(Game, {
         const x = cx + dx;
         if (x < 0 || x >= cw) continue;
         const base = (y * cw + x) * W;
+        own[base + ow] |= ob;
         let fresh = false;
         for (let k = 0; k < W; k++) {
           let add = share[sb + k] & ~cells[base + k];
@@ -282,14 +288,17 @@ Object.assign(Game, {
     if (ga < 0 || gb < 0 || ga === gb) return;
 
     const cw = this.visionCellsW, ch = this.visionCellsH, W = this.visionWords;
-    const cells = this.visionCells, count = this.visionCount;
+    const cells = this.visionCells, count = this.visionCount, own = this.visionOwn;
     const wa = ga >>> 5, ba = 1 << (ga & 31), wb = gb >>> 5, bb = 1 << (gb & 31);
     for (let cy = 0, base = 0; cy < ch; cy++) {
       for (let cx = 0; cx < cw; cx++, base += W) {
-        const hasA = (cells[base + wa] & ba) !== 0, hasB = (cells[base + wb] & bb) !== 0;
-        if (hasA === hasB) continue;
-        if (hasA) { cells[base + wb] |= bb; count[gb]++; }
-        else { cells[base + wa] |= ba; count[ga]++; }
+        // Only what each side saw with its own eyes crosses over — never what
+        // it was itself shown by an ally.
+        const giveB = (own[base + wa] & ba) !== 0 && (cells[base + wb] & bb) === 0;
+        const giveA = (own[base + wb] & bb) !== 0 && (cells[base + wa] & ba) === 0;
+        if (!giveA && !giveB) continue;
+        if (giveB) { cells[base + wb] |= bb; count[gb]++; }
+        if (giveA) { cells[base + wa] |= ba; count[ga]++; }
         this.visionMeetCell(cx, cy, base);
       }
     }
