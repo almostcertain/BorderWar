@@ -138,6 +138,7 @@ const UI = {
 
     this.setupBuildBar();
     this.setupLobby();
+    this.setupAccount();
 
     // DEBUG BYPASS #1 — dev-only gold cheats.
     //
@@ -2030,6 +2031,100 @@ const UI = {
     document.getElementById('playerTag').value = savedTag;
   },
 
+  // --- Accounts (docs/accounts-auth.md §2.1) -----------------------------------
+  //
+  // The menu strip ("Playing as guest · Sign in") and the sign-in / create
+  // account dialog. Account (js/account.js) does the talking to the server.
+  setupAccount() {
+    const $ = (id) => document.getElementById(id);
+    const overlay = $('accountOverlay');
+    const email = $('accountEmail'), pass = $('accountPassword'), confirm = $('accountConfirm');
+    const error = $('accountError'), submit = $('accountSubmit');
+    let creating = false, busy = false;
+
+    const showError = (msg) => {
+      error.textContent = msg || '';
+      error.classList.toggle('hidden', !msg);
+    };
+    const setCreating = (on) => {
+      creating = on;
+      $('accountTitle').textContent = on ? 'Create account' : 'Sign in';
+      submit.textContent = on ? 'Create account' : 'Sign in';
+      $('accountToggle').textContent = on ? 'I have an account' : 'Create account';
+      confirm.classList.toggle('hidden', !on);
+      $('accountNote').classList.toggle('hidden', !on);
+      pass.autocomplete = on ? 'new-password' : 'current-password';
+      showError('');
+    };
+    const close = () => {
+      overlay.classList.add('hidden');
+      pass.value = confirm.value = '';
+    };
+
+    $('accountSignIn').addEventListener('click', () => {
+      setCreating(false);
+      overlay.classList.remove('hidden');
+      email.focus();
+    });
+    $('accountToggle').addEventListener('click', () => setCreating(!creating));
+    $('accountCancel').addEventListener('click', close);
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !overlay.classList.contains('hidden')) close();
+    });
+    $('accountSignOut').addEventListener('click', () => {
+      Account.logout().catch(() => {}).then(() => this.renderAccount());
+    });
+
+    $('accountForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (busy) return;
+      const addr = email.value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return showError('Enter a valid email address');
+      if (creating && pass.value.length < 8) return showError('Password must be at least 8 characters');
+      if (creating && pass.value !== confirm.value) return showError('The passwords do not match');
+      if (!pass.value) return showError('Enter your password');
+
+      // A new account starts with whatever is in the menu's name and tag fields.
+      const name = ($('playerName').value || '').trim();
+      const tag = ($('playerTag').value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5);
+      const request = creating
+        ? Account.register(addr, pass.value, /[\[\]]/.test(name) ? '' : name, tag)
+        : Account.login(addr, pass.value);
+      busy = true;
+      submit.disabled = true;
+      showError('');
+      request.then((user) => {
+        // Signing in brings the account's name and tag to this browser.
+        if (!creating) {
+          $('playerName').value = user.displayName;
+          $('playerTag').value = user.tag;
+          try {
+            localStorage.setItem('borderwar_username', user.displayName);
+            localStorage.setItem('borderwar_tag', user.tag);
+          } catch (err) { /* ignore */ }
+        }
+        close();
+        this.renderAccount();
+      }, (err) => showError(err.message)).then(() => {
+        busy = false;
+        submit.disabled = false;
+      });
+    });
+
+    Account.init().then(() => this.renderAccount());
+  },
+
+  renderAccount() {
+    const strip = document.getElementById('accountStrip');
+    strip.classList.toggle('hidden', !Account.available);
+    if (!Account.available) return;
+    const user = Account.user;
+    document.getElementById('accountStatus').textContent = user ? 'Signed in as ' + user.email + ' ·' : 'Playing as guest ·';
+    document.getElementById('accountSignIn').classList.toggle('hidden', !!user);
+    document.getElementById('accountSignOut').classList.toggle('hidden', !user);
+  },
+
   // The one name field on the main menu, shared by singleplayer, host and
   // join. Read (and remembered) at the moment a game or lobby is started, so
   // it is written once per use rather than on every keystroke. Empty means the
@@ -2043,6 +2138,13 @@ const UI = {
     const tag = (document.getElementById('playerTag').value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5);
     document.getElementById('playerTag').value = tag;
     try { localStorage.setItem('borderwar_tag', tag); } catch (e) { /* ignore */ }
+    // Signed in: the account remembers the name and tag too, so they follow
+    // the player to another browser. Best effort; a name the server refuses
+    // (it is stricter than this field) just stays local.
+    const user = Account.user;
+    if (user && ((name && name !== user.displayName) || tag !== user.tag)) {
+      Account.saveProfile(name ? { displayName: name, tag: tag } : { tag: tag }).catch(() => {});
+    }
     if (tag.length < 2) return name;
     return '[' + tag + '] ' + (name || 'Player');
   },

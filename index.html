@@ -159,12 +159,29 @@
   </div>
 </div>
 
+<div id="accountOverlay" class="hidden">
+  <form id="accountForm" class="panel optionsPanel" role="dialog" aria-label="Sign in" novalidate>
+    <h2 id="accountTitle">Sign in</h2>
+    <input id="accountEmail" type="email" placeholder="Email" autocomplete="username" maxlength="254" spellcheck="false">
+    <input id="accountPassword" type="password" placeholder="Password" autocomplete="current-password" maxlength="128">
+    <input id="accountConfirm" type="password" placeholder="Confirm password" autocomplete="new-password" maxlength="128" class="hidden">
+    <div id="accountNote" class="hidden">At least 8 characters. There's no password reset yet, so keep this somewhere safe.</div>
+    <div id="accountError" class="hidden"></div>
+    <button type="submit" id="accountSubmit" class="primaryBtn">Sign in</button>
+    <div id="accountLinks"><button type="button" id="accountToggle" class="linkBtn">Create account</button><button type="button" id="accountCancel" class="linkBtn">Cancel</button></div>
+  </form>
+</div>
+
 <div id="overlay">
   <div class="panel menuPanel">
     <div class="menuCol menuMain">
     <button type="button" id="modeBack" class="linkBtn hidden">‹ Back</button>
     <h1 class="brand"><img class="brandMark" src="assets/logo/shield.svg" alt="" draggable="false">BorderWar</h1>
     <p>Expand across the map. Tap neutral land or an enemy nation to send troops along your border.</p>
+
+    <!-- Optional accounts (docs/accounts-auth.md). Stays hidden unless the page
+         is served by a server with accounts; UI.renderAccount fills it. -->
+    <div id="accountStrip" class="hidden"><span id="accountStatus"></span><button type="button" id="accountSignIn" class="linkBtn">Sign in</button><button type="button" id="accountSignOut" class="linkBtn hidden">Sign out</button></div>
 
     <!-- MP-2.3: mode choice above the existing singleplayer flow, which is
          otherwise untouched below (#mapSize/#botCount/#tribeCount/#startBtn
@@ -349,6 +366,7 @@
 
     <div id="communityLinks">
       <a href="https://www.reddit.com/r/BorderWar/" target="_blank" rel="noopener" title="r/BorderWar on Reddit" aria-label="r/BorderWar on Reddit"><img src="assets/icons/reddit.svg" alt="" draggable="false"></a>
+      <a href="https://discord.gg/X9ZEYN8Qv7" target="_blank" rel="noopener" title="BorderWar on Discord" aria-label="BorderWar on Discord"><img src="assets/icons/discord.svg" alt="" draggable="false"></a>
     </div>
 
     <div id="buildInfo"></div>
@@ -405,7 +423,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'menubg', 'options', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'account', 'ui', 'radial', 'menubg', 'options', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

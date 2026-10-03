@@ -1,7 +1,9 @@
 # Accounts and Authentication — BorderWar
 
-> **STATUS (2026-10-03): Spec, all decisions taken, not started.** §1 records the
-> owner's decisions from 2026-10-03. Tasks are in §8.
+> **STATUS (2026-10-03): AU-1, AU-2 and AU-3 built** (storage, passwords, sessions,
+> all §5.1 routes except `/api/stats`, menu strip and sign-in dialog). AU-4 to AU-7
+> not started. §1 records the owner's decisions from 2026-10-03. Tasks are in §8.
+> Tests: `cd server && npm test`.
 
 ## Quick reference
 
@@ -181,12 +183,15 @@ the open internet.
 - **Passwords:** `crypto.scrypt`, N=2^15, r=8, p=1, 16-byte random salt, 64-byte key.
   Parameters are stored in the hash string so they can be raised later; a login with
   old parameters re-hashes. Compare with `crypto.timingSafeEqual`. Length 8–128,
-  no composition rules. Reject the ~1,000 most common passwords (a bundled list).
+  no composition rules. Reject common passwords (a bundled list; as built it holds
+  about 250 entries of 8+ characters, since shorter ones already fail on length).
 - **Sessions:** 32 random bytes, base64url, in cookie `bw_session`:
   `HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=30 days`. Store only its SHA-256.
   Sliding expiry: `last_seen_at` refreshed at most once an hour. Password change and
-  "sign out everywhere" delete all of the user's sessions. `Secure` is dropped only when
-  the request is plain `http://localhost` so local dev works.
+  "sign out everywhere" delete all of the user's sessions. `Secure` is set whenever
+  the page's `Origin` is https and dropped on a plain-http origin, so localhost dev
+  and LAN playtests (`http://<lan-ip>:8124`) can sign in. (As built; the first draft
+  dropped it for localhost only, which would have silently broken LAN sign-in.)
 - **CSRF:** every state-changing `/api/*` route is `POST` with a JSON body and requires
   `Content-Type: application/json` plus an `Origin` header matching the host. That
   combination can't be forged cross-site without CORS, and we send no CORS headers.

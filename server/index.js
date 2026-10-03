@@ -142,8 +142,23 @@ function serveLobbyList(req, res) {
 // Computed once at startup, so it reflects the commit the server was started on.
 const BUILD_INFO = JSON.stringify(getBuildInfo());
 
+// Accounts (docs/accounts-auth.md). Optional: on a Node without node:sqlite,
+// or if the database can't be opened, the server runs as before, /api/* is
+// 404 and the client hides its sign-in UI.
+let accounts = null;
+try {
+  accounts = require('./accounts/routes').create({ dbPath: process.env.BORDERWAR_DB, log });
+} catch (e) {
+  log.warn('accounts', 'disabled: ' + (e && e.message || e));
+}
+
 const server = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0];
+  if (urlPath.startsWith('/api/')) {
+    if (accounts) return accounts.handle(req, res);
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    return res.end('Not found');
+  }
   if (req.method === 'GET' && urlPath === '/lobbies') return serveLobbyList(req, res);
   if (req.method === 'GET' && urlPath === '/buildinfo.json') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -248,4 +263,4 @@ function shutdown(signal) {
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-module.exports = { server, wss, gameManager, PORT };
+module.exports = { server, wss, gameManager, accounts, PORT };
