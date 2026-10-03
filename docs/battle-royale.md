@@ -121,8 +121,8 @@ within a phase run in parallel and touch disjoint files.
   second attempt by anyone is rejected; gold is deducted.
 
 **BR-2 · Circle state + shrink schedule** — `done` · model: opus
-- New `js/game/drill.js` (Game extension): constants (`DRILL_COUNTDOWN_S=90`,
-  `DRILL_SHRINK_S=600`), `r0` = distance to farthest land tile from the Drill
+- New `js/game/drill.js` (Game extension): constants (`DRILL_COUNTDOWN_S=20`,
+  `DRILL_SHRINK_S=300`), `r0` = distance to farthest land tile from the Drill
   (ceil, integer), `drillRadius(tick)` in integer/fixed-point math, linear to 0.
 - Hook a `stepDrill()` into the tick order in `core.js` (call only, no logic).
 - Register the file in `index.html`, the sim harness's loaded sources and

@@ -19,8 +19,8 @@ Object.assign(Game, {
   // Flat, like Silo/AtomBomb — the UNITS 'drill' entry carries the same
   // number so unitCost's `flat` branch prices it without a special case.
   DRILL_COST: 20000000,
-  DRILL_COUNTDOWN_S: 90,
-  DRILL_SHRINK_S: 600,
+  DRILL_COUNTDOWN_S: 20,
+  DRILL_SHRINK_S: 300,
   // Fixed-point scale for radii: 1 tile = DRILL_FP. With the largest map's
   // diagonal (~2236 tiles) r0*FP is ~2.3M, its square ~5.2e12 — every value
   // and product here stays an exact integer well below 2^53.
