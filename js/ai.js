@@ -1331,6 +1331,9 @@ const AI = {
   DRILL_PULL_OUT: 0.3,
   DRILL_CENTRE_BONUS: 2,
   DRILL_BUILD_HORIZON: 120,   // seconds
+  // Naval: extra weight on a beach of the landmass the Drill sits on. Large
+  // enough to beat navalDistanceFactor's discount for a longer crossing.
+  DRILL_LANDMASS_BONUS: 8,
 
   drillPull(p) {
     const d = Game.drill;
@@ -1558,6 +1561,7 @@ const AI = {
     const drill = Game.drill;
     const drillSoon = drill ? Game.drillRadius(Game.ticks + this.DRILL_BUILD_HORIZON * Game.TICKS_PER_SEC) : 0;
     const drillHome = drill ? this.drillHome2(p) : 0;
+    const drillLandmass = drill ? GameMap.landmassId[drill.tile] : -1;
 
     const candidates = [];
     // Fog of war: the beaches come from fogCoast instead of coastSample.
@@ -1583,6 +1587,9 @@ const AI = {
         if (drill) {
           if (!Game.drillInside(tile, drillSoon)) continue;
           score *= Game.drillDist2(tile) < drillHome ? this.DRILL_PULL_IN : this.DRILL_PULL_OUT;
+          // An island bot has no land route in, so the Drill's own landmass is
+          // the only place a boat does it any good.
+          if (GameMap.landmassId[tile] === drillLandmass) score *= this.DRILL_LANDMASS_BONUS;
         }
         if (score > bestTileScore) { bestTileScore = score; bestTile = tile; bestTarget = owner; bestDist = dist; }
       }
