@@ -182,6 +182,15 @@ const UI = {
       LocalServer.burst(Math.round(300 / Game.TICK_DT));
     });
 
+    // Speed-up: cycles LocalServer.speed, which only shortens the pump's turn
+    // gate. Turns still flow through the normal path, so nothing to desync;
+    // singleplayer only. Backpressure caps it at what the client can drain.
+    document.getElementById('debugSpeed').addEventListener('click', () => {
+      if (!Transport.isLocal) return;
+      const steps = [1, 2, 4, 8, 16];
+      LocalServer.speed = steps[(steps.indexOf(LocalServer.speed) + 1) % steps.length];
+    });
+
     document.getElementById('pauseBtn').addEventListener('click', () => this.togglePause());
 
     document.getElementById('debugToggle').addEventListener('click', () => {
@@ -1357,6 +1366,9 @@ const UI = {
     document.getElementById('debugNukeHydrogen').classList.toggle('armed',
       this.placing === 'debugnuke' && this.debugNukeType === 'hydrogenbomb');
     document.getElementById('debugPeace').classList.toggle('armed', this.placing === 'debugpeace');
+    const speedBtn = document.getElementById('debugSpeed');
+    speedBtn.textContent = `Speed ${LocalServer.speed}x`;
+    speedBtn.classList.toggle('armed', LocalServer.speed !== 1);
 
     const hintEl = document.getElementById('hint');
     if (performance.now() < this.flashUntil) {
