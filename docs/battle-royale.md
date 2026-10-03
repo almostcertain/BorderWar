@@ -367,8 +367,24 @@ within a phase run in parallel and touch disjoint files.
 - Add `drill.js` to the module map in `CLAUDE.md`; player-facing help text
   if the game has a help/tutorial panel.
 
-Follow-ups (not v1): bots retreat toward the centre; fog-of-war integration
-once that branch merges.
+**BR-10 · Bots converge on the Drill** — `done`
+- `ai.js` only; nothing runs or draws rng without a Drill (neutral check: 12/12 scenarios unchanged).
+- `drillPull(p)`: per neighbour, the share of the shared border where their
+  side is nearer the Drill than ours → score multiplier 0.3 (behind us) to 3
+  (in the way), x2 for whoever holds the Drill tile. Null for the nation
+  holding the Drill tile.
+- With a Drill down, `think()` drops the diplomatic caution and the
+  full-trigger wait, and opens a second front on an inward nation.
+- No new alliances or renewals; once the circle moves, a bot breaks a pact
+  with an ally standing between it and the Drill (not teammates).
+- Boats skip beaches the circle takes within 120 s and prefer ones nearer the
+  Drill than the bot's own land. No building on ground lost within 120 s.
+- Result, the six bot matches where a Drill gets built (same seeds as BR-8):
+  builder won 6/6 before, 3/6 after. Builders holding 0.4%, 1.6% and 3.3% of
+  the land now lose; those holding 8.4%, 14.8% and 23% still win. All six
+  end inside the 11.5-minute cap; a repeated run gives the same hash.
+
+Follow-ups: none open.
 
 ## Open questions
 1. **Countdown:** 90 s OK? (building with 90 s)
