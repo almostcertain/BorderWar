@@ -202,6 +202,17 @@ Object.assign(Game, {
     {
       type: 'scout', name: 'Scout', icon: '🔭',
       baseCost: 25000, maxCost: 25000, buildTime: 0, upgradable: false, flat: true, action: true, fogOnly: true
+    },
+    // Battle Royale's Drill (docs/battle-royale.md, game/drill.js). This
+    // game's own unit. Flat 20M (DRILL_COST). `action: true` because it never
+    // lands in Game.buildings: placement is drillBlockReason/placeDrill
+    // (own land, instant, one per match), not buildBlockReason/build — and
+    // the flag is also what keeps AI.economy's generic loop from buying it.
+    // No hotkey yet; the build bar entry is BR-5. Last in the table so no
+    // other entry's position moves.
+    {
+      type: 'drill', name: 'The Drill', icon: '🌀',
+      baseCost: 20000000, maxCost: 20000000, buildTime: 0, upgradable: false, flat: true, action: true
     }
   ],
 

@@ -457,6 +457,9 @@ const AI = {
   // whole-map walk on its own. The rival count includes the human's Silos —
   // "who can nuke me" has nothing to do with who is a bot.
   savingsGoal(p) {
+    // Battle Royale (BR-8): in a stalled match a non-leading nation banks for
+    // the Drill ahead of everything else — see drillStalled.
+    if (this.drillStalled(p)) return 'drill';
     if (Game.unitsOwned(p, 'city') < this.SILO_MIN_CITIES) return null;
 
     let ownSilos = Game.unitsPending(p, 'silo');
@@ -482,10 +485,72 @@ const AI = {
   },
 
   savingsReserve(p, goal) {
+    if (goal === 'drill') return Game.unitCost(p, 'drill') + this.DRILL_RESERVE;
     return goal ? Game.unitCost(p, goal) : 0;
   },
 
+  // --- The Drill (Battle Royale, BR-7, tuned in BR-8) -----------------------
+  // A bot goes for the Drill only once the match has stalled (drillStalled):
+  // DRILL_STALL_AFTER seconds of match time have passed, no nation holds more
+  // than DRILL_STALL_SHARE of the land (so nobody is about to win normally),
+  // and the bot is not the land leader — the Drill is a way out for the
+  // nations stuck behind the leader, not for the leader itself.
+  //
+  // From then on the Drill is the bot's savings goal (savingsGoal), so it
+  // banks DRILL_COST + DRILL_RESERVE instead of spending on structures: BR-8
+  // found that without this no bot ever got past ~1.6M, so none ever built
+  // one, even in an hour-long three-way stalemate. Once it has the gold it
+  // still has to win a 1-in-DRILL_CHANCE roll per economy cycle, so several
+  // flush bots don't all fire on the same think. Derived from live state
+  // only (no history); the roll is drawn only when every other gate passes,
+  // so pre-stall matches consume no extra rng. Never runs once Game.drill
+  // exists.
+  DRILL_STALL_AFTER: 1500,    // 25 minutes of match time
+  // BR-8: was 0.5. Two bot matches froze for 30-65 minutes with the leader
+  // at ~77% (short of the 90% win), and nobody could go for the Drill.
+  DRILL_STALL_SHARE: 0.8,     // no nation above 80% of land
+  DRILL_RESERVE: 2000000,     // gold kept after paying
+  DRILL_CHANCE: 3,
+
+  drillStalled(p) {
+    if (Game.drill || p.isTribe || !p.alive || p.tiles.size === 0) return false;
+    if (Game.elapsed < this.DRILL_STALL_AFTER) return false;
+    let top = 0;
+    for (const q of Game.players) if (q.alive && q.tiles.size > top) top = q.tiles.size;
+    if (top > GameMap.landTiles * this.DRILL_STALL_SHARE) return false;
+    // Ties with the leader count as leading.
+    return p.tiles.size < top;
+  },
+
+  maybeDrill(p) {
+    if (Game.drill || p.isTribe || Game.elapsed < this.DRILL_STALL_AFTER) return;
+    if (p.gold < Game.unitCost(p, 'drill') + this.DRILL_RESERVE) return;
+    if (!this.drillStalled(p)) return;
+    if (!this.chance(this.DRILL_CHANCE)) return;
+    const tile = this.drillSite(p);
+    if (tile < 0 || Game.drillBlockReason(p.id, tile)) return;
+    Game.placeDrill(p.id, tile);
+  },
+
+  // The owned tile closest to the centre of mass of the bot's land (ties go to
+  // the first in Set insertion order, which is deterministic).
+  drillSite(p) {
+    const w = GameMap.width;
+    let sx = 0, sy = 0, n = 0;
+    for (const t of p.tiles) { const x = t % w; sx += x; sy += (t - x) / w; n++; }
+    if (!n) return -1;
+    const cx = sx / n, cy = sy / n;
+    let best = -1, bestD = Infinity;
+    for (const t of p.tiles) {
+      const x = t % w, dx = x - cx, dy = (t - x) / w - cy;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    return best;
+  },
+
   economy(p) {
+    this.maybeDrill(p);
     // Before any spending: a bot being overrun fires with this cycle's full
     // treasury rather than whatever the build loop leaves over.
     this.maybeRetaliate(p);

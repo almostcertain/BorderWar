@@ -201,7 +201,7 @@ Object.assign(Game, {
   // territory synchronously on every click; this is the fix for that hitch.
   refreshFrontier(a) {
     const attacker = this.players[a.attacker];
-    const border = new Set(), nb = this.nbuf;
+    const border = new Set(), nb = this.nbuf, dead = this.drillDead;
     a.heapTile = []; a.heapPrio = []; a.border = border;
     // a.landmassId null (the AI's unscoped attacks) scans every border tile
     // the attacker owns, same as before landmass scoping existed. A real
@@ -213,7 +213,9 @@ Object.assign(Game, {
       const n = GameMap.neighbors(i, nb);
       for (let k = 0; k < n; k++) {
         const j = nb[k];
-        if (GameMap.owner[j] === a.target) {
+        // Battle Royale's dead zone (game/drill.js) is NEUTRAL forever: an
+        // attack on unclaimed land never queues it.
+        if (GameMap.owner[j] === a.target && !dead[j]) {
           border.add(j);
           this.heapPush(a, j, this.frontierPriority(j, a));
         }
@@ -358,7 +360,7 @@ Object.assign(Game, {
       // per-tile roll, aged by the tick it was discovered on.
       const tile = a.heapTile[0];
 
-      if (GameMap.owner[tile] !== a.target) { a.border.delete(tile); this.heapPop(a); continue; }
+      if (GameMap.owner[tile] !== a.target || this.drillDead[tile]) { a.border.delete(tile); this.heapPop(a); continue; }
 
       // The queue was built from a border that may since have moved — a
       // counter-attack can retake the tiles this wave advanced through. Without
@@ -431,7 +433,7 @@ Object.assign(Game, {
       const n = GameMap.neighbors(tile, nb);
       for (let k = 0; k < n; k++) {
         const j = nb[k];
-        if (GameMap.owner[j] === a.target) {
+        if (GameMap.owner[j] === a.target && !this.drillDead[j]) {
           a.border.add(j);
           this.heapPush(a, j, this.frontierPriority(j, a));
         }

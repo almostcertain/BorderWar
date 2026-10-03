@@ -50,8 +50,10 @@ const Hash = {
   // (game/scouts.js) is the same: Scouts only exist in fog matches and are
   // only mixed in there. They are the one ship type in the digest because
   // they are the one that writes vision state as it moves.
+  // 'drill' (game/drill.js, Battle Royale) is the same again: mixed only once
+  // a Drill exists, so a match without one digests exactly as before.
   INPUT_FIELDS: ['ticks', 'players', 'attacks', 'running', 'spawning', 'winnerId',
-    'visionCount', 'visionMet', 'visionShare', 'visionCells', 'visionStamped', 'scouts'],
+    'visionCount', 'visionMet', 'visionShare', 'visionCells', 'visionStamped', 'scouts', 'drill', 'drillDead'],
 
   // Sample every Nth tile of GameMap.owner.
   //
@@ -208,6 +210,27 @@ const Hash = {
         u32(search ? search.scoutId : -1);
         u32(search ? search.nodes : 0);
       }
+    }
+
+    // The Drill record, whole: every field is an integer. Nothing is mixed
+    // while there is none.
+    const drill = Game.drill;
+    if (drill && uses('drill')) {
+      u32(drill.ownerId);
+      u32(drill.tile);
+      u32(drill.placedTick);
+      u32(drill.startTick);
+      u32(drill.endTick);
+      u32(drill.r0);
+      num(drill.r);
+      num(drill.rPrev);
+    }
+    // The dead zone (BR-3), by its exact size in tiles and in land tiles.
+    // Not scanned: which tiles are dead is fixed by the record above (the
+    // complement of the circle), so the counts are what can drift.
+    if (drill && uses('drillDead')) {
+      u32(Game.drillDeadTiles);
+      u32(Game.drillDeadLand);
     }
 
     // fmix32 (murmur3's finalizer). Word-wise FNV leaves the last few inputs

@@ -88,11 +88,16 @@
   <span id="catchupBannerText"></span>
 </div>
 
+<!-- Battle Royale (BR-5/BR-6): UI.updateDrillHud. The banner announces the
+     placement to everyone; #drillHud (inside #hud) is the live shrink timer. -->
+<div id="drillBanner" class="hidden"><span id="drillBannerText"></span></div>
+
 <div id="radial" class="hidden"><div id="radialMenu"></div></div>
 
 <div id="hud">
   <div id="nukeAlert" class="hidden"></div>
   <div id="donationAlert" class="hidden"></div>
+  <div id="drillHud" class="hidden"><span id="drillHudText"></span><span id="drillHudTime"></span></div>
   <div id="diploBanner" class="hidden">
     <span id="diploText"></span>
     <button id="diploYes">Accept</button>
@@ -399,7 +404,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'menubg', 'options', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'menubg', 'options', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

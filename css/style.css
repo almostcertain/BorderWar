@@ -1466,3 +1466,41 @@ body.noHint #hint:not(.warn) { display: none; }
 #communityLinks img { width: 28px; height: 28px; }
 #communityLinks a:hover { opacity: 1; }
 #buildInfo { margin-top: 10px; font-size: 11px; opacity: 0.5; font-variant-numeric: tabular-nums; }
+
+/* --- Battle Royale: The Drill (UI.updateDrillHud) --------------------------- */
+#drillBanner {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 120px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 21;
+  padding: 12px 22px;
+  border-radius: 12px;
+  background: rgba(60, 12, 8, 0.95);
+  border: 1px solid rgba(255, 106, 77, 0.85);
+  box-shadow: 0 0 18px rgba(255, 70, 40, 0.45);
+  color: #ffe0d6;
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+  max-width: min(92vw, 520px);
+  pointer-events: none;
+}
+#drillBanner.fade { opacity: 0; transition: opacity 1.2s ease-in; }
+
+#drillHud {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(46, 14, 10, 0.94);
+  border: 1px solid rgba(255, 106, 77, 0.7);
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffd9cc;
+}
+#drillHud.hidden { display: none; }
+#drillHud.danger { animation: nukeAlertPulse 0.9s ease-in-out infinite alternate; }
+#drillHudText { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#drillHudTime { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: #fff; }

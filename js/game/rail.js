@@ -259,14 +259,15 @@ Object.assign(Game, {
   // Every tile along a horizontal run at fixed y from x0 to x1, or a
   // vertical run at fixed x from y0 to y1 (caller guarantees exactly one of
   // x0===x1 / y0===y1 holds) — true the instant one of them isn't land.
+  // Battle Royale's dead zone (game/drill.js) blocks a rail like water does.
   straightClear(x0, y0, x1, y1) {
-    const w = GameMap.width;
+    const w = GameMap.width, dead = this.drillDead;
     if (y0 === y1) {
       const lo = Math.min(x0, x1), hi = Math.max(x0, x1);
-      for (let x = lo; x <= hi; x++) if (!GameMap.isLand(y0 * w + x)) return false;
+      for (let x = lo; x <= hi; x++) if (!GameMap.isLand(y0 * w + x) || dead[y0 * w + x]) return false;
     } else {
       const lo = Math.min(y0, y1), hi = Math.max(y0, y1);
-      for (let y = lo; y <= hi; y++) if (!GameMap.isLand(y * w + x0)) return false;
+      for (let y = lo; y <= hi; y++) if (!GameMap.isLand(y * w + x0) || dead[y * w + x0]) return false;
     }
     return true;
   },

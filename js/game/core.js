@@ -499,6 +499,8 @@ const Game = {
     this.initVision();
     // Fog of war's Scouts (game/scouts.js): an empty list every match.
     this.initScouts();
+    // Battle Royale (game/drill.js): no Drill until someone places one.
+    this.initDrill();
 
     // Spawn-pick phase: every Nation/Tribe claims a provisional starting disc
     // immediately, then keeps re-rolling it to a new nearby spot every
@@ -968,6 +970,9 @@ const Game = {
     // check gets a chance to detonate the same object.
     this.stepSAMs();
     this.stepNukes();
+    // Battle Royale's closing circle (game/drill.js). Before the elimination
+    // sweep and win check, so land the circle takes settles both this tick.
+    this.stepDrill();
 
     for (const p of this.players) {
       if (p.alive && p.tiles.size === 0 && p.troops < 20) this.eliminatePlayer(p);
@@ -987,7 +992,10 @@ const Game = {
     // survivor or a legitimate blocker of someone else's 95% threshold,
     // exactly as if they were still playing.
     // Team games win per team instead — see checkTeamWin in game/teams.js.
+    // With a Drill (Battle Royale) neither mode uses the land share — see
+    // checkDrillWin in game/teams.js.
     if (this.teams) this.checkTeamWin();
+    else if (this.drill) { if (this.winnerId === null) this.checkDrillWin(); }
     else if (this.winnerId === null) {
       // Counted in a loop rather than collected with filter(): this runs on
       // every tick of every match, and the array it used to build was thrown
