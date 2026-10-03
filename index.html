@@ -7,7 +7,14 @@
 <meta name="theme-color" content="#0b1220">
 <title>BorderWar</title>
 <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-<link rel="stylesheet" href="css/style.css" id="mainStyle">
+<script>
+  // Cache-bust every load during dev. The stylesheet is written here, in <head>,
+  // already carrying ?v=: it blocks first paint, so the page never renders
+  // unstyled. (Rewriting a static <link>'s href later in the body made the
+  // browser re-fetch it and flash the whole UI unstyled on every refresh.)
+  window.V = Date.now();
+  document.write('<link rel="stylesheet" href="css/style.css?v=' + window.V + '">');
+</script>
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -366,14 +373,11 @@
 <script>
   // Cache-bust every load during dev — python's http.server has 1s Last-Modified
   // granularity, so quick edit-then-reload cycles can otherwise serve stale JS.
-  // The stylesheet needs the same treatment: it's the one asset in index.html
-  // that wasn't on this scheme, so a browser that had already cached it kept
-  // serving that copy through every later CSS edit regardless of reload.
-  const V = Date.now();
+  // V is set in <head> (shared with the stylesheet link there).
+  const V = window.V;
   fetch('buildinfo.json?v=' + V).then(r => r.ok ? r.json() : Promise.reject())
     .then(b => { window.BUILD_ID = b.id; document.getElementById('buildInfo').textContent = 'v' + b.version + (b.commit ? ' · ' + b.commit + (b.dirty ? '+' : '') : ''); })
     .catch(() => {});
-  document.getElementById('mainStyle').href = 'css/style.css?v=' + V;
   // Nested paths work as-is: the entry is just spliced into 'js/<name>.js'.
   // 'game/shared' defines the shared globals before 'game/core' defines Game.
   // Game domain scripts extend the singleton after core and before net/ai.
