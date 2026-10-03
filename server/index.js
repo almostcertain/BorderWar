@@ -159,6 +159,11 @@ const server = http.createServer((req, res) => {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     return res.end('Not found');
   }
+  if (urlPath === '/admin' || urlPath.startsWith('/admin/')) {
+    if (admin) return admin.handle(req, res);
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    return res.end('Not found');
+  }
   if (req.method === 'GET' && urlPath === '/lobbies') return serveLobbyList(req, res);
   if (req.method === 'GET' && urlPath === '/buildinfo.json') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -173,6 +178,15 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
 const gameManager = new GameManager({ buildID: JSON.parse(BUILD_INFO).id });
+
+// Admin stats page (server/admin.js): /admin, token-protected. Optional like
+// accounts: if the token can't be read or written, /admin is 404.
+let admin = null;
+try {
+  admin = require('./admin').create({ gameManager, wss, log, build: JSON.parse(BUILD_INFO).id });
+} catch (e) {
+  log.warn('admin', 'disabled: ' + (e && e.message || e));
+}
 
 // Basic flood resistance for a server now reachable from the open internet
 // (§6.1's tunnelled deployment), not a security control — matching MP-4.3's
