@@ -286,6 +286,9 @@ const AI = {
   // rather than opening one.
   allianceDecision(p, other, isResponse) {
     if (!other || !other.alive) return false;
+    // Battle Royale: only one nation leaves the circle, so no new pacts and
+    // no renewals once a Drill is down.
+    if (Game.drill) return false;
 
     // Medium nations are confused 5% of the time, and then simply flip a coin.
     // Easy ones twice as often; Hard ones never are.
@@ -344,12 +347,20 @@ const AI = {
     if (p.allies.size === 0) return;
     const prof = this.profile();
     const borderCount = [...this.borderTargets(p, true).keys()].filter(id => id >= 0).length;
+    // Battle Royale: once the circle is moving, an ally standing between p
+    // and the Drill is the way in, pact or no pact — see drillPull.
+    const pull = Game.drill && Game.ticks >= Game.drill.startTick ? this.drillPull(p) : null;
 
     for (const allyId of [...p.allies]) {
       const other = Game.players[allyId];
       if (!other || !other.alive) continue;
       // Teammates sit in p.allies too (game/teams.js) but can't be betrayed.
       if (Game.onSameTeam(p.id, allyId)) continue;
+
+      if (pull && (pull.get(allyId) || 0) >= (this.DRILL_PULL_IN + this.DRILL_PULL_OUT) / 2) {
+        Game.breakAlliance(p.id, allyId);
+        return;
+      }
 
       // Medium's weak-ally test is the blunt one — ten times their army. The
       // sharper maxTroops-aware version is Hard and Impossible only, and
@@ -457,6 +468,9 @@ const AI = {
   // whole-map walk on its own. The rival count includes the human's Silos —
   // "who can nuke me" has nothing to do with who is a bot.
   savingsGoal(p) {
+    // Battle Royale (BR-8): in a stalled match a non-leading nation banks for
+    // the Drill ahead of everything else — see drillStalled.
+    if (this.drillStalled(p)) return 'drill';
     if (Game.unitsOwned(p, 'city') < this.SILO_MIN_CITIES) return null;
 
     let ownSilos = Game.unitsPending(p, 'silo');
@@ -482,10 +496,72 @@ const AI = {
   },
 
   savingsReserve(p, goal) {
+    if (goal === 'drill') return Game.unitCost(p, 'drill') + this.DRILL_RESERVE;
     return goal ? Game.unitCost(p, goal) : 0;
   },
 
+  // --- The Drill (Battle Royale, BR-7, tuned in BR-8) -----------------------
+  // A bot goes for the Drill only once the match has stalled (drillStalled):
+  // DRILL_STALL_AFTER seconds of match time have passed, no nation holds more
+  // than DRILL_STALL_SHARE of the land (so nobody is about to win normally),
+  // and the bot is not the land leader — the Drill is a way out for the
+  // nations stuck behind the leader, not for the leader itself.
+  //
+  // From then on the Drill is the bot's savings goal (savingsGoal), so it
+  // banks DRILL_COST + DRILL_RESERVE instead of spending on structures: BR-8
+  // found that without this no bot ever got past ~1.6M, so none ever built
+  // one, even in an hour-long three-way stalemate. Once it has the gold it
+  // still has to win a 1-in-DRILL_CHANCE roll per economy cycle, so several
+  // flush bots don't all fire on the same think. Derived from live state
+  // only (no history); the roll is drawn only when every other gate passes,
+  // so pre-stall matches consume no extra rng. Never runs once Game.drill
+  // exists.
+  DRILL_STALL_AFTER: 1500,    // 25 minutes of match time
+  // BR-8: was 0.5. Two bot matches froze for 30-65 minutes with the leader
+  // at ~77% (short of the 90% win), and nobody could go for the Drill.
+  DRILL_STALL_SHARE: 0.8,     // no nation above 80% of land
+  DRILL_RESERVE: 2000000,     // gold kept after paying
+  DRILL_CHANCE: 3,
+
+  drillStalled(p) {
+    if (Game.drill || p.isTribe || !p.alive || p.tiles.size === 0) return false;
+    if (Game.elapsed < this.DRILL_STALL_AFTER) return false;
+    let top = 0;
+    for (const q of Game.players) if (q.alive && q.tiles.size > top) top = q.tiles.size;
+    if (top > GameMap.landTiles * this.DRILL_STALL_SHARE) return false;
+    // Ties with the leader count as leading.
+    return p.tiles.size < top;
+  },
+
+  maybeDrill(p) {
+    if (Game.drill || p.isTribe || Game.elapsed < this.DRILL_STALL_AFTER) return;
+    if (p.gold < Game.unitCost(p, 'drill') + this.DRILL_RESERVE) return;
+    if (!this.drillStalled(p)) return;
+    if (!this.chance(this.DRILL_CHANCE)) return;
+    const tile = this.drillSite(p);
+    if (tile < 0 || Game.drillBlockReason(p.id, tile)) return;
+    Game.placeDrill(p.id, tile);
+  },
+
+  // The owned tile closest to the centre of mass of the bot's land (ties go to
+  // the first in Set insertion order, which is deterministic).
+  drillSite(p) {
+    const w = GameMap.width;
+    let sx = 0, sy = 0, n = 0;
+    for (const t of p.tiles) { const x = t % w; sx += x; sy += (t - x) / w; n++; }
+    if (!n) return -1;
+    const cx = sx / n, cy = sy / n;
+    let best = -1, bestD = Infinity;
+    for (const t of p.tiles) {
+      const x = t % w, dx = x - cx, dy = (t - x) / w - cy;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    return best;
+  },
+
   economy(p) {
+    this.maybeDrill(p);
     // Before any spending: a bot being overrun fires with this cycle's full
     // treasury rather than whatever the build loop leaves over.
     this.maybeRetaliate(p);
@@ -896,9 +972,13 @@ const AI = {
   buildSite(p) {
     if (p.tiles.size === 0) return -1;
     let fallback = -1;
+    // Battle Royale: nothing goes up on ground the circle takes within
+    // DRILL_BUILD_HORIZON seconds.
+    const soon = Game.drill ? Game.drillRadius(Game.ticks + this.DRILL_BUILD_HORIZON * Game.TICKS_PER_SEC) : 0;
     for (let attempt = 0; attempt < 10; attempt++) {
       const tile = this.sampleTile(p);
       if (tile < 0 || Game.buildings.has(tile)) continue;
+      if (Game.drill && !Game.drillInside(tile, soon)) continue;
       if (fallback < 0) fallback = tile;
       if (this.isInterior(p, tile)) return tile;
     }
@@ -1232,11 +1312,70 @@ const AI = {
     return at !== undefined && Game.elapsed - at < this.RETREAT_COOLDOWN ? this.RETREAT_PENALTY : 1;
   },
 
+  // --- Battle Royale: converging on the Drill --------------------------------
+  // An attack is aimed at a nation, not a place, so a bot heads for the Drill
+  // by choosing WHO to fight: drillPull scores each neighbour by the share of
+  // the shared border where their side is nearer the Drill than ours.
+  // DRILL_PULL_OUT for a neighbour wholly behind us (their land dies before
+  // ours does), DRILL_PULL_IN for one wholly in the way, DRILL_CENTRE_BONUS
+  // on top for whoever holds the Drill's own tile. Null without a Drill, and
+  // for the nation holding the Drill tile — it is already where it needs to
+  // be, and fights as usual.
+  //
+  // With a pull in play, think() also drops the diplomatic caution
+  // (provocation) and the full-trigger wait, and will open a front on an
+  // inward nation while another war is still running: the ground behind is
+  // going regardless. allianceDecision, maybeBetray, navalThink and buildSite
+  // carry the rest. Nothing here draws rng or runs without a Drill.
+  DRILL_PULL_IN: 3,
+  DRILL_PULL_OUT: 0.3,
+  DRILL_CENTRE_BONUS: 2,
+  DRILL_BUILD_HORIZON: 120,   // seconds
+  // Naval: extra weight on a beach of the landmass the Drill sits on. Large
+  // enough to beat navalDistanceFactor's discount for a longer crossing.
+  DRILL_LANDMASS_BONUS: 8,
+
+  drillPull(p) {
+    const d = Game.drill;
+    if (!d || GameMap.owner[d.tile] === p.id) return null;
+    const inward = new Map(), total = new Map();
+    const nb = Game.nbuf;
+    for (const i of p.borderTiles) {
+      const mine = Game.drillDist2(i);
+      const n = GameMap.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const o = GameMap.owner[nb[k]];
+        if (o === WATER || o === p.id) continue;
+        total.set(o, (total.get(o) || 0) + 1);
+        if (Game.drillDist2(nb[k]) < mine) inward.set(o, (inward.get(o) || 0) + 1);
+      }
+    }
+    const centre = GameMap.owner[d.tile];
+    const out = new Map();
+    for (const [o, n] of total) {
+      let m = this.DRILL_PULL_OUT + (this.DRILL_PULL_IN - this.DRILL_PULL_OUT) * (inward.get(o) || 0) / n;
+      if (o >= 0 && o === centre) m *= this.DRILL_CENTRE_BONUS;
+      out.set(o, m);
+    }
+    return out;
+  },
+
+  // Squared distance from the Drill to p's nearest border tile.
+  drillHome2(p) {
+    let best = Infinity;
+    for (const i of p.borderTiles) {
+      const d2 = Game.drillDist2(i);
+      if (d2 < best) best = d2;
+    }
+    return best;
+  },
+
   think(p) {
     if (p.tiles.size === 0) return;
     // Free land only waits for the reserve fill, not the full trigger: gating
     // expansion on 50-60% of cap left nations sitting still between grabs.
     if (p.troops < Game.maxTroops(p) * p.aiTraits.reserve) return;
+    const pull = this.drillPull(p);   // null unless a Drill is down
 
     const myAttacks = Game.attacks.filter(a => a.attacker === p.id);
     const targets = this.borderTargets(p);
@@ -1248,7 +1387,7 @@ const AI = {
       if (n >= 1 && Game.launchAttack(p.id, NEUTRAL, n)) return;
     }
 
-    if (p.troops < Game.maxTroops(p) * p.aiTraits.trigger) return;
+    if (!pull && p.troops < Game.maxTroops(p) * p.aiTraits.trigger) return;
     if (this.assistAllies(p, targets, myAttacks)) return;
 
     // Never stack a second attack on the same Tribe — or a second Tribe
@@ -1263,7 +1402,9 @@ const AI = {
     for (const [targetId, contact] of targets) {
       // Mid-war, this cycle exists only to look for a Tribe side-skirmish —
       // the main front is untouched and re-evaluated on its own next cycle.
-      if (atWar && !(targetId >= 0 && Game.players[targetId].isTribe)) continue;
+      // Battle Royale: a nation in the way of the Drill is worth a second front.
+      const inward = pull && targetId >= 0 && pull.get(targetId) > 1 && !myAttacks.some(a => a.target === targetId);
+      if (atWar && !inward && !(targetId >= 0 && Game.players[targetId].isTribe)) continue;
       let score;
       if (targetId === NEUTRAL) {
         score = contact * 1.4;
@@ -1282,16 +1423,18 @@ const AI = {
         if (Game.relation(p, targetId) < 0) score *= 1.5;
         if (t.isTribe) score *= this.tribePriorityMult();
         score *= this.retreatPenalty(p, targetId);
-        const risk = this.provocation(p, t, targets, hostiles);
+        const risk = pull ? 1 : this.provocation(p, t, targets, hostiles);
         if (risk < this.RISK_FLOOR) continue;   // not worth the enemy it makes
         score *= risk;
       }
+      if (pull) score *= pull.get(targetId) || 1;
       if (score > bestScore) { bestScore = score; best = targetId; }
     }
 
     if (best === null) return;
     if (this.annexIfEnclosed(p, best)) return;
-    const n = atWar ? Math.floor(p.troops * this.TRIBE_SKIRMISH_RATIO)
+    const skirmish = atWar && !(pull && best >= 0 && !Game.players[best].isTribe);
+    const n = skirmish ? Math.floor(p.troops * this.TRIBE_SKIRMISH_RATIO)
       : (best !== NEUTRAL && Game.players[best].isTribe ? Math.floor(p.troops * this.TRIBE_ATTACK_RATIO)
       : this.sendAmount(p, best));
     if (n >= 1) Game.launchAttack(p.id, best, n);
@@ -1415,6 +1558,11 @@ const AI = {
     const heldLandmasses = new Set();
     for (const t of p.tiles) heldLandmasses.add(GameMap.landmassId[t]);
 
+    const drill = Game.drill;
+    const drillSoon = drill ? Game.drillRadius(Game.ticks + this.DRILL_BUILD_HORIZON * Game.TICKS_PER_SEC) : 0;
+    const drillHome = drill ? this.drillHome2(p) : 0;
+    const drillLandmass = drill ? GameMap.landmassId[drill.tile] : -1;
+
     const candidates = [];
     // Fog of war: the beaches come from fogCoast instead of coastSample.
     const beaches = fog ? this.fogCoast().beaches : null;
@@ -1433,7 +1581,16 @@ const AI = {
         // too would just waste one.
         if (heldLandmasses.has(GameMap.landmassId[tile])) continue;
         const dist = this.nearestDist(homeCoast, tile);
-        const score = this.navalScore(p, owner, lm.size, dist, hostiles);
+        let score = this.navalScore(p, owner, lm.size, dist, hostiles);
+        // Battle Royale: never sail for a beach the circle is about to take,
+        // and prefer one nearer the Drill than anything p holds.
+        if (drill) {
+          if (!Game.drillInside(tile, drillSoon)) continue;
+          score *= Game.drillDist2(tile) < drillHome ? this.DRILL_PULL_IN : this.DRILL_PULL_OUT;
+          // An island bot has no land route in, so the Drill's own landmass is
+          // the only place a boat does it any good.
+          if (GameMap.landmassId[tile] === drillLandmass) score *= this.DRILL_LANDMASS_BONUS;
+        }
         if (score > bestTileScore) { bestTileScore = score; bestTile = tile; bestTarget = owner; bestDist = dist; }
       }
       if (bestTile >= 0) candidates.push({ tile: bestTile, target: bestTarget, score: bestTileScore, dist: bestDist });
@@ -1485,7 +1642,7 @@ const AI = {
     if (Game.isTraitor(t)) score *= 2;
     if (Game.relation(p, targetId) < 0) score *= 1.5;
     if (t.isTribe) score *= this.tribePriorityMult();
-    const risk = this.provocation(p, t, null, hostiles);
+    const risk = Game.drill ? 1 : this.provocation(p, t, null, hostiles);
     if (risk < this.RISK_FLOOR) return -Infinity;   // same veto as think()
     return score * risk * distFactor * this.retreatPenalty(p, targetId);
   },

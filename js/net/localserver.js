@@ -380,8 +380,10 @@ const LocalServer = {
     const interval = Protocol.TURN_INTERVAL_MS / (this.speed > 0 ? this.speed : 1);
     if (Date.now() <= this.turnStartTime + interval) return;
 
-    // Backpressure gate. Strict: everything emitted so far has been executed.
-    if (this.turnsExecuted < this.turns.length) return;
+    // Backpressure gate. Strict at speed 1: everything emitted so far has been
+    // executed. Above 1 a small backlog (up to `speed` turns) is allowed, or the
+    // client's frame rate caps the speed-up regardless of the clock.
+    if (this.turns.length - this.turnsExecuted >= Math.max(1, Math.round(this.speed))) return;
 
     this.endTurn();
   },

@@ -72,7 +72,7 @@ const UI = {
   // Hotkeys for entries whose Game.UNITS row carries none (the Scout: its row
   // is sim data and was left alone). 'e' for explore; the digits, P and the
   // WASD pan keys are taken.
-  EXTRA_HOTKEYS: { scout: 'e' },
+  EXTRA_HOTKEYS: { scout: 'e', drill: 'k' },
 
   // Puts the attack ratio back to its default and moves the slider handle and
   // label to match. The browser restores a range input's last value on refresh
@@ -182,6 +182,15 @@ const UI = {
       LocalServer.burst(Math.round(300 / Game.TICK_DT));
     });
 
+    // Speed-up: cycles LocalServer.speed, which only shortens the pump's turn
+    // gate. Turns still flow through the normal path, so nothing to desync;
+    // singleplayer only. Backpressure caps it at what the client can drain.
+    document.getElementById('debugSpeed').addEventListener('click', () => {
+      if (!Transport.isLocal) return;
+      const steps = [1, 2, 4, 8, 16];
+      LocalServer.speed = steps[(steps.indexOf(LocalServer.speed) + 1) % steps.length];
+    });
+
     document.getElementById('pauseBtn').addEventListener('click', () => this.togglePause());
 
     document.getElementById('debugToggle').addEventListener('click', () => {
@@ -209,6 +218,9 @@ const UI = {
       // Only a fog match has the button, so only a fog match has the key.
       else if (Game.fog && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === this.EXTRA_HOTKEYS.scout) {
         this.togglePlacing('scout');
+      }
+      else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === this.EXTRA_HOTKEYS.drill) {
+        this.togglePlacing('drill');
       }
     });
   },
@@ -776,6 +788,24 @@ const UI = {
       return;
     }
 
+    // The Drill (Battle Royale): a click on the player's own land, instant, one
+    // per match. Its own reasons (Game.drillBlockReason) rather than
+    // buildBlockReason's, since it never lands in Game.buildings. Placement
+    // is a normal build_unit intent; the executor routes it to Game.placeDrill.
+    if (this.placing === 'drill') {
+      const tile = Render.screenToTile(sx, sy);
+      const reason = Game.drillBlockReason(Game.me, tile);
+      if (reason) {
+        this.flash(reason);
+        if (reason !== 'Your own land only') { this.placing = null; this.placeHover = -1; }
+        return;
+      }
+      Transport.sendIntent(Protocol.intent.buildUnit('drill', tile));
+      this.placing = null;
+      this.placeHover = -1;
+      return;
+    }
+
     // Scout (fog matches): the click names where to send it, any tile at all,
     // black included. Nothing here may look at the map under the tap: a
     // refusal, or any difference in feedback, would say what an undiscovered
@@ -1144,6 +1174,7 @@ const UI = {
 
     this.updateNukeAlert();
     this.updateDonationAlert();
+    this.updateDrillHud(me);
     this.updateBanner();
     this.updateBuildBar(me);
     this.updateFronts();
@@ -1319,11 +1350,14 @@ const UI = {
       els.count.textContent = isScout ? (owned ? owned + '/' + Game.MAX_SCOUTS_PER_PLAYER : '') : owned ? '×' + owned : '';
       // Affordability drives the dim, not the disabled attribute: a button you
       // cannot press is also a button that cannot tell you the price.
+      const isDrill = u.type === 'drill';
+      if (isDrill) els.cost.textContent = Game.drill ? 'Built' : formatGold(cost);
       els.btn.classList.toggle('poor', me.gold < cost);
       els.btn.classList.toggle('armed', this.placing === u.type);
       els.btn.classList.toggle('locked',
         (u.type === 'atombomb' || u.type === 'hydrogenbomb' || u.type === 'mirv') && Game.unitsOwned(me, 'silo') < 1 ||
         (u.type === 'warship' && Game.unitsOwned(me, 'port') < 1) ||
+        (isDrill && !!Game.drill) ||
         (isScout && (this.scoutReason() === 'Build a Port first' || this.scoutReason() === 'Scout limit reached')));
     }
 
@@ -1332,6 +1366,9 @@ const UI = {
     document.getElementById('debugNukeHydrogen').classList.toggle('armed',
       this.placing === 'debugnuke' && this.debugNukeType === 'hydrogenbomb');
     document.getElementById('debugPeace').classList.toggle('armed', this.placing === 'debugpeace');
+    const speedBtn = document.getElementById('debugSpeed');
+    speedBtn.textContent = `Speed ${LocalServer.speed}x`;
+    speedBtn.classList.toggle('armed', LocalServer.speed !== 1);
 
     const hintEl = document.getElementById('hint');
     if (performance.now() < this.flashUntil) {
@@ -1350,6 +1387,10 @@ const UI = {
         ? 'Build a Port first to unlock Warships · Esc to cancel'
         : 'Tap anywhere to launch a Warship from your nearest Port · ' +
           formatGold(Game.unitCost(me, 'warship')) + ' gold · Esc to cancel';
+    } else if (this.placing === 'drill') {
+      hintEl.textContent = Game.drill ? 'The Drill has already been built · Esc to cancel'
+        : 'Tap your own land to build The Drill — the world closes in, and the last nation standing wins · ' +
+          formatGold(Game.unitCost(me, 'drill')) + ' gold · Esc to cancel';
     } else if (this.placing === 'scout') {
       const reason = this.scoutReason();
       hintEl.textContent = reason === 'Build a Port first' ? 'Build a Port first to unlock Scouts · Esc to cancel'
@@ -1727,6 +1768,55 @@ const UI = {
   // One offer at a time: a peace deal someone has put to you, or an ally asking
   // to renew before the clock runs out. Ignoring either is a valid answer —
   // both simply lapse, and neither costs you anything.
+  // Battle Royale: the placement banner (everyone sees it, once, when the
+  // Drill record first appears) and the HUD chip counting down to the shrink,
+  // then to full closure. Reads the sim only; the "your land is next" flag is
+  // refreshed at 1 Hz from the player's border tiles (a few thousand at most,
+  // never the whole map) and lives on UI, not Game.
+  updateDrillHud(me) {
+    const d = Game.drill;
+    const chip = document.getElementById('drillHud'), banner = document.getElementById('drillBanner');
+    if (!d) {
+      if (this._drillSeen) { this._drillSeen = null; this._drillBannerUntil = 0; this._drillDanger = false; }
+      chip.classList.add('hidden');
+      banner.classList.add('hidden');
+      return;
+    }
+    const tps = Game.TICKS_PER_SEC, now = performance.now();
+    if (this._drillSeen !== d) {
+      this._drillSeen = d;
+      // Join/catch-up replays shouldn't re-announce an old placement.
+      if (Game.ticks - d.placedTick < 10 * tps) {
+        this._drillBannerUntil = now + 8000;
+        document.getElementById('drillBannerText').textContent =
+          (d.ownerId === Game.me ? 'You have' : this.nameOf(d.ownerId) + ' has') +
+          ' built The Drill — the world is closing in';
+        banner.classList.remove('hidden', 'fade');
+      }
+    }
+    if (this._drillBannerUntil) {
+      if (now > this._drillBannerUntil) { banner.classList.add('hidden'); this._drillBannerUntil = 0; }
+      else if (now > this._drillBannerUntil - 1200) banner.classList.add('fade');
+    }
+
+    const t = Game.ticks;
+    let text, secs;
+    if (t < d.startTick) { text = 'The Drill — shrink begins in'; secs = (d.startTick - t) / tps; }
+    else if (t < d.endTick) { text = 'The world is closing — full closure in'; secs = (d.endTick - t) / tps; }
+    else { text = 'The circle has closed'; secs = 0; }
+    if (now - (this._drillDangerAt || 0) > 1000) {
+      this._drillDangerAt = now;
+      this._drillDanger = me.alive && Render.ownLandDoomed(me, 30);
+    }
+    if (this._drillDanger && t >= d.startTick && t < d.endTick) text = 'YOUR LAND IS NEXT — full closure in';
+    if (Game.winnerId !== null) { text = 'Battle Royale over'; secs = 0; this._drillDanger = false; }
+    const timeText = secs > 0 ? Math.floor(secs / 60) + ':' + String(Math.floor(secs % 60)).padStart(2, '0') : '';
+    if (chip._text !== text) { chip._text = text; document.getElementById('drillHudText').textContent = text; }
+    if (chip._time !== timeText) { chip._time = timeText; document.getElementById('drillHudTime').textContent = timeText; }
+    chip.classList.toggle('danger', !!this._drillDanger && t < d.endTick);
+    chip.classList.remove('hidden');
+  },
+
   updateBanner() {
     const el = document.getElementById('diploBanner');
     const state = this.pendingOffer();
@@ -1834,15 +1924,18 @@ const UI = {
     if (Game.winnerId === null || this.endGameHandled) return;
     this.endGameHandled = true;
 
+    // Battle Royale: once a Drill exists the land-share win is off, so the
+    // only way to win is to be the last one standing (docs/battle-royale.md).
+    const br = !!Game.drill;
     if (Game.winnerTeam) {
       // Issue #31: a team game is won by the whole team, alive or not.
       if (Game.teamOf(Game.me) === Game.winnerTeam) {
-        this.showEnd('Victory', 'Team ' + Game.winnerTeam + ' controls the world.');
+        this.showEnd('Victory', br ? 'Your team is the last one standing — Battle Royale won.' : 'Team ' + Game.winnerTeam + ' controls the world.');
       } else {
-        this.showEnd('Game Over', 'Team ' + Game.winnerTeam + ' has won the game.');
+        this.showEnd('Game Over', 'Team ' + Game.winnerTeam + (br ? ' is the last team standing — Battle Royale.' : ' has won the game.'));
       }
     } else if (Game.winnerId === Game.me) {
-      this.showEnd('Victory', 'You control the world.');
+      this.showEnd('Victory', br ? 'You are the last nation standing — Battle Royale won.' : 'You control the world.');
     } else if (!me.alive) {
       // Already shown above, with the placement text — leave it as is.
     } else {
@@ -1850,7 +1943,7 @@ const UI = {
       // the old me-relative checks could never reach, so this client used to
       // show nothing at all once the match ended for everyone else.
       const winner = Game.players[Game.winnerId];
-      this.showEnd('Game Over', (winner ? winner.name : 'Another player') + ' has won the game.');
+      this.showEnd('Game Over', (winner ? winner.name : 'Another player') + (br ? ' is the last nation standing — Battle Royale.' : ' has won the game.'));
     }
 
     // This client's one vote (§4 `winner`) — sent in every case above,

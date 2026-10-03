@@ -211,8 +211,12 @@ Object.assign(Game, {
   portRoute(fromTile, toTile) {
     const size = GameMap.owner.length;
     const key = Math.min(fromTile, toTile) * size + Math.max(fromTile, toTile);
-    const cached = this._portRoutes.get(key);
+    let cached = this._portRoutes.get(key);
     if (cached === false) return null;
+    // Battle Royale (game/drill.js): a route found before the circle passed
+    // over part of it is searched again. Routes only ever get worse, so a
+    // cached failure above stays a failure.
+    if (cached && this.drillPathDead(cached)) { this._portRoutes.delete(key); cached = undefined; }
     if (cached) {
       if (cached[cached.length - 1] === toTile) return cached;
       const path = cached.slice(0, -1).reverse();

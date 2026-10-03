@@ -56,7 +56,7 @@ const Render = {
   // name labels at 70% of main-thread time (~19 fps). Each icon is rasterised
   // once per whole-pixel size into its own small canvas and stamped with
   // drawImage from then on, which every browser does cheaply.
-  ICON_NAMES: ['ally', 'teammate', 'target', 'traitor', 'embargo', 'expiring'],
+  ICON_NAMES: ['ally', 'teammate', 'target', 'traitor', 'embargo', 'expiring', 'drill'],
   iconImages: null,
   iconCache: new Map(),
 
@@ -447,7 +447,24 @@ const Render = {
     // owned tile), so this only fires for the o<0 branch above in practice,
     // but blending rather than overriding keeps it correct either way.
     if (Game.fallout && Game.fallout.size && Game.fallout.has(i)) color = this.tintFallout(color);
+    // The Drill's dead zone (Game.drillDead, permanent): dead land reads as a
+    // dark irradiated violet, distinct from fallout's yellow-green. The sweep
+    // queues every land tile it kills in dirtyTiles, so this repaints only
+    // what died; dead water is tinted by drawDrill's circle overlay.
+    else if (Game.drillDeadLand > 0 && Game.drillDead[i] && o !== WATER) color = this.tintDead(color);
     px[i] = color;
+  },
+
+  DEAD_TINT: [34, 6, 44],
+  tintDead(color) {
+    const r = color & 0xff, g = (color >> 8) & 0xff, b = (color >> 16) & 0xff, a = (color >>> 24) & 0xff;
+    const t = this.DEAD_TINT, mix = 0.72;
+    return this.packed(
+      (r * (1 - mix) + t[0] * mix) | 0,
+      (g * (1 - mix) + t[1] * mix) | 0,
+      (b * (1 - mix) + t[2] * mix) | 0,
+      a
+    );
   },
 
   // --- Alternate view (hold Space), after OpenFront -------------------------
@@ -1013,6 +1030,9 @@ const Render = {
       this.drawMirvs(true);
       this.drawNukes(true);
     }
+    // Battle Royale circle: over the fog on purpose (the spec makes the circle
+    // and the Drill visible to everyone), under the labels and popups.
+    this.drawDrill();
     // Over the fog, because it marks where the player sent a scout, which may
     // well be in the black. Nothing to draw in a match without fog.
     this.drawScoutOrders();
@@ -1670,6 +1690,8 @@ const Render = {
           ? nukePreview.ok
           : isDebugNuke
             ? true
+            : UI.placing === 'drill'
+              ? !Game.drillBlockReason(Game.me, tile)
             : (hoverB && hoverB.type === UI.placing)
               ? Game.canUpgrade(Game.me, tile)
               : Game.canBuild(Game.me, UI.placing, tile);
@@ -1703,6 +1725,22 @@ const Render = {
       ctx.lineWidth = Math.max(1, this.dpr * 1.5);
       ctx.strokeStyle = 'rgba(130, 215, 255, 0.55)';
       ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // The Drill: the starting circle it would open with (r0, the radius that
+    // just covers every land tile), so the player sees what "the world" is.
+    if (UI.placing === 'drill' && !Game.drill) {
+      const r0 = this.drillPreviewRadius(tile % w, (tile / w) | 0);
+      const cx = px + s / 2, cy = py + s / 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r0 * s, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 106, 77, 0.05)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1.5, this.dpr * 2);
+      ctx.strokeStyle = 'rgba(255, 106, 77, 0.8)';
+      ctx.setLineDash([8 * this.dpr, 6 * this.dpr]);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -1948,6 +1986,157 @@ const Render = {
     ctx.lineWidth = Math.max(1.5, 2 * this.dpr);
     ctx.strokeStyle = ok ? 'rgba(109, 255, 150, 0.9)' : 'rgba(255, 90, 90, 0.9)';
     ctx.stroke();
+  },
+
+  // --- Battle Royale: the Drill's circle ---------------------------------------
+  // All client-side and read-only: nothing here writes Game. The cached land
+  // data below is derived once per map from GameMap, never from the circle.
+  _brKey: null,
+  _br: null,
+
+  // Once per map: each row's first and last land x (the farthest land tile from
+  // any point is always one of these, so the placement ghost's r0 needs ~2*h
+  // distance checks instead of a full-map pass, and equals Game.drillStartRadius
+  // exactly), plus two low-res land masks (dark dead-zone tint, red danger tint)
+  // at <= ~1000 px wide, so the per-frame cost is two clipped drawImage calls.
+  brLand() {
+    const key = GameMap.terrain;
+    if (this._brKey === key && this._br) return this._br;
+    const w = GameMap.width, h = GameMap.height, owner = GameMap.owner;
+    const lo = new Int32Array(h).fill(-1), hi = new Int32Array(h).fill(-1);
+    for (let y = 0, i = 0; y < h; y++) {
+      for (let x = 0; x < w; x++, i++) {
+        if (owner[i] !== WATER) { if (lo[y] < 0) lo[y] = x; hi[y] = x; }
+      }
+    }
+    const step = Math.max(1, Math.ceil(Math.max(w, h) / 1000));
+    const mw = Math.ceil(w / step), mh = Math.ceil(h / step);
+    const mk = (r, g, b, a) => {
+      const c = document.createElement('canvas'); c.width = mw; c.height = mh;
+      const cx = c.getContext('2d'), img = cx.createImageData(mw, mh), d = img.data;
+      const half = step >> 1;
+      for (let y = 0; y < mh; y++) {
+        const sy = Math.min(h - 1, y * step + half);
+        for (let x = 0; x < mw; x++) {
+          if (owner[sy * w + Math.min(w - 1, x * step + half)] === WATER) continue;
+          const o = (y * mw + x) * 4; d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = a;
+        }
+      }
+      cx.putImageData(img, 0, 0);
+      return c;
+    };
+    this._brKey = key;
+    // Dead land itself is drawn from Game.drillDead on the tile layer
+    // (paintTile/tintDead); this mask is only the 30 s danger forecast.
+    return this._br = { lo, hi, step, warn: mk(255, 60, 40, 120) };
+  },
+
+  // r0 in whole tiles for a Drill at (cx, cy): the same integer as
+  // Game.drillStartRadius, cheap enough to run every frame.
+  drillPreviewRadius(cx, cy) {
+    const { lo, hi } = this.brLand();
+    let m = 0;
+    for (let y = 0; y < lo.length; y++) {
+      if (lo[y] < 0) continue;
+      const dy = y - cy, a = lo[y] - cx, b = hi[y] - cx;
+      const d = dy * dy + Math.max(a * a, b * b);
+      if (d > m) m = d;
+    }
+    let r = Math.ceil(Math.sqrt(m));
+    while (r * r < m) r++;
+    while (r > 0 && (r - 1) * (r - 1) >= m) r--;
+    return r;
+  },
+
+  // True when any of p's border tiles lies outside the circle as it will be in
+  // secs seconds. Called by UI at 1 Hz; walks the border set only.
+  ownLandDoomed(p, secs) {
+    const d = Game.drill;
+    if (!d) return false;
+    const r = Game.drillRadius(Game.ticks + secs * Game.TICKS_PER_SEC);
+    if (r >= d.r0 * Game.DRILL_FP) return false;
+    for (const t of p.borderTiles) if (!Game.drillInside(t, r)) return true;
+    return false;
+  },
+
+  // Dead-zone veil, circle edge, the 30-second danger band, the centre marker
+  // and the placement ping. Cost is a handful of path ops and one drawImage
+  // of ~1000x500 whatever the map size.
+  drawDrill() {
+    const d = Game.drill;
+    if (!d) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    const FP = Game.DRILL_FP, tps = Game.TICKS_PER_SEC, now = performance.now();
+    const px = (d.cx + 0.5 - this.cam.x) * s + cw / 2;
+    const py = (d.cy + 0.5 - this.cam.y) * s + ch / 2;
+    const rNow = d.r / FP, shrinking = d.r < d.r0 * FP;
+    const rSoon = Game.drillRadius(Game.ticks + 30 * tps) / FP;
+    const br = this.brLand();
+    const mapX = (-this.cam.x) * s + cw / 2, mapY = (-this.cam.y) * s + ch / 2;
+    const mw = GameMap.width * s, mh = GameMap.height * s;
+    ctx.imageSmoothingEnabled = false;
+
+    if (shrinking) {
+      // The dead zone. Dead land is already tinted on the tile layer, tile
+      // for tile from Game.drillDead (paintTile); this veil darkens the rest
+      // of the outside, the dead water, so the whole zone reads as one. One
+      // path fill, whatever the map size.
+      ctx.beginPath();
+      ctx.rect(0, 0, cw, ch);
+      ctx.arc(px, py, Math.max(0, rNow * s), 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(16, 0, 26, 0.38)';
+      ctx.fill('evenodd');
+      // Land that dies within 30 s: a pulsing red band, on top.
+      if (rSoon < rNow) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(px, py, rNow * s, 0, Math.PI * 2);
+        ctx.arc(px, py, rSoon * s, 0, Math.PI * 2);
+        ctx.clip('evenodd');
+        ctx.globalAlpha = 0.55 + 0.35 * Math.sin(now / 280);
+        ctx.drawImage(br.warn, mapX, mapY, mw, mh);
+        ctx.restore();
+      }
+    }
+
+    // The edge: soft glow under a bright line; dashed while it is only a
+    // promise (countdown), solid once it moves.
+    ctx.beginPath();
+    ctx.arc(px, py, Math.max(0, rNow * s), 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(4, 6 * this.dpr);
+    ctx.strokeStyle = 'rgba(255, 70, 40, 0.22)';
+    ctx.stroke();
+    ctx.lineWidth = Math.max(1.5, 2 * this.dpr);
+    ctx.strokeStyle = 'rgba(255, 150, 110, 0.95)';
+    if (!shrinking) ctx.setLineDash([10 * this.dpr, 7 * this.dpr]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Centre marker.
+    const size = Math.max(22 * this.dpr, 3 * s);
+    ctx.beginPath();
+    ctx.arc(px, py, size * 0.75 + 2 * this.dpr * (1 + Math.sin(now / 400)), 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(1.5, 2 * this.dpr);
+    ctx.strokeStyle = 'rgba(255, 150, 110, 0.9)';
+    ctx.stroke();
+    const img = this.icon('drill', size);
+    if (img) ctx.drawImage(img, px - size / 2, py - size / 2, size, size);
+
+    // Placement ping: three expanding rings around the Drill in the seconds
+    // after it is built (UI sets the banner window the same way).
+    const age = UI._drillBannerUntil ? (now - (UI._drillBannerUntil - 8000)) / 1000 : 99;
+    if (age >= 0 && age < 4.5) {
+      for (let k = 0; k < 3; k++) {
+        const a = age - k * 0.45;
+        if (a < 0 || a > 1.8) continue;
+        ctx.beginPath();
+        ctx.arc(px, py, (14 + 90 * (a / 1.8)) * this.dpr, 0, Math.PI * 2);
+        ctx.lineWidth = 3 * this.dpr;
+        ctx.strokeStyle = 'rgba(255, 120, 80, ' + (0.9 * (1 - a / 1.8)).toFixed(2) + ')';
+        ctx.stroke();
+      }
+    }
   },
 
   // Partitions an attack's live frontier into disconnected segments using

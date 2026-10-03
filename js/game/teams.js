@@ -262,6 +262,7 @@ Object.assign(Game, {
   // so the existing winner vote and hash keep working unchanged.
   checkTeamWin() {
     if (this.winnerId !== null) return;
+    if (this.drill) { this.checkDrillWin(); return; }
     const tiles = new Map(this.teams.map(t => [t, 0]));
     let others = 0;
     const standing = new Set();
@@ -292,6 +293,88 @@ Object.assign(Game, {
     this.winnerTeam = winner;
     this.winnerId = best ? best.id : null;
     if (this.winnerId !== null) this.running = false;
+  },
+
+  // --- Battle Royale win rules (BR-4) ---------------------------------------
+  // Once Game.drill exists the land-share win is off. A nation is "standing"
+  // while alive with land; tribes never count. FFA: the last standing nation
+  // wins. Teams: the last team with a standing member wins. If the circle
+  // takes the last land of everyone at once (nobody standing), the winner is
+  // whoever held the most land on the tick BEFORE the sweep (drillPrevLand),
+  // then more troops, then lower id; teams use combined land, combined
+  // troops, then their lowest member id. Always decides, so a Drill match
+  // can't stall. Iteration is in player-id / Game.teams order throughout.
+
+  // Land and troops a player held just before the latest sweep. The only
+  // readers of BR-3's snapshot (drill.js: drillPrevLand Int32Array and
+  // drillPrevTroops Float64Array, indexed by player id, written every tick).
+  drillLandBefore(id) {
+    const a = this.drillPrevLand;
+    const v = a ? a[id] : 0;
+    return v > 0 ? v : 0;
+  },
+  drillTroopsBefore(id) {
+    const a = this.drillPrevTroops;
+    const v = a ? a[id] : 0;
+    return v > 0 ? v : 0;
+  },
+
+  checkDrillWin() {
+    let winnerId = null, winnerTeam = null;
+    if (this.teams) {
+      const standing = new Set();
+      for (const p of this.players) {
+        if (p.team && p.alive && p.tiles.size > 0) standing.add(p.team);
+      }
+      if (standing.size === 1) winnerTeam = standing.values().next().value;
+      else if (standing.size === 0) {
+        const land = new Map(), troops = new Map(), minId = new Map();
+        for (const t of this.teams) { land.set(t, 0); troops.set(t, 0); minId.set(t, Infinity); }
+        for (const p of this.players) {
+          if (!p.team) continue;
+          land.set(p.team, land.get(p.team) + this.drillLandBefore(p.id));
+          troops.set(p.team, troops.get(p.team) + this.drillTroopsBefore(p.id));
+          if (p.id < minId.get(p.team)) minId.set(p.team, p.id);
+        }
+        for (const t of this.teams) {
+          if (winnerTeam === null) { winnerTeam = t; continue; }
+          const w = winnerTeam;
+          if (land.get(t) !== land.get(w) ? land.get(t) > land.get(w)
+            : troops.get(t) !== troops.get(w) ? troops.get(t) > troops.get(w)
+            : minId.get(t) < minId.get(w)) winnerTeam = t;
+        }
+      }
+      if (winnerTeam !== null) {
+        // Biggest member by current land, else by previous-tick land (the
+        // whole team may be landless at closure); ties lower id.
+        let best = null, bestKey = -1;
+        for (const p of this.players) {
+          if (p.team !== winnerTeam) continue;
+          const key = p.tiles.size > 0 ? p.tiles.size : this.drillLandBefore(p.id);
+          if (key > bestKey) { best = p; bestKey = key; }
+        }
+        winnerId = best ? best.id : null;
+      }
+    } else {
+      let count = 0, last = null;
+      for (const p of this.players) {
+        if (!p.isTribe && p.alive && p.tiles.size > 0) { count++; last = p; }
+      }
+      if (count === 1) winnerId = last.id;
+      else if (count === 0) {
+        let best = null, bl = -1;
+        for (const p of this.players) {
+          if (p.isTribe) continue;
+          const l = this.drillLandBefore(p.id);
+          if (best === null || l > bl || (l === bl && this.drillTroopsBefore(p.id) > this.drillTroopsBefore(best.id))) { best = p; bl = l; }
+        }
+        winnerId = best ? best.id : null;
+      }
+    }
+    if (winnerId === null) return;
+    if (winnerTeam !== null) this.winnerTeam = winnerTeam;
+    this.winnerId = winnerId;
+    this.running = false;
   },
 
   // PlayerImpl.canBuild's nuke rules for team games: no nuking a teammate's

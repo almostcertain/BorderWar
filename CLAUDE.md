@@ -52,7 +52,7 @@ For anything visible in the game, start the `borderwar` preview (`.claude/launch
 
 Use it to jump to the right file; grep for the method name rather than reading big files whole.
 
-- `js/game/` (sim, one `Game` object extended per file): `shared.js` globals and helpers · `core.js` state, init, spawn phase, tick order, `Game.det` float wrappers · `structures.js` UNITS table, build/upgrade · `economy.js` population, gold · `diplomacy.js` alliances, relations · `attacks.js` attack lifecycle, conquest frontier · `combat.js` attack math, forts, terrain · `annex.js` · `seapath.js` water A* · `naval.js` boats, invasions · `rail.js` · `trade.js` · `warships.js` · `nukes.js` · `sam.js`
+- `js/game/` (sim, one `Game` object extended per file): `shared.js` globals and helpers · `core.js` state, init, spawn phase, tick order, `Game.det` float wrappers · `structures.js` UNITS table, build/upgrade · `economy.js` population, gold · `diplomacy.js` alliances, relations · `attacks.js` attack lifecycle, conquest frontier · `combat.js` attack math, forts, terrain · `annex.js` · `seapath.js` water A* · `naval.js` boats, invasions · `rail.js` · `trade.js` · `warships.js` · `nukes.js` · `sam.js` · `drill.js` Battle Royale circle, dead zone
 - `js/ai.js` (sim): bots. Diplomacy and donations near the top, then strategic savings, `economy` (build choices), nukes and retaliation, build-site pickers, then attack targeting.
 - `js/map.js` (sim): map generation, world-map loading, terrain, rivers, spawns. `js/noise.js`: seeded noise.
 - `js/render.js`: canvas drawing: tiles and territory reveal, camera, structures and icons, placement previews, fronts, boats, labels.

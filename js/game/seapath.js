@@ -89,17 +89,20 @@ Object.assign(Game, {
   // shrinks the node guard (SEA_PATH_NODES_PER_STEP).
   seaPath(sourceTiles, targetTile, maxSteps = Infinity) {
     const owner = GameMap.owner, shoreDist = GameMap.shoreDist, w = GameMap.width;
+    // Battle Royale's dead zone (game/drill.js) is impassable: no route
+    // starts, ends or runs through a dead water tile.
+    const dead = this.drillDead;
     const nb = new Int32Array(4);
 
     const targetNb = GameMap.neighbors(targetTile, nb);
     const targetWater = new Set();
-    for (let k = 0; k < targetNb; k++) if (owner[nb[k]] === WATER) targetWater.add(nb[k]);
+    for (let k = 0; k < targetNb; k++) if (owner[nb[k]] === WATER && !dead[nb[k]]) targetWater.add(nb[k]);
     if (targetWater.size === 0) return null;
 
     const starts = [];
     for (const land of sourceTiles) {
       const n = GameMap.neighbors(land, nb);
-      for (let k = 0; k < n; k++) if (owner[nb[k]] === WATER) starts.push(nb[k]);
+      for (let k = 0; k < n; k++) if (owner[nb[k]] === WATER && !dead[nb[k]]) starts.push(nb[k]);
     }
     if (starts.length === 0) return null;
 
@@ -216,7 +219,7 @@ Object.assign(Game, {
       const n = GameMap.neighbors(current, nb);
       for (let k = 0; k < n; k++) {
         const j = nb[k];
-        if (owner[j] !== WATER || closed[j]) continue;
+        if (owner[j] !== WATER || closed[j] || dead[j]) continue;
         const tentativeG = currentG + BASE_COST + this.shoreCostPenalty(shoreDist[j]);
         if (!hasG[j] || tentativeG < gVal[j]) {
           hasG[j] = 1; gVal[j] = tentativeG; from[j] = current; steps[j] = nextSteps;
@@ -292,8 +295,8 @@ Object.assign(Game, {
   // tile sequence (inclusive of both ends) or null the moment the line
   // crosses land or water shallower than `minShoreDist`.
   retraceWaterLine(from, to, minShoreDist) {
-    const w = GameMap.width, owner = GameMap.owner, shoreDist = GameMap.shoreDist;
-    const passable = t => owner[t] === WATER && shoreDist[t] >= minShoreDist;
+    const w = GameMap.width, owner = GameMap.owner, shoreDist = GameMap.shoreDist, dead = this.drillDead;
+    const passable = t => owner[t] === WATER && shoreDist[t] >= minShoreDist && !dead[t];
 
     let x = from % w, y = (from / w) | 0;
     const x1 = to % w, y1 = (to / w) | 0;
@@ -420,7 +423,7 @@ Object.assign(Game, {
   // again next tick).
   seaTowardRun(st, slice) {
     if (st.done) return true;
-    const owner = GameMap.owner, shoreDist = GameMap.shoreDist, w = GameMap.width;
+    const owner = GameMap.owner, shoreDist = GameMap.shoreDist, w = GameMap.width, dead = this.drillDead;
     if (owner[st.from] !== WATER) { st.done = st.exhausted = true; return true; }
 
     const budget = this.SEA_PATH_NODE_BUDGET_PER_TICK;
@@ -506,7 +509,7 @@ Object.assign(Game, {
       const n = GameMap.neighbors(current, nb);
       for (let k = 0; k < n; k++) {
         const j = nb[k];
-        if (owner[j] !== WATER || (mark[j] & 2)) continue;
+        if (owner[j] !== WATER || (mark[j] & 2) || dead[j]) continue;
         const tentativeG = currentG + BASE_COST + this.shoreCostPenalty(shoreDist[j]);
         if (!mark[j] || tentativeG < gVal[j]) {
           mark[j] = 1; gVal[j] = tentativeG; from[j] = current;
