@@ -2,11 +2,16 @@
 //
 //   GET /admin        the page (server/admin.html); public, holds no data
 //   GET /admin/stats  JSON snapshot; needs `Authorization: Bearer <token>`
+//   GET /admin/history[?since=ms]  one sample a minute for the page's charts
 //
 // The token is BORDERWAR_ADMIN_TOKEN if set, otherwise a random one generated
 // on first start and kept in server/data/admin-token.txt (gitignored). There is
 // no localhost exemption on purpose: behind the Cloudflare Tunnel every request
 // arrives from loopback, so "local" proves nothing.
+//
+// History is kept for a week. With `persistHistory` it is also appended to
+// server/data/stats-history.jsonl so the charts survive a restart; a gap in the
+// samples is the server having been down.
 'use strict';
 
 const fs = require('fs');
@@ -16,6 +21,37 @@ const crypto = require('crypto');
 
 const TOKEN_FILE = path.join(__dirname, 'data', 'admin-token.txt');
 const PAGE_FILE = path.join(__dirname, 'admin.html');
+const HISTORY_FILE = path.join(__dirname, 'data', 'stats-history.jsonl');
+
+// One sample row is these fields, in this order (the page indexes into it).
+const HISTORY_FIELDS = ['t', 'players', 'spectators', 'activeGames', 'lobbies', 'sockets', 'rssMB'];
+const SAMPLE_INTERVAL_MS = 60 * 1000;
+const HISTORY_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+// Appends between rewrites of the file, which is what drops expired rows from it.
+const COMPACT_EVERY = 1440;
+
+function writeHistory(file, rows) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, rows.map(r => JSON.stringify(r) + '\n').join(''));
+}
+
+// Rows still inside the keep window. A line that doesn't parse is skipped.
+function loadHistory(file) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (e) { return []; }
+  const cutoff = Date.now() - HISTORY_KEEP_MS;
+  const rows = [];
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    let row;
+    try { row = JSON.parse(line); } catch (e) { continue; }
+    if (!Array.isArray(row) || row.length !== HISTORY_FIELDS.length) continue;
+    if (!row.every(Number.isFinite) || row[0] < cutoff) continue;
+    rows.push(row);
+  }
+  rows.sort((a, b) => a[0] - b[0]);
+  return rows;
+}
 
 function loadToken(log) {
   const fromEnv = (process.env.BORDERWAR_ADMIN_TOKEN || '').trim();
@@ -35,6 +71,7 @@ function create(opts) {
   const { gameManager, wss, log, build } = opts;
   const tokenHash = crypto.createHash('sha256').update(loadToken(log)).digest();
   const startedAt = Date.now();
+  const historyFile = process.env.BORDERWAR_STATS_FILE || (opts.persistHistory ? HISTORY_FILE : null);
 
   // Since-start counters. Nothing else in the server keeps history.
   let totalConnections = 0;
@@ -115,6 +152,51 @@ function create(opts) {
     };
   }
 
+  let history = [];
+  let appendsSinceCompact = 0;
+  let historyWriteFailed = false;
+  if (historyFile) {
+    history = loadHistory(historyFile);
+    try { writeHistory(historyFile, history); } catch (e) { /* reported by the first sample */ }
+  }
+
+  function sample() {
+    const s = snapshot();
+    const row = [s.now, s.totals.players, s.totals.spectators, s.totals.activeGames,
+      s.totals.lobbies, s.totals.sockets, Math.round(s.server.rss / 1048576)];
+    history.push(row);
+    const cutoff = s.now - HISTORY_KEEP_MS;
+    let expired = 0;
+    while (history[expired][0] < cutoff) expired++;
+    if (expired) history.splice(0, expired);
+    if (!historyFile) return;
+    try {
+      if (++appendsSinceCompact >= COMPACT_EVERY) {
+        appendsSinceCompact = 0;
+        writeHistory(historyFile, history);
+      } else {
+        fs.appendFileSync(historyFile, JSON.stringify(row) + '\n');
+      }
+      historyWriteFailed = false;
+    } catch (e) {
+      if (!historyWriteFailed) log.warn('admin', 'could not write stats history: ' + (e && e.message || e));
+      historyWriteFailed = true;
+    }
+  }
+  sample();
+  const sampleTimer = setInterval(sample, SAMPLE_INTERVAL_MS);
+  if (typeof sampleTimer.unref === 'function') sampleTimer.unref();
+
+  function historySince(req) {
+    const m = /[?&]since=(\d+)/.exec(req.url);
+    const since = m ? Number(m[1]) : 0;
+    return {
+      fields: HISTORY_FIELDS,
+      intervalMs: SAMPLE_INTERVAL_MS,
+      samples: since ? history.filter(r => r[0] > since) : history
+    };
+  }
+
   function send(res, status, type, body) {
     res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
     res.end(body);
@@ -134,10 +216,14 @@ function create(opts) {
       if (!authorized(req)) return send(res, 401, 'application/json; charset=utf-8', '{"error":"unauthorized"}');
       return send(res, 200, 'application/json; charset=utf-8', JSON.stringify(snapshot()));
     }
+    if (urlPath === '/admin/history') {
+      if (!authorized(req)) return send(res, 401, 'application/json; charset=utf-8', '{"error":"unauthorized"}');
+      return send(res, 200, 'application/json; charset=utf-8', JSON.stringify(historySince(req)));
+    }
     return send(res, 404, 'text/plain', 'Not found');
   }
 
-  return { handle, snapshot };
+  return { handle, snapshot, sample };
 }
 
 module.exports = { create };

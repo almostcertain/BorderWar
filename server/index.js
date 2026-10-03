@@ -181,9 +181,13 @@ const gameManager = new GameManager({ buildID: JSON.parse(BUILD_INFO).id });
 
 // Admin stats page (server/admin.js): /admin, token-protected. Optional like
 // accounts: if the token can't be read or written, /admin is 404.
+// Chart history is saved to disk only on the default port, so a dev server
+// started beside the live one (on another port) doesn't write into its history.
 let admin = null;
 try {
-  admin = require('./admin').create({ gameManager, wss, log, build: JSON.parse(BUILD_INFO).id });
+  admin = require('./admin').create({
+    gameManager, wss, log, build: JSON.parse(BUILD_INFO).id, persistHistory: PORT === 8124
+  });
 } catch (e) {
   log.warn('admin', 'disabled: ' + (e && e.message || e));
 }
