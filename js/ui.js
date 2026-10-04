@@ -699,7 +699,8 @@ const UI = {
     // the whole spawn phase by design, so it can't drive this).
     const remaining = Math.max(0, Math.ceil((Game.SPAWN_PHASE_TURNS - Game.spawnPhaseTicks) * Game.TICK_DT));
     const hint = Game.fog ? this.SPAWN_FOG_HINT : (this.spawnSent ? this.SPAWN_SENT_HINT : this.SPAWN_HINT);
-    el.textContent = hint + ' · ' + remaining + 's';
+    // Solo matches start on the tap, so there is no deadline worth showing.
+    el.textContent = Game.humanCount > 1 || Game.fog ? hint + ' · ' + remaining + 's' : hint;
   },
 
   hoverId: -1,

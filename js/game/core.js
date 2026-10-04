@@ -606,7 +606,22 @@ const Game = {
     // "already claimed" by themselves, not worth special-casing.
     if (this.players[id].tiles.size > 0) this.unclaimAll(id);
     this.claimStart(tile, id);
+    // A solo player has nobody to wait for: the match starts the moment they
+    // place their capital, no countdown.
+    if (this.humanCount === 1) this.endSpawnPhase();
     return true;
+  },
+
+  // Deadline auto-placement for anyone who never picked, then the match goes
+  // live. No explicit NPC "freeze" needed: the instant spawning is false,
+  // tick()'s own top guard means tickSpawnPhase (and jumpSpawnPreview) is
+  // simply never called again.
+  endSpawnPhase() {
+    for (let p = 0; p < this.humanCount; p++) {
+      if (this.players[p].tiles.size === 0) this.claimStart(this.humanReserveTiles[p], p);
+    }
+    this.spawning = false;
+    this.running = true;
   },
 
   // How often, in seconds, an NPC's provisional spawn disc jumps to a new
@@ -684,14 +699,7 @@ const Game = {
       // Deadline hit: anyone who never sent (or whose intent never arrived)
       // a spawn is auto-placed at their reserved tile from init(). A human
       // who already placed is untouched — tiles.size > 0 skips them.
-      for (let p = 0; p < this.humanCount; p++) {
-        if (this.players[p].tiles.size === 0) this.claimStart(this.humanReserveTiles[p], p);
-      }
-      this.spawning = false;
-      this.running = true;
-      // No explicit NPC "freeze" needed: the instant spawning is false,
-      // tick()'s own top guard means tickSpawnPhase (and jumpSpawnPreview)
-      // is simply never called again.
+      this.endSpawnPhase();
     }
   },
 
