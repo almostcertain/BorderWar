@@ -2352,6 +2352,7 @@ const UI = {
       overlay.classList.remove('hidden');
       email.focus();
     });
+      $('accountPrivacy').classList.toggle('hidden', !on);
     $('accountToggle').addEventListener('click', () => setCreating(!creating));
     $('accountCancel').addEventListener('click', close);
     overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
@@ -2411,9 +2412,96 @@ const UI = {
     document.getElementById('accountSignOut').classList.toggle('hidden', !user);
   },
 
+    this.setupManageAccount();
   // The one name field on the main menu, shared by singleplayer, host and
   // join. Read (and remembered) at the moment a game or lobby is started, so
   // it is written once per use rather than on every keystroke. Empty means the
+  // The signed-in "Account" dialog: change email, change password, delete
+  // account. Each asks for the current password, as the server requires.
+  setupManageAccount() {
+    const $ = (id) => document.getElementById(id);
+    const overlay = $('manageOverlay');
+    const email = $('manageEmail'), current = $('manageCurrent'), next = $('manageNew'), confirm = $('manageConfirm');
+    const error = $('manageError'), submit = $('manageSubmit');
+    const MODES = {
+      email: { title: 'Change email', submit: 'Save email', note: '', done: 'Email changed.' },
+      password: { title: 'Change password', submit: 'Save password', note: 'At least 8 characters. This signs you out on your other devices.', done: 'Password changed.' },
+      delete: { title: 'Delete account', submit: 'Delete my account', note: 'This permanently deletes your account and its stats. It cannot be undone.', done: 'Your account has been deleted.' }
+    };
+    let mode = null, busy = false;
+
+    const showError = (msg) => {
+      error.textContent = msg || '';
+      error.classList.toggle('hidden', !msg);
+    };
+    // mode: null (the menu), one of MODES, or 'done' (a result message).
+    const show = (m, doneText) => {
+      mode = m;
+      const def = MODES[m];
+      $('manageTitle').textContent = def ? def.title : 'Account';
+      $('manageMenu').classList.toggle('hidden', m !== null);
+      $('manageFields').classList.toggle('hidden', !def);
+      $('manageDone').classList.toggle('hidden', m !== 'done');
+      $('manageDone').textContent = doneText || '';
+      $('manageBack').classList.toggle('hidden', !def);
+      email.value = current.value = next.value = confirm.value = '';
+      showError('');
+      if (!def) return;
+      email.classList.toggle('hidden', m !== 'email');
+      next.classList.toggle('hidden', m !== 'password');
+      confirm.classList.toggle('hidden', m !== 'password');
+      $('manageNote').textContent = def.note;
+      $('manageNote').classList.toggle('hidden', !def.note);
+      submit.textContent = def.submit;
+      submit.classList.toggle('dangerBtn', m === 'delete');
+      (m === 'email' ? email : current).focus();
+    };
+    const close = () => {
+      overlay.classList.add('hidden');
+      show(null);
+    };
+
+    $('accountManage').addEventListener('click', () => {
+      show(null);
+      overlay.classList.remove('hidden');
+    });
+    $('manageMenu').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-manage]');
+      if (btn) show(btn.dataset.manage);
+    });
+    $('manageBack').addEventListener('click', () => show(null));
+    $('manageClose').addEventListener('click', close);
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !overlay.classList.contains('hidden')) close();
+    });
+
+    $('manageForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (busy || !MODES[mode]) return;
+      const addr = email.value.trim();
+      if (mode === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return showError('Enter a valid email address');
+      if (!current.value) return showError('Enter your current password');
+      if (mode === 'password' && next.value.length < 8) return showError('Password must be at least 8 characters');
+      if (mode === 'password' && next.value !== confirm.value) return showError('The passwords do not match');
+
+      const request = mode === 'email' ? Account.changeEmail(addr, current.value)
+        : mode === 'password' ? Account.changePassword(current.value, next.value)
+        : Account.deleteAccount(current.value);
+      const done = MODES[mode].done;
+      busy = true;
+      submit.disabled = true;
+      showError('');
+      request.then(() => {
+        show('done', done);
+        this.renderAccount();
+      }, (err) => showError(err.message)).then(() => {
+        busy = false;
+        submit.disabled = false;
+      });
+    });
+  },
+
   // caller falls back to its own default.
   getPlayerName() {
     const name = (document.getElementById('playerName').value || '').trim();
@@ -2421,6 +2509,7 @@ const UI = {
     // The optional team tag rides in the name as "[TAG] name" (OpenFront's
     // clan-tag convention), so it needs no protocol change; the sim reads it
     // back out in Teams.tagOf.
+    document.getElementById('accountManage').classList.toggle('hidden', !user);
     const tag = (document.getElementById('playerTag').value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5);
     document.getElementById('playerTag').value = tag;
     try { localStorage.setItem('borderwar_tag', tag); } catch (e) { /* ignore */ }

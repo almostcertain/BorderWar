@@ -177,7 +177,7 @@ function create(opts) {
         if (q.byEmail.get(email)) throw new ApiError(409, 'email-taken');
         throw e;
       }
-      log.info('accounts', 'sign-up user ' + id + ' from ' + ip);
+      log.info('accounts', 'sign-up user ' + id);
       return { body: { user: publicUser(q.byId.get(id)) }, cookie: sessionCookie(id, origin) };
     },
 
@@ -189,14 +189,14 @@ function create(opts) {
       const user = email ? q.byEmail.get(email) : null;
       if (!(await checkPassword(user, body.password))) {
         if (email) emailLock.fail(email);
-        log.warn('accounts', 'sign-in failed' + (user ? ' for user ' + user.id : '') + ' from ' + ip);
+        log.warn('accounts', 'sign-in failed' + (user ? ' for user ' + user.id : ''));
         throw new ApiError(401, 'bad-credentials');
       }
       emailLock.clear(email);
       if (passwords.needsRehash(user.pass_hash, scrypt)) {
         q.setHash.run(await passwords.hash(body.password, scrypt), user.id);
       }
-      log.info('accounts', 'sign-in user ' + user.id + ' from ' + ip);
+      log.info('accounts', 'sign-in user ' + user.id);
       return { body: { user: publicUser(user) }, cookie: sessionCookie(user.id, origin) };
     },
 

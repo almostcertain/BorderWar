@@ -1504,7 +1504,7 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 #optionsBtn:hover { opacity: 0.8; }
 body:has(#overlay.hidden) #optionsBtn { display: none; }
 
-#optionsOverlay, #accountOverlay, #installGuide {
+#optionsOverlay, #accountOverlay, #manageOverlay, #installGuide {
   position: fixed;
   inset: 0;
   z-index: 12;
@@ -1529,11 +1529,19 @@ body:has(#overlay.hidden) #optionsBtn { display: none; }
 
 /* Accounts: the menu strip and the sign-in dialog (docs/accounts-auth.md). */
 #accountStrip { font-size: 13px; opacity: 0.85; }
-#accountForm input { text-align: left; padding: 10px; }
-#accountNote { font-size: 12px; opacity: 0.6; line-height: 1.4; }
-#accountError { color: #ff6b6b; font-size: 13px; text-align: center; }
-#accountLinks { display: flex; justify-content: space-between; }
-#accountStrip .linkBtn, #accountLinks .linkBtn {
+#accountForm input, #manageForm input { text-align: left; padding: 10px; }
+#accountNote, #accountPrivacy, #manageNote { font-size: 12px; opacity: 0.6; line-height: 1.4; }
+#accountPrivacy a { color: inherit; }
+#accountError, #manageError { color: #ff6b6b; font-size: 13px; text-align: center; }
+#accountLinks, #manageLinks { display: flex; justify-content: space-between; }
+#manageMenu, #manageFields { display: flex; flex-direction: column; gap: 10px; }
+#manageMenu.hidden, #manageFields.hidden { display: none; }
+#manageDone { font-size: 14px; text-align: center; }
+.panel button.dangerBtn { background: #b3363f; }
+.panel button.dangerBtn:active { background: #8c282e; }
+#manageLinks .linkBtn { margin: 0 0 0 auto; }
+#manageLinks #manageBack { margin: 0; }
+#accountStrip .linkBtn, #accountLinks .linkBtn, #manageLinks .linkBtn {
   background: transparent;
   padding: 0;
   border-radius: 0;

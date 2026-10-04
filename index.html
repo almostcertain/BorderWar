@@ -192,10 +192,35 @@
 <div id="installGuide" class="hidden">
   <div class="panel optionsPanel" role="dialog" aria-label="Add to Home Screen">
     <h2>Add to Home Screen</h2>
+    <div id="accountPrivacy" class="hidden">By creating an account you agree to the <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</div>
     <p>Play BorderWar full screen, straight from your home screen:</p>
     <ol id="installSteps"></ol>
     <button type="button" id="installClose" class="primaryBtn">Got it</button>
   </div>
+</div>
+
+<!-- Signed-in account management: a menu of three actions, then one form whose
+     fields UI.setupManageAccount shows per action. -->
+<div id="manageOverlay" class="hidden">
+  <form id="manageForm" class="panel optionsPanel" role="dialog" aria-label="Account" novalidate>
+    <h2 id="manageTitle">Account</h2>
+    <div id="manageMenu">
+      <button type="button" data-manage="email">Change email</button>
+      <button type="button" data-manage="password">Change password</button>
+      <button type="button" data-manage="delete" class="dangerBtn">Delete account</button>
+    </div>
+    <div id="manageFields" class="hidden">
+      <input id="manageEmail" type="email" placeholder="New email" autocomplete="username" maxlength="254" spellcheck="false">
+      <input id="manageCurrent" type="password" placeholder="Current password" autocomplete="current-password" maxlength="128">
+      <input id="manageNew" type="password" placeholder="New password" autocomplete="new-password" maxlength="128">
+      <input id="manageConfirm" type="password" placeholder="Confirm new password" autocomplete="new-password" maxlength="128">
+      <div id="manageNote"></div>
+      <div id="manageError" class="hidden"></div>
+      <button type="submit" id="manageSubmit" class="primaryBtn">Save</button>
+    </div>
+    <div id="manageDone" class="hidden"></div>
+    <div id="manageLinks"><button type="button" id="manageBack" class="linkBtn hidden">‹ Back</button><button type="button" id="manageClose" class="linkBtn">Close</button></div>
+  </form>
 </div>
 
 <div id="overlay">
@@ -209,7 +234,7 @@
 
     <!-- Optional accounts (docs/accounts-auth.md). Stays hidden unless the page
          is served by a server with accounts; UI.renderAccount fills it. -->
-    <div id="accountStrip" class="hidden"><span id="accountStatus"></span><button type="button" id="accountSignIn" class="linkBtn">Sign in</button><button type="button" id="accountSignOut" class="linkBtn hidden">Sign out</button></div>
+    <div id="accountStrip" class="hidden"><span id="accountStatus"></span><button type="button" id="accountSignIn" class="linkBtn">Sign in</button><button type="button" id="accountManage" class="linkBtn hidden">Account</button><button type="button" id="accountSignOut" class="linkBtn hidden">Sign out</button></div>
 
     <!-- MP-2.3: mode choice above the existing singleplayer flow, which is
          otherwise untouched below (#mapSize/#botCount/#tribeCount/#startBtn

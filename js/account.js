@@ -61,5 +61,18 @@ const Account = {
   // fields: any of {displayName, tag, settings}.
   saveProfile(fields) {
     return this._post('profile', fields).then(d => this._signedIn(d));
+  },
+
+  // These three ask for the current password again.
+  changeEmail(email, password) {
+    return this._post('email', { email, password }).then(d => this._signedIn(d));
+  },
+
+  changePassword(current, next) {
+    return this._post('password', { current, next }).then(d => this._signedIn(d));
+  },
+
+  deleteAccount(password) {
+    return this._post('delete-account', { password }).then(d => this._signedIn(d));
   }
 };
