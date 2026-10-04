@@ -193,6 +193,7 @@ const UI = {
     });
 
     document.getElementById('pauseBtn').addEventListener('click', () => this.togglePause());
+    document.getElementById('musicBtn').addEventListener('click', () => this.toggleMusic());
 
     document.getElementById('debugToggle').addEventListener('click', () => {
       this.debugOpen = !this.debugOpen;
@@ -214,6 +215,7 @@ const UI = {
         return;
       }
       if (e.key === 'p' || e.key === 'P') { this.togglePause(); return; }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'm') { this.toggleMusic(); return; }
       const u = Game.UNITS.find(x => x.hotkey === e.key);
       if (u) this.togglePlacing(u.type);
       // Only a fog match has the button, so only a fog match has the key.
@@ -234,6 +236,13 @@ const UI = {
   togglePause() {
     if (!Transport.isLocal || !Game.players[Game.me] || Game.winnerId !== null) return;
     LocalServer.setPaused(!LocalServer.paused);
+  },
+
+  // In a match only: the menu has no music to mute, and its own Options
+  // checkbox for the same setting.
+  toggleMusic() {
+    if (!document.getElementById('overlay').classList.contains('hidden')) return;
+    Options.set('musicOn', !Options.get('musicOn'));
   },
 
   // Build-bar icon per unit type, where the file name differs from the type.
@@ -400,16 +409,21 @@ const UI = {
   // rail/coast snap, else the tile itself. Mirrors onTap's own resolution so
   // the ghost is honest about what a tap will do.
   placeTileAt(sx, sy) {
-    const near = Render.findStructureNear(sx, sy, this.placing);
+    const raw = Render.screenToTile(sx, sy);
+    const near = Render.findStructureNear(sx, sy, this.placing) ||
+      Game.upgradeTargetNear(Game.me, this.placing, raw);
     if (near) return near.tile;
     const railSnap = this.placing === 'city' ? Render.findRailSnapTile(sx, sy) : -1;
-    const coastSnap = this.placing === 'port'
-      ? Game.nearestOwnedCoastNear(Game.me, Render.screenToTile(sx, sy), Game.PORT_SNAP_MAX_DIST) : -1;
+    const base = railSnap >= 0 ? railSnap : raw;
+    // Structures keep STRUCTURE_MIN_DIST apart, so a click near one lands on
+    // the nearest tile that is clear of it (and, for a Port, on the coast).
     // Warship placement has no click-time snap at all — a click can land
     // anywhere on the map (Game.resolveWarshipLaunch snaps it to the nearest
-    // open water and picks a launching Port on its own), so it just gets the
-    // raw tile, same as any tile that isn't near a rail/coast for city/port.
-    return railSnap >= 0 ? railSnap : coastSnap >= 0 ? coastSnap : Render.screenToTile(sx, sy);
+    // open water and picks a launching Port on its own) — and
+    // structureSiteNear answers -1 for it and every other non-structure, so
+    // those just get the raw tile.
+    const site = Game.structureSiteNear(Game.me, this.placing, base);
+    return site >= 0 ? site : base;
   },
 
   // Puts away whatever build is armed — structure, nuke, warship or the debug
@@ -1026,7 +1040,11 @@ const UI = {
       // would resolve to. The same button doing double duty this way matches
       // OpenFront's own build menu (its buildableUnits() resolves to either
       // canBuild or canUpgrade depending on what's already standing there).
-      const existing = Render.findStructureNear(sx, sy, this.placing);
+      // OpenFront also reads a click anywhere inside the minimum spacing
+      // around one (Game.upgradeTargetNear) the same way, since nothing new
+      // could be built that close to it anyway.
+      const existing = Render.findStructureNear(sx, sy, this.placing) ||
+        Game.upgradeTargetNear(Game.me, this.placing, Render.screenToTile(sx, sy));
       if (existing) {
         const reason = Game.upgradeBlockReason(Game.me, existing.tile);
         if (reason) { this.flash(reason); return; }
@@ -1037,13 +1055,14 @@ const UI = {
       }
 
       const railSnap = this.placing === 'city' ? Render.findRailSnapTile(sx, sy) : -1;
-      // A Port has to land on the coast — snap a click near the shore onto
-      // the nearest actual coastal tile of the player's own territory, same
-      // idea as the city/rail snap just above but geometric (BFS) rather
-      // than a line-distance test, since a coastline isn't straight.
-      const coastSnap = this.placing === 'port'
-        ? Game.nearestOwnedCoastNear(Game.me, Render.screenToTile(sx, sy), Game.PORT_SNAP_MAX_DIST) : -1;
-      const tile = railSnap >= 0 ? railSnap : coastSnap >= 0 ? coastSnap : Render.screenToTile(sx, sy);
+      const base = railSnap >= 0 ? railSnap : Render.screenToTile(sx, sy);
+      // Structures keep a minimum distance apart, so the click lands on the
+      // nearest tile of the player's own land that is clear of every other
+      // structure — and, for a Port, on the coast (see Game.structureSiteNear).
+      // With no such tile nearby the raw one goes through, so the refusal
+      // below can say why.
+      const site = Game.structureSiteNear(Game.me, this.placing, base);
+      const tile = site >= 0 ? site : base;
       const reason = Game.buildBlockReason(Game.me, this.placing, tile);
       if (reason) {
         this.flash(reason);
@@ -1197,6 +1216,13 @@ const UI = {
     if (pauseBtn._paused !== LocalServer.paused) {
       pauseBtn._paused = LocalServer.paused;
       pauseBtn.innerHTML = LocalServer.paused ? iconHtml('play') + ' Resume' : iconHtml('pause') + ' Pause';
+    }
+
+    const musicBtn = document.getElementById('musicBtn');
+    const musicOn = Options.get('musicOn');
+    if (musicBtn._on !== musicOn) {
+      musicBtn._on = musicOn;
+      musicBtn.innerHTML = iconHtml(musicOn ? 'music' : 'music-off');
     }
 
     this.syncBuildBar();

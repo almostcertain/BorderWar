@@ -732,7 +732,7 @@ const AI = {
     const step = Math.max(1, Math.floor(p.borderTiles.size / this.RADIO_SITE_SAMPLES));
     let best = -1, bestHidden = this.RADIO_MIN_CELLS - 1, i = 0;
     for (const t of p.borderTiles) {
-      if (i++ % step !== 0 || Game.buildings.has(t)) continue;
+      if (i++ % step !== 0 || Game.structureTooClose(t)) continue;
       const hidden = Game.visionHiddenAround(p.id, t, Game.VISION_SIGHT_RADIO);
       if (hidden > bestHidden) { bestHidden = hidden; best = t; }
     }
@@ -1031,8 +1031,8 @@ const AI = {
     const soon = Game.drill ? Game.drillRadius(Game.ticks + this.DRILL_BUILD_HORIZON * Game.TICKS_PER_SEC) : 0;
     for (let attempt = 0; attempt < 10; attempt++) {
       const tile = this.sampleTile(p);
-      if (tile < 0 || Game.buildings.has(tile)) continue;
-      if (Game.drill && !Game.drillInside(tile, soon)) continue;
+      if (tile < 0 || Game.structureTooClose(tile)) continue;
+      if (Game.drill &&!Game.drillInside(tile, soon)) continue;
       if (fallback < 0) fallback = tile;
       if (this.isInterior(p, tile)) return tile;
     }
@@ -1070,7 +1070,7 @@ const AI = {
     let fallbackDepth = -1;
     for (let attempt = 0; attempt < 15; attempt++) {
       const tile = this.sampleTile(p);
-      if (tile < 0 || Game.buildings.has(tile)) continue;
+      if (tile < 0 || Game.structureTooClose(tile)) continue;
       if (Game.fortInRange(tile, p.id, true)) continue;
       // How many full rings of owned tiles surround this candidate, capped
       // at the buffer — small nations that don't own enough depth anywhere
@@ -1094,7 +1094,7 @@ const AI = {
   // land on one.
   portSite(p) {
     for (const t of this.coastalTiles(p)) {
-      if (!Game.buildings.has(t)) return t;
+      if (!Game.structureTooClose(t)) return t;
     }
     return -1;
   },

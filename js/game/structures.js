@@ -291,17 +291,105 @@ Object.assign(Game, {
       : Math.min(def.maxCost, Math.pow(2, n) * def.baseCost);
   },
 
+  // OpenFront's Config.structureMinDist: no structure may stand closer than
+  // this many tiles (Euclidean, strict <, as PlayerImpl.validStructureSpawnTiles
+  // tests it) to any other structure — any type, any owner, finished or still
+  // under construction. It is what stops icons stacking on top of each other.
+  STRUCTURE_MIN_DIST: 15,
+
+  // Whether `tile` is inside STRUCTURE_MIN_DIST of something already standing
+  // (the tile itself included, at distance 0).
+  structureTooClose(tile) {
+    const w = GameMap.width, x = tile % w, y = (tile / w) | 0;
+    const r2 = this.STRUCTURE_MIN_DIST * this.STRUCTURE_MIN_DIST;
+    for (const t of this.buildings.keys()) {
+      const dx = t % w - x, dy = ((t / w) | 0) - y;
+      if (dx * dx + dy * dy < r2) return true;
+    }
+    return false;
+  },
+
+  // Where a placement click at `tile` should actually land: the nearest tile
+  // to it that is the player's own, connected to the click through their own
+  // land, within STRUCTURE_MIN_DIST of it, and clear of every other structure
+  // — PlayerImpl.validStructureSpawnTiles/landBasedStructureSpawn, which take
+  // the closest valid tile rather than refusing a click that is merely near
+  // a structure. A Port also needs the coast (their portSpawn), and keeps
+  // this game's own leniency of a click just off the player's shore. -1 when
+  // nothing qualifies. Click interpretation for the UI, like
+  // nearestOwnedCoastNear: build() takes the tile it is given.
+  structureSiteNear(playerId, type, tile) {
+    const def = this.unitDef(type);
+    if (!def || def.action || tile < 0) return -1;
+    if (type === 'port' && GameMap.owner[tile] !== playerId) {
+      tile = this.nearestOwnedCoastNear(playerId, tile, this.PORT_SNAP_MAX_DIST);
+    }
+    if (tile < 0 || GameMap.owner[tile] !== playerId) return -1;
+    const w = GameMap.width, cx = tile % w, cy = (tile / w) | 0;
+    const r2 = this.STRUCTURE_MIN_DIST * this.STRUCTURE_MIN_DIST;
+    // Only structures within twice the radius can rule out a tile in it.
+    const near = [];
+    for (const t of this.buildings.keys()) {
+      const dx = t % w - cx, dy = ((t / w) | 0) - cy;
+      if (dx * dx + dy * dy < 4 * r2) near.push(t);
+    }
+    const seen = new Set([tile]);
+    const queue = [tile];
+    const nb = new Int32Array(4);
+    let best = -1, bestDist = Infinity;
+    for (let head = 0; head < queue.length; head++) {
+      const i = queue[head], ix = i % w, iy = (i / w) | 0;
+      const dist = (ix - cx) * (ix - cx) + (iy - cy) * (iy - cy);
+      if (dist < bestDist && (type !== 'port' || GameMap.isCoastal(i))) {
+        let clear = true;
+        for (const t of near) {
+          const dx = t % w - ix, dy = ((t / w) | 0) - iy;
+          if (dx * dx + dy * dy < r2) { clear = false; break; }
+        }
+        if (clear) { best = i; bestDist = dist; }
+      }
+      const n = GameMap.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (seen.has(j) || GameMap.owner[j] !== playerId) continue;
+        const dx = j % w - cx, dy = ((j / w) | 0) - cy;
+        if (dx * dx + dy * dy >= r2) continue;
+        seen.add(j);
+        queue.push(j);
+      }
+    }
+    return best;
+  },
+
+  // The player's own finished structure of `type` nearest to `tile` and
+  // within STRUCTURE_MIN_DIST of it, or null — PlayerImpl.
+  // findExistingUnitToUpgrade. Nothing new can be built that close to it, so
+  // a click there with the same type armed means "upgrade that one".
+  upgradeTargetNear(playerId, type, tile) {
+    const def = this.unitDef(type);
+    if (!def || !def.upgradable || tile < 0) return null;
+    const w = GameMap.width, x = tile % w, y = (tile / w) | 0;
+    let best = null, bestDist = this.STRUCTURE_MIN_DIST * this.STRUCTURE_MIN_DIST;
+    for (const b of this.buildings.values()) {
+      if (b.type !== type || !b.built || GameMap.owner[b.tile] !== playerId) continue;
+      const dx = b.tile % w - x, dy = ((b.tile / w) | 0) - y;
+      const dist = dx * dx + dy * dy;
+      if (dist < bestDist) { best = b; bestDist = dist; }
+    }
+    return best;
+  },
+
   // Why a structure cannot go here, for the UI to say out loud. null when it
   // can, in the same shape as allianceBlockReason.
   //
-  // OpenFront marks a City territoryBound, which is the only placement rule
-  // there is: your own land, and not on top of something already standing.
+  // OpenFront's placement rule for a territoryBound structure: your own
+  // land, and at least STRUCTURE_MIN_DIST from anything already standing.
   buildBlockReason(playerId, type, tile) {
     const p = this.players[playerId];
     if (!p || !p.alive) return 'Nation defeated';
     if (!this.unitDef(type)) return 'Unknown structure';
     if (tile < 0 || GameMap.owner[tile] !== playerId) return 'Your own land only';
-    if (this.buildings.has(tile)) return 'Already built here';
+    if (this.structureTooClose(tile)) return 'Too close to another structure';
     // OpenFront's UnitType.Port is territoryBound AND requires an ocean
     // shore tile — a Port sitting one tile inland could never actually touch
     // water for a trade ship to sail from. The placement UI snaps a click
