@@ -4,7 +4,9 @@
 // change.
 const Options = (function() {
   const KEY = 'borderwar_options';
-  const DEFAULTS = { lowGfx: false, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false };
+  // Battery saver starts on for phones and tablets, off where there is a mouse.
+  const touchDevice = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+  const DEFAULTS = { lowGfx: false, saveBattery: touchDevice, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false };
   const values = Object.assign({}, DEFAULTS);
 
   try {
@@ -47,7 +49,7 @@ const Options = (function() {
   }
 
   const overlayEl = document.getElementById('optionsOverlay');
-  const boxes = { lowGfx: 'optLowGfx', showPerf: 'optShowPerf', hideHint: 'optHideHint', invertZoom: 'optInvertZoom' };
+  const boxes = { lowGfx: 'optLowGfx', saveBattery: 'optSaveBattery', showPerf: 'optShowPerf', hideHint: 'optHideHint', invertZoom: 'optInvertZoom' };
   for (const key in boxes) {
     const el = document.getElementById(boxes[key]);
     el.checked = values[key];

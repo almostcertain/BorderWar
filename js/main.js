@@ -570,6 +570,10 @@
   // — it is what stops singleplayer running away from itself, and what makes
   // the debug burst client-paced).
   let lastPanFrameAt = 0;
+  // Battery saver (see loop). 30 ms sits between one and two 60 Hz frames, so
+  // the cap lands on 30 fps whatever the display's refresh rate.
+  const SAVER_FRAME_MS = 30, CAM_SETTLE_MS = 250;
+  let lastDrawAt = 0, lastCamMoveAt = 0, lastCamX = 0, lastCamY = 0, lastCamScale = 0;
 
   function loop(now) {
     requestAnimationFrame(loop);
@@ -605,6 +609,19 @@
     // during the kind of multi-hundred-turn backlog a rejoin produces.
     // A replay's own bar says where a seek has got to.
     UI.updateCatchup(Replay.active ? 0 : Runner.pendingTurns());
+
+    // Battery saver: the sim moves 10 times a second, so drawing at the full
+    // display rate mostly repaints the same picture. Draw every other frame
+    // instead, except while the camera is moving, where the lost frames show.
+    if (Options.get('saveBattery')) {
+      const cam = Render.cam;
+      if (cam.x !== lastCamX || cam.y !== lastCamY || cam.scale !== lastCamScale) {
+        lastCamX = cam.x; lastCamY = cam.y; lastCamScale = cam.scale;
+        lastCamMoveAt = now;
+      }
+      if (now - lastCamMoveAt > CAM_SETTLE_MS && now - lastDrawAt < SAVER_FRAME_MS) return;
+    }
+    lastDrawAt = now;
 
     // Smooth clock for animation only. Wall-clock time since the last executed
     // turn, CLAMPED TO ONE TICK: the sim's authoritative state is whatever the
