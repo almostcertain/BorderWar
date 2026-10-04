@@ -12,8 +12,10 @@
 // site. A fog-off match never reaches the rest of this file.
 //
 // VISION GROUPS. Discovery belongs to a group, not a player. In a free-for-all
-// every human and every Nation is its own group; in a team game a team is one
-// group, so teammates share everything — the map and their contacts. Tribes
+// every human and every Nation is its own group; in a team game teammates
+// still have a group each but always share each other's stamps (see
+// visionRefreshShare), so they share the map and their contacts, while an
+// ally one teammate makes reaches only that teammate. Tribes
 // get no group: they only ever act on their own border, so they are never
 // gated, and the queries below answer "yes" for them.
 //
@@ -85,17 +87,15 @@ Object.assign(Game, {
     this.visionShare = this.visionMet = this.visionCount = null;
     if (!this.fog) return;
 
-    // Teams take the first group ids, in Game.teams order; every other human
-    // and Nation follows in player-id order. In a free-for-all that makes a
-    // nation's group id its player id.
+    // Every human and Nation is its own group, in player-id order (so a
+    // group id is a player id minus the tribes before it). Teammates share
+    // through the share masks, not through a common group, so an ally one
+    // teammate makes reaches only that teammate.
     const n = this.players.length;
     const groupOf = new Int16Array(n).fill(-1);
-    let groups = this.teams ? this.teams.length : 0;
+    let groups = 0;
     for (let id = 0; id < n; id++) {
-      const p = this.players[id];
-      if (p.isTribe) continue;
-      const team = this.teams && p.team ? this.teams.indexOf(p.team) : -1;
-      groupOf[id] = team >= 0 ? team : groups++;
+      if (!this.players[id].isTribe) groupOf[id] = groups++;
     }
 
     const C = this.VISION_CELL;
@@ -152,14 +152,14 @@ Object.assign(Game, {
   //   - otherwise, whether a's group has met b. A tribe is met like any
   //     other owner of land, so hasMet(a, tribe) is false until a has seen
   //     its land or been attacked by it.
-  // A teammate's contacts are the whole team's; an ally's are not.
+  // Teammates always know each other; an ally's contacts are not shared.
   hasMet(a, b) {
     if (!this.fog) return true;
     const n = this.visionGroupOf.length;
     if (!(a >= 0 && a < n && b >= 0 && b < n)) return false;
     if (a === b) return true;
     const g = this.visionGroupOf[a];
-    if (g < 0 || g === this.visionGroupOf[b]) return true;
+    if (g < 0 || g === this.visionGroupOf[b] || this.onSameTeam(a, b)) return true;
     return (this.visionMet[b * this.visionWords + (g >>> 5)] & (1 << (g & 31))) !== 0;
   },
 
@@ -211,7 +211,15 @@ Object.assign(Game, {
     if (!this.fog || !(subjectId >= 0 && subjectId < this.visionGroupOf.length)) return;
     const g = this.visionGroup(observerId);
     if (g < 0) return;
-    this.visionMet[subjectId * this.visionWords + (g >>> 5)] |= 1 << (g & 31);
+    const W = this.visionWords, base = subjectId * W;
+    this.visionMet[base + (g >>> 5)] |= 1 << (g & 31);
+    // A team shares its contacts: the observer's teammates meet the subject too.
+    if (this.teams) {
+      for (let i = 0; i < this.players.length; i++) {
+        const t = this.visionGroupOf[i];
+        if (t >= 0 && i !== observerId && this.onSameTeam(observerId, i)) this.visionMet[base + (t >>> 5)] |= 1 << (t & 31);
+      }
+    }
   },
 
   // setOwner's hook: `owner` (a real player) has just taken `tile`.
@@ -287,13 +295,23 @@ Object.assign(Game, {
   },
 
   // Rebuilds every group's share mask from the live alliance records: its
-  // own bit, plus each group one of its members holds an alliance with.
+  // own bit, its teammates' bits, plus each group it holds an alliance with.
   // Called whenever an alliance forms or ends. Sharing is direct only — an
-  // ally's ally gets nothing.
+  // ally's ally gets nothing, and a teammate's ally is not your ally.
   visionRefreshShare() {
     const W = this.visionWords, share = this.visionShare, groupOf = this.visionGroupOf;
     share.fill(0);
     for (let g = 0; g < this.visionGroups; g++) share[g * W + (g >>> 5)] = 1 << (g & 31);
+    if (this.teams) {
+      for (let a = 0; a < groupOf.length; a++) {
+        if (groupOf[a] < 0) continue;
+        for (let b = a + 1; b < groupOf.length; b++) {
+          if (groupOf[b] < 0 || !this.onSameTeam(a, b)) continue;
+          share[groupOf[a] * W + (groupOf[b] >>> 5)] |= 1 << (groupOf[b] & 31);
+          share[groupOf[b] * W + (groupOf[a] >>> 5)] |= 1 << (groupOf[a] & 31);
+        }
+      }
+    }
     for (let i = 0; i < this.alliances.length; i++) {
       const ga = groupOf[this.alliances[i].a], gb = groupOf[this.alliances[i].b];
       if (ga < 0 || gb < 0 || ga === gb) continue;
@@ -312,7 +330,7 @@ Object.assign(Game, {
     this.markMet(bId, aId);
     this.visionRefreshShare();
     const ga = this.visionGroupOf[aId], gb = this.visionGroupOf[bId];
-    if (ga < 0 || gb < 0 || ga === gb) return;
+    if (ga < 0 || gb < 0 || ga === gb || this.onSameTeam(aId, bId)) return;
 
     const cw = this.visionCellsW, ch = this.visionCellsH, W = this.visionWords;
     const cells = this.visionCells, count = this.visionCount, own = this.visionOwn;

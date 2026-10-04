@@ -208,10 +208,10 @@ All state is top-level on `Game`, `null`/`0` in a fog-off match, and only
 
 | Field | Shape | Meaning |
 |---|---|---|
-| `visionGroupOf` | `Int16Array[players]` | Player id to group id, `-1` for tribes. Teams take the first ids in `Game.teams` order; everyone else follows in player-id order, so in a free-for-all a nation's group is its player id. |
+| `visionGroupOf` | `Int16Array[players]` | Player id to group id, `-1` for tribes. Everyone but tribes gets their own group, in player-id order (teammates share through `visionShare`, not a common group). |
 | `visionCells` | `Uint32Array[cells * visionWords]` | Groups that have discovered each cell. |
 | `visionStamped` | same | Groups that have already stamped border sight from a tile in the cell. |
-| `visionShare` | `Uint32Array[groups * visionWords]` | The bits a group's stamp sets: its own plus its current allies'. Rebuilt from `Game.alliances` whenever one forms or ends. |
+| `visionShare` | `Uint32Array[groups * visionWords]` | The bits a group's stamp sets: its own, its teammates' and its current allies' (an ally of a teammate is not included). Rebuilt from `Game.alliances` whenever one forms or ends. |
 | `visionMet` | `Uint32Array[players * visionWords]` | Groups that have met each player. |
 | `visionCount` | `Uint32Array[groups]` | Cells each group has discovered. Changes exactly when the group's discovered set does, so render uses it as a revision counter. |
 | `visionCellsW`, `visionCellsH`, `visionGroups`, `visionWords` | numbers | Grid size, group count, words per bitmask. |

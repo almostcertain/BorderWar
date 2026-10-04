@@ -160,15 +160,15 @@ function fogInvariants({ Game, GameMap }, prev, where) {
   const w = GameMap.width, owner = GameMap.owner;
   const name = id => `${id} (${Game.players[id].name})`;
 
-  // Groups: none for a tribe, one per team, one each for everyone else.
-  const groupByKey = new Map();
+  // Groups: none for a tribe, one each for everyone else (teammates share
+  // through the share masks, not a common group).
+  const seenGroups = new Set();
   for (const p of Game.players) {
     const g = groupOf[p.id];
     if (p.isTribe) { if (g !== -1) fail(`tribe ${name(p.id)} has vision group ${g}`); continue; }
     if (!(g >= 0 && g < G)) fail(`${name(p.id)} has no vision group`);
-    const key = Game.teams && p.team ? `team:${p.team}` : `player:${p.id}`;
-    if (groupByKey.has(key) ? groupByKey.get(key) !== g : [...groupByKey.values()].includes(g)) fail(`vision groups do not follow teams at ${name(p.id)}`);
-    groupByKey.set(key, g);
+    if (seenGroups.has(g)) fail(`vision group ${g} is shared at ${name(p.id)}`);
+    seenGroups.add(g);
   }
 
   // Every owned tile is discovered by its owner's group, and its owner has
@@ -190,6 +190,10 @@ function fogInvariants({ Game, GameMap }, prev, where) {
     const ga = groupOf[al.a], gb = groupOf[al.b];
     if (ga >= 0 && gb >= 0 && ga !== gb) { allies[ga].push(gb); allies[gb].push(ga); }
     if (!Game.hasMet(al.a, al.b) || !Game.hasMet(al.b, al.a)) fail(`allies ${name(al.a)} and ${name(al.b)} have not met`);
+  }
+  for (const a of Game.players) for (const b of Game.players) {
+    const ga = groupOf[a.id], gb = groupOf[b.id];
+    if (ga >= 0 && gb >= 0 && Game.onSameTeam(a.id, b.id) && !allies[ga].includes(gb)) allies[ga].push(gb);
   }
   const R = Game.VISION_SIGHT_BORDER, r2 = R * R + R;
   const counts = new Array(G).fill(0);
@@ -218,7 +222,7 @@ function fogInvariants({ Game, GameMap }, prev, where) {
   // the met bit.
   for (const a of Game.players) for (const b of Game.players) {
     const g = groupOf[a.id];
-    const want = a.id === b.id || g < 0 || g === groupOf[b.id] || fogHas(met, b.id * W, g);
+    const want = a.id === b.id || g < 0 || g === groupOf[b.id] || Game.onSameTeam(a.id, b.id) || fogHas(met, b.id * W, g);
     if (Game.hasMet(a.id, b.id) !== want) fail(`hasMet(${a.id}, ${b.id}) is ${!want}`);
   }
 
@@ -742,7 +746,11 @@ function fogSpawnExpectedCells({ Game, GameMap }) {
       const cx = ((t % w) / C) | 0, cy = (((t / w) | 0) / C) | 0;
       for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
         const x = cx + dx, y = cy + dy;
-        if (dx * dx + dy * dy <= r2 && x >= 0 && y >= 0 && x < cw && y < ch) want[g][y * cw + x] = 1;
+        if (dx * dx + dy * dy <= r2 && x >= 0 && y >= 0 && x < cw && y < ch) {
+          want[g][y * cw + x] = 1;
+          // Teammates share each other's sight.
+          for (const q of Game.players) if (Game.onSameTeam(p.id, q.id)) want[Game.visionGroupOf[q.id]][y * cw + x] = 1;
+        }
       }
     }
   }
