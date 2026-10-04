@@ -295,7 +295,11 @@ Object.assign(Game, {
   // this many tiles (Euclidean, strict <, as PlayerImpl.validStructureSpawnTiles
   // tests it) to any other structure — any type, any owner, finished or still
   // under construction. It is what stops icons stacking on top of each other.
-  STRUCTURE_MIN_DIST: 15,
+  // Their value is 15; this game uses one icon's width instead — a structure
+  // disc is about 5.8 tiles across at the zooms where it scales with the map
+  // (Render.structureRadius) — so two icons can sit side by side but never
+  // overlap.
+  STRUCTURE_MIN_DIST: 6,
 
   // Whether `tile` is inside STRUCTURE_MIN_DIST of something already standing
   // (the tile itself included, at distance 0).
