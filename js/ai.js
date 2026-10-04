@@ -34,6 +34,9 @@ const AI = {
   //   retaliateChance        1-in-n roll per economy cycle to nuke a nation
   //                          that is actively eating our land (maybeRetaliate);
   //                          0 = never.
+  //   salvo                  the most Atom Bombs it will fire as one strike to
+  //                          get a warhead past SAM cover (see nukeTarget).
+  //                          1 = single shots only, never into cover.
   //   embargoLiftAt          relation at which a nation lifts an embargo it
   //                          placed on someone it came to hate. OpenFront:
   //                          Neutral, but Hard holds out for Friendly.
@@ -44,21 +47,21 @@ const AI = {
       thinkMult: 1.6, navalMult: 1.6,
       confusion: 10,
       betrayHelpless: 20, betrayOpportunist: false,
-      nukes: false, nukeChance: 0, hydrogenChance: 4, mirvChance: 0, retaliateChance: 0,
+      nukes: false, nukeChance: 0, hydrogenChance: 4, mirvChance: 0, retaliateChance: 0, salvo: 1,
       embargoLiftAt: 0, scouts: 1
     },
     medium: {
       thinkMult: 1, navalMult: 1,
       confusion: 20,
       betrayHelpless: 10, betrayOpportunist: true,
-      nukes: true, nukeChance: 8, hydrogenChance: 4, mirvChance: 6, retaliateChance: 2,
+      nukes: true, nukeChance: 8, hydrogenChance: 4, mirvChance: 6, retaliateChance: 2, salvo: 3,
       embargoLiftAt: 0, scouts: 2
     },
     hard: {
       thinkMult: 0.7, navalMult: 0.7,
       confusion: 0,
       betrayHelpless: 5, betrayOpportunist: true,
-      nukes: true, nukeChance: 5, hydrogenChance: 3, mirvChance: 4, retaliateChance: 1,
+      nukes: true, nukeChance: 5, hydrogenChance: 3, mirvChance: 4, retaliateChance: 1, salvo: 5,
       embargoLiftAt: 50, scouts: 2
     }
   },
@@ -388,8 +391,8 @@ const AI = {
   // need special handling here: a straight walk over Game.UNITS tries one
   // member of the pool before the other every single cycle, and building it
   // immediately doubles the shared price for the rest of this same call.
-  // Bots therefore build whichever pool member they own fewer of, so
-  // purchases alternate as the shared price climbs.
+  // Bots therefore pick ONE member of the pool per cycle — see economy() and
+  // PORTS_PER_FACTORY for which.
 
   // How many separate SAM Launchers to plant for territorial coverage before
   // further spend switches to leveling up the weakest one instead — see
@@ -460,7 +463,10 @@ const AI = {
   //      built Silo is an armed Silo. Without this the bot buys the Silo,
   //      immediately spends the next 250k it sees on a Fort, and the launcher
   //      sits empty — which is exactly the failure this whole block exists to
-  //      stop, one rung further up the ladder.
+  //      stop, one rung further up the ladder. When the last strike it
+  //      weighed needed a salvo to get through SAM cover (p.aiSalvo, see
+  //      maybeNuke), it banks that many bombs, and first builds the Silo
+  //      slots to fire them together.
   //
   // All three counts come off ONE walk of Game.buildings rather than the two
   // countBuilt() calls plus a separate rival scan the obvious spelling would
@@ -479,7 +485,7 @@ const AI = {
       if (!b.built) continue;
       const owner = GameMap.owner[b.tile];
       if (b.type === 'silo') {
-        if (owner === p.id) ownSilos++;
+        if (owner === p.id) ownSilos += b.level;
         // Fog of war: only a Silo p can see is a reason to buy cover.
         else if (owner >= 0 && !Game.areAllied(p.id, owner) && (!Game.fog || Game.isDiscovered(p.id, b.tile))) rivalSilos++;
       } else if (b.type === 'sam' && owner === p.id) {
@@ -491,12 +497,14 @@ const AI = {
     // still wants cover against someone else's.
     const nukes = this.profile().nukes;
     if (nukes && ownSilos < 1) return 'silo';
+    if (nukes && ownSilos < (p.aiSalvo || 0)) return 'silo';
     if (rivalSilos > 0 && ownSams < this.SAM_COVERAGE_TARGET) return 'sam';
     return nukes ? 'atombomb' : null;
   },
 
   savingsReserve(p, goal) {
     if (goal === 'drill') return Game.unitCost(p, 'drill') + this.DRILL_RESERVE;
+    if (goal === 'atombomb') return Game.unitCost(p, goal) * Math.max(1, p.aiSalvo || 0);
     return goal ? Game.unitCost(p, goal) : 0;
   },
 
@@ -564,6 +572,7 @@ const AI = {
     this.maybeDrill(p);
     // Before any spending: a bot being overrun fires with this cycle's full
     // treasury rather than whatever the build loop leaves over.
+    this.reviewStrike(p);
     this.maybeRetaliate(p);
 
     // The one thing this bot is banking toward, and the treasury floor every
@@ -599,17 +608,15 @@ const AI = {
 
       let type = pool[0];
       if (pool.length > 1) {
-        let bestOwned = Infinity;
-        for (const t of pool) {
-          const owned = Game.unitsOwned(p, t) + Game.unitsPending(p, t);
-          if (owned < bestOwned) { bestOwned = owned; type = t; }
-        }
-        // A coastal nation's first Port jumps the Factory/Port queue. Port
-        // and Factory share one price curve, so a Factory bought first makes
-        // the Port twice as dear and a mid-game nation never gets round to
-        // it; and while saving for a Silo only the (reserve-exempt) Port is
-        // affordable at all, so picking the Factory would stall for good.
-        if (pool.includes('port') && navyExempt('port') && this.hasCoast(p)) type = 'port';
+        // Factory or Port: PORTS_PER_FACTORY Ports to each Factory, since a
+        // trade ship pays several times what a train does (see the "Trade
+        // network" section). The Port leads, so a coastal nation's first
+        // Port comes before any Factory: the two share one price curve, so a
+        // Factory bought first makes the Port twice as dear, and while saving
+        // for a Silo only the (reserve-exempt) Port is affordable at all.
+        // Whichever has no site worth its price gives way to the other below.
+        const owned = t => Game.unitsOwned(p, t) + Game.unitsPending(p, t);
+        type = owned('port') < this.PORTS_PER_FACTORY * (owned('factory') + 1) ? 'port' : 'factory';
       }
 
       // Forts, Silos, and SAM Launchers are only worth building once there's
@@ -629,7 +636,8 @@ const AI = {
           this.countBuilt(p, 'fort') + Game.unitsPending(p, 'fort') >=
             this.FORT_CAP_BASE + Game.unitsOwned(p, 'city')) continue;
 
-      if (spendable(type) < Game.unitCost(p, type)) continue;
+      if (spendable(type) < Game.unitCost(p, type) &&
+          (pool.length < 2 || spendable('port') < Game.unitCost(p, 'port'))) continue;
 
       // SAM's real payoff past its first couple of launchers is charges, not
       // range: samRange(level) asymptotes almost immediately (level 1→2 gains
@@ -654,14 +662,26 @@ const AI = {
         continue;
       }
 
-      const tile = type === 'fort' ? this.fortSite(p) : type === 'port' ? this.portSite(p) : this.buildSite(p);
+      let tile = -1;
+      if (pool.length > 1) {
+        const cost = Game.unitCost(p, type), order = [type, type === 'port' ? 'factory' : 'port'];
+        for (const t of order) {
+          if (spendable(t) < cost) continue;
+          tile = t === 'port' ? this.portSite(p) : this.factorySite(p);
+          if (tile >= 0) { type = t; break; }
+        }
+        // No site for either: grow whichever it already has, below.
+        if (tile < 0 && this.weakestBuilt(p, type) < 0) type = order[1];
+      } else {
+        tile = type === 'fort' ? this.fortSite(p) : type === 'city' ? this.citySite(p) : this.buildSite(p);
+      }
       if (tile >= 0) Game.build(p.id, type, tile);
       // No fresh site at all (a small/landlocked/built-out nation) but the
       // type still has room to grow in place — upgrade the weakest one
       // rather than leaving this cycle's gold unspent. Fort/Warship/the
       // bombs are upgradable:false, so this only ever fires for
       // City/Factory/Port/Silo/SAM, and never fights the branch above for SAM.
-      else if (Game.unitDef(type).upgradable) {
+      else if (Game.unitDef(type).upgradable && spendable(type) >= Game.unitCost(p, type)) {
         const upgradeTile = this.weakestBuilt(p, type);
         if (upgradeTile >= 0 && Game.canUpgrade(p.id, upgradeTile)) Game.upgrade(p.id, upgradeTile);
       }
@@ -796,18 +816,302 @@ const AI = {
     const target = Game.players[best];
     const targetTile = this.nukeTarget(target, p);
     if (targetTile < 0) return;
+    // How many Atom Bombs that aim point takes (0: more than this tier will
+    // fire) and the tile the strike is meant for. Scratch, so read it now.
+    const salvo = this.salvo, watch = this.salvoWatch;
+    p.aiSalvo = 0;
 
     const hydrogenWorthy = target.tiles.size > p.tiles.size || target.troops > p.troops;
     // MIRV: the tier above Hydrogen, only worth its price against a rival that
     // dwarfs us. Returns early on a hit, so no second warhead the same cycle.
+    // Its 350 warheads swamp any SAM cover, so it needs no salvo.
     const mirvWorthy = hydrogenWorthy && target.tiles.size > p.tiles.size * 1.5;
     if (mirvWorthy && p.gold >= Game.unitCost(p, 'mirv') && this.chance(prof.mirvChance)) {
       Game.launchMirv(p.id, targetTile);
       return;
     }
-    const type = hydrogenWorthy && p.gold >= Game.unitCost(p, 'hydrogenbomb') && this.chance(prof.hydrogenChance)
-      ? 'hydrogenbomb' : 'atombomb';
-    Game.launchNuke(p.id, type, targetTile);
+    if (hydrogenWorthy && p.gold >= Game.unitCost(p, 'hydrogenbomb') && this.chance(prof.hydrogenChance)) {
+      const tile = this.standoff(p, target, watch, 'hydrogenbomb');
+      if (tile >= 0 && this.fireSalvo(p, tile, 1, 'hydrogenbomb')) return;
+    }
+    if (!salvo) return;
+    // Not enough gold or Silo slots for the whole salvo yet: hold fire and
+    // bank for it (savingsGoal) instead of feeding the SAMs one bomb at a time.
+    if (!this.fireSalvo(p, targetTile, salvo)) p.aiSalvo = salvo;
+  },
+
+  // --- Nukes against SAM cover -------------------------------------------------
+  // A SAM destroys any hostile nuke inside its range the tick it has a free
+  // charge (Game.stepSAMs), and a charge takes SAM_COOLDOWN to come back. So
+  // one bomb fired at a covered target is 750k thrown away, and bots used to
+  // do exactly that: with SAMs on the map nearly every warhead was shot down.
+  // A nation now works out what a strike will meet before paying for it:
+  //
+  //   - predictSalvo flies the bombs ahead of time against every SAM the
+  //     nation knows of, charges and reloads included. Third parties count:
+  //     a neutral nation's SAM under the flight path shoots too.
+  //   - nukeTarget weighs each aim point by what it destroys per bomb, so an
+  //     open City can beat a covered Silo, and a SAM is worth a salvo because
+  //     it uncovers everything behind it.
+  //   - a blast destroys every structure inside its outer radius, so a bomb
+  //     can land short of its target. standoff pulls the aim point back
+  //     toward the Silo until the flight stays outside the cover: one bomb
+  //     instead of a salvo. A Hydrogen Bomb's blast is wider than a low-level
+  //     SAM's range, so it can take the SAM itself out that way.
+  //   - otherwise a covered target gets one bomb more than the cover has
+  //     charges, all launched the same tick (fireSalvo), up to the tier's
+  //     `salvo`. Short of gold or Silo slots, it saves up (p.aiSalvo) rather
+  //     than fire. A Hydrogen Bomb is too dear to be a decoy, and SAMs pick
+  //     it first: it flies alone or not at all.
+  //   - a strike that does not destroy what it was aimed at was shot down by
+  //     something the prediction missed. The nation remembers that as cover
+  //     over the spot (p.aiCover) and sends one bomb more next time.
+  //
+  // Fog of war: a SAM the nation has not discovered is not in the prediction.
+  // It still shoots, which is what the last point is for.
+  //
+  // predictSalvo draws nothing from Game.rng and writes nothing.
+
+  // Whether each of `shots` ({ type, dst }, in launch order, all fired this
+  // tick) would land: an array of booleans, or null when p has too few ready
+  // Silo slots to fire them all. `anySilo` plans ahead instead: a shot with
+  // no free slot left flies from the nearest Silo regardless.
+  predictSalvo(p, shots, anySilo) {
+    const w = GameMap.width, dt = Game.TICK_DT, now = Game.elapsed;
+    const silos = [];
+    for (const b of Game.buildings.values()) {
+      if (b.type !== 'silo' || !b.built || GameMap.owner[b.tile] !== p.id) continue;
+      silos.push({ tile: b.tile, free: Game.siloFreeSlots(b) });
+    }
+    // Each shot leaves the nearest Silo with a slot, as resolveNukeLaunch
+    // picks it; the first of equals, as its stable sort does.
+    const nukes = [];
+    let ticks = 0;
+    for (const shot of shots) {
+      let from = null, any = null, fromD = Infinity, anyD = Infinity;
+      for (const s of silos) {
+        const d = Game.tileDistSq(s.tile, shot.dst);
+        if (d < anyD) { anyD = d; any = s; }
+        if (s.free > 0 && d < fromD) { fromD = d; from = s; }
+      }
+      if (from) from.free--;
+      else if (anySilo && any) from = any;
+      else return null;
+      const fx = from.tile % w, fy = (from.tile / w) | 0, tx = shot.dst % w, ty = (shot.dst / w) | 0;
+      const dist = Game.det.hypot(tx - fx, ty - fy);
+      const duration = Math.max(0.3, dist / Game.NUKE_SPEED[shot.type]);
+      ticks = Math.max(ticks, Math.ceil(duration / dt) + 1);
+      nukes.push({
+        fx, fy, tx, ty, duration, x: fx, y: fy, score: 0,
+        rise: Math.min(dist * 0.35, 40),   // Game.nukeArcPos' arc height
+        bonus: shot.type === 'hydrogenbomb' ? 70001 : 0,
+        state: 0   // 0 flying, 1 landed, 2 shot down
+      });
+    }
+
+    // Only SAMs a flight can come within range of: the straight line from
+    // Silo to target, widened by the arc that lifts the missile off it.
+    const sams = [];
+    for (const b of Game.buildings.values()) {
+      if (b.type !== 'sam' || !b.built) continue;
+      const owner = GameMap.owner[b.tile];
+      if (owner < 0 || owner === p.id || Game.areAllied(owner, p.id)) continue;
+      if (Game.fog && !Game.isDiscovered(p.id, b.tile)) continue;
+      const x = b.tile % w, y = (b.tile / w) | 0, range = Game.samRange(b.level);
+      for (const n of nukes) {
+        const sx = n.tx - n.fx, sy = n.ty - n.fy, len2 = sx * sx + sy * sy;
+        const u = len2 ? Math.max(0, Math.min(1, ((x - n.fx) * sx + (y - n.fy) * sy) / len2)) : 0;
+        const dx = n.fx + sx * u - x, dy = n.fy + sy * u - y, reach = range + n.rise;
+        if (dx * dx + dy * dy > reach * reach) continue;
+        sams.push({ b, x, y, queue: b.samQueue.slice() });
+        break;
+      }
+    }
+
+    const landed = nukes.map(() => true);
+    if (!sams.length) return landed;
+    let flying = nukes.length;
+    // Tick by tick as Game.tick will: stepSAMs, then stepNukes. The launch
+    // tick itself is over by the time AI.update runs.
+    for (let k = 1; k <= ticks && flying; k++) {
+      const since = k * dt, t = now + since;
+      for (const n of nukes) {
+        if (n.state) continue;
+        // Game.nukeArcPos.
+        const u = Math.min(1, since / n.duration), c = u * (1 - u);
+        n.x = n.fx + (n.tx - n.fx) * u;
+        n.y = n.fy + (n.ty - n.fy) * u - 16 * c / (5 - 4 * c) * n.rise;
+      }
+      for (const sam of sams) {
+        const q = sam.queue, level = sam.b.level;
+        while (q.length && t - q[0] >= Game.SAM_COOLDOWN) q.shift();
+        if (q.length >= level) continue;
+        const range = Game.dynamicSamRange(sam.b, t), range2 = range * range;
+        const inRange = [];
+        for (const n of nukes) {
+          if (n.state) continue;
+          const dx = n.x - sam.x, dy = n.y - sam.y;
+          if (dx * dx + dy * dy > range2) continue;
+          // Game.samTargetScore, on this prediction's clock.
+          n.score = n.bonus +
+            Math.max(0, 200000 - (Math.abs(n.tx - sam.x) + Math.abs(n.ty - sam.y)) * 1000) +
+            Math.max(0, 10000 - (n.duration - since) * Game.TICKS_PER_SEC * 100);
+          inRange.push(n);
+        }
+        if (inRange.length > 1) inRange.sort((a, c) => c.score - a.score);
+        for (const n of inRange) {
+          if (q.length >= level) break;
+          q.push(t);
+          n.state = 2;
+          flying--;
+        }
+      }
+      for (const n of nukes) {
+        if (!n.state && since >= n.duration) { n.state = 1; flying--; }
+      }
+    }
+    for (let i = 0; i < nukes.length; i++) landed[i] = nukes[i].state !== 2;
+    return landed;
+  },
+
+  // The fewest bombs of `type`, all aimed at `dst` and fired together, that
+  // put one on the ground: 1 for an open target, 0 when `max` are not enough
+  // (or, without `anySilo`, when the ready Silo slots run out first). One
+  // flight of `max` shows how many the cover eats; the answer is one more,
+  // checked, since a smaller salvo leaves from fewer Silos.
+  salvoSize(p, type, dst, max, anySilo) {
+    if (max < 1) return 0;
+    const shots = [{ type, dst }];
+    let landed = this.predictSalvo(p, shots, anySilo);
+    if (!landed) return 0;
+    if (landed[0]) return 1;
+    while (shots.length < max) shots.push(shots[0]);
+    while (shots.length > 1 && !(landed = this.predictSalvo(p, shots, anySilo))) {
+      if (anySilo) return 0;
+      shots.pop();   // only as many as there are ready slots
+    }
+    if (!landed || !landed.includes(true)) return 0;
+    const most = shots.length;
+    let n = most - landed.filter(Boolean).length + 1;
+    for (; n < most; n++) {
+      shots.length = n;
+      if (this.predictSalvo(p, shots, anySilo).includes(true)) break;
+      while (shots.length < most) shots.push(shots[0]);
+    }
+    return n;
+  },
+
+  // Fires `n` bombs (Atom unless `type` says otherwise) at `tile` this tick,
+  // if p can pay for them all and has the Silo slots to get one through. All
+  // or nothing. What it fired is noted for reviewStrike.
+  fireSalvo(p, tile, n, type = 'atombomb') {
+    if (p.gold < Game.unitCost(p, type) * n) return false;
+    const landed = this.predictSalvo(p, new Array(n).fill({ type, dst: tile }));
+    if (!landed || !landed.includes(true)) return false;
+    for (let i = 0; i < n; i++) Game.launchNuke(p.id, type, tile);
+    this.noteStrike(p, tile, n);
+    return true;
+  },
+
+  // An aim point from which ONE `type` bomb both lands and destroys whatever
+  // stands on `tile`, or -1. Each entry of STANDOFF is how far to pull the
+  // aim back from the structure toward the Silo that would fire; a blast
+  // takes every structure inside its outer radius (Game.detonateNuke), so all
+  // of them are close enough. The first whose flight gets through wins. A
+  // pulled-back point has to be the target's own discovered land, so the
+  // strike stays on the nation it was meant for, and the blast has to stay
+  // off p's side (blastSafe). A Hydrogen Bomb is held to that even at 0: at
+  // 100 tiles across it is the one bomb that reaches home from a neighbour's
+  // border.
+  STANDOFF: { atombomb: [12, 24], hydrogenbomb: [0, 30, 60, 90] },
+
+  standoff(p, target, tile, type) {
+    const w = GameMap.width, h = GameMap.height;
+    if (this.coverAt(p, tile)) return -1;
+    let silo = -1, best = Infinity;
+    for (const b of Game.buildings.values()) {
+      if (b.type !== 'silo' || !b.built || GameMap.owner[b.tile] !== p.id || Game.siloFreeSlots(b) < 1) continue;
+      const d = Game.tileDistSq(b.tile, tile);
+      if (d < best) { best = d; silo = b.tile; }
+    }
+    if (silo < 0) return -1;
+    const tx = tile % w, ty = (tile / w) | 0;
+    const dx = (silo % w) - tx, dy = ((silo / w) | 0) - ty;
+    const len = Game.det.hypot(dx, dy);
+    for (const back of this.STANDOFF[type]) {
+      if (back >= len) break;
+      const x = back ? Math.round(tx + dx / len * back) : tx, y = back ? Math.round(ty + dy / len * back) : ty;
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      const aim = y * w + x;
+      if (back && (GameMap.owner[aim] !== target.id || (Game.fog && !Game.isDiscovered(p.id, aim)))) continue;
+      if ((back || type === 'hydrogenbomb') && !this.blastSafe(p, aim, type)) continue;
+      const landed = this.predictSalvo(p, [{ type, dst: aim }]);
+      if (landed && landed[0]) return aim;
+    }
+    return -1;
+  },
+
+  // Whether a `type` blast at `tile` keeps clear of p's side: none of p's
+  // structures or its allies' inside the outer radius, no allied land (either
+  // would break the alliance, see Game.maybeBreakNukeAlliances), and p's own
+  // land no more than BLAST_OWN_LIMIT of what a coarse grid over the blast
+  // finds owned.
+  BLAST_OWN_LIMIT: 0.1,
+
+  blastSafe(p, tile, type) {
+    const mag = Game.NUKE_MAGNITUDES[type];
+    const w = GameMap.width, h = GameMap.height;
+    const cx = tile % w, cy = (tile / w) | 0, outer2 = mag.outer * mag.outer;
+    for (const b of Game.buildings.values()) {
+      if (Game.tileDistSq(tile, b.tile) >= outer2) continue;
+      const o = GameMap.owner[b.tile];
+      if (o === p.id || (o >= 0 && Game.areAllied(p.id, o))) return false;
+    }
+    const step = Math.max(1, Math.round(mag.outer / 15));
+    let mine = 0, owned = 0;
+    for (let y = Math.max(0, cy - mag.outer); y <= Math.min(h - 1, cy + mag.outer); y += step) {
+      for (let x = Math.max(0, cx - mag.outer); x <= Math.min(w - 1, cx + mag.outer); x += step) {
+        if ((x - cx) * (x - cx) + (y - cy) * (y - cy) > outer2) continue;
+        const o = GameMap.owner[y * w + x];
+        if (o < 0) continue;
+        if (o === p.id) mine++;
+        else if (Game.areAllied(p.id, o)) return false;
+        owned++;
+      }
+    }
+    return mine <= owned * this.BLAST_OWN_LIMIT;
+  },
+
+  // Learning from a strike that failed. noteStrike records where a strike of
+  // `n` bombs was aimed; once the last of them is due, reviewStrike checks it
+  // against p.nukeLoss, the sim's own record of p's bombs shot down
+  // (Game.noteNukeShot). All `n` lost means cover the prediction did not have
+  // (a SAM in the fog, one built or upgraded mid-flight, charges it took for
+  // spent). That becomes p.aiCover, `n` charges over the spot for
+  // COVER_MEMORY seconds, and coverAt adds them to whatever is planned within
+  // SAM range of it. One strike and one patch of cover at a time: the latest.
+  COVER_MEMORY: 180,
+
+  noteStrike(p, tile, n) {
+    let eta = Game.elapsed;
+    for (const k of Game.nukes) if (k.ownerId === p.id) eta = Math.max(eta, k.born + k.duration);
+    p.aiStrike = { tile, n, at: Game.elapsed, eta: eta + 1 };
+  },
+
+  reviewStrike(p) {
+    const s = p.aiStrike;
+    if (!s || Game.elapsed < s.eta) return;
+    p.aiStrike = null;
+    const loss = p.nukeLoss, unseen = this.coverAt(p, s.tile);
+    if (loss && loss.dst === s.tile && loss.at >= s.at && loss.n >= s.n) {
+      p.aiCover = { tile: s.tile, n: s.n + unseen, until: Game.elapsed + this.COVER_MEMORY };
+    } else if (unseen) p.aiCover = null;
+  },
+
+  // Charges of unseen cover p has learned of over `tile`; 0 for none.
+  coverAt(p, tile) {
+    const c = p.aiCover, r = Game.SAM_MAX_RANGE;
+    return c && Game.elapsed < c.until && Game.tileDistSq(c.tile, tile) <= r * r ? c.n : 0;
   },
 
   // At least one owned, completed, off-cooldown Silo — the same test
@@ -868,10 +1172,10 @@ const AI = {
     if ((target.tiles.size > p.tiles.size || target.troops > p.troops) &&
         p.gold >= Game.unitCost(p, 'hydrogenbomb') && this.chance(prof.hydrogenChance)) {
       const tile = this.retaliationTarget(p, hitter, 'hydrogenbomb');
-      if (tile >= 0) return Game.launchNuke(p.id, 'hydrogenbomb', tile);
+      if (tile >= 0) return this.fireSalvo(p, tile, 1, 'hydrogenbomb');
     }
     const tile = this.retaliationTarget(p, hitter, 'atombomb');
-    return tile >= 0 && Game.launchNuke(p.id, 'atombomb', tile);
+    return tile >= 0 && this.fireSalvo(p, tile, this.salvo);
   },
 
   // Candidate aim points: from a sample of the front tiles the attack is
@@ -884,6 +1188,12 @@ const AI = {
   // ours — rejects it outright, since maybeBreakNukeAlliances would fire on
   // either. Returns -1 when no candidate is clean enough; the bot then holds
   // fire rather than crater itself.
+  //
+  // SAM cover (see "Nukes against SAM cover"): an aim point is scored per
+  // bomb it takes to land one there, with the gold and ready Silo slots p has
+  // right now (plus any unseen cover it has learned of, coverAt), and dropped
+  // if that is more than it can fire. The count for the point returned is
+  // left in this.salvo. A Hydrogen Bomb goes alone or not at all.
   //
   // Fog of war: p aims only at what it has discovered. An aim point, a
   // structure or a tile of the blast that lies in the black is not there as
@@ -934,6 +1244,8 @@ const AI = {
 
     const step = Math.max(1, Math.round(mag.outer / 15));
     const outer2 = mag.outer * mag.outer, inner2 = mag.inner * mag.inner;
+    const maxSalvo = type === 'atombomb'
+      ? Math.min(this.profile().salvo, Math.floor(p.gold / Game.unitCost(p, type))) : 1;
     let best = -1, bestScore = 0;
     for (const c of candidates) {
       const cx = c % w, cy = (c / w) | 0;
@@ -959,7 +1271,12 @@ const AI = {
         if (o === p.id || (o >= 0 && Game.areAllied(p.id, o))) { score = -1; break; }
         if (o === attackerId) score += (this.NUKE_TARGET_PRIORITY[b.type] || 0) * 20;
       }
-      if (score > bestScore) { bestScore = score; best = c; }
+      if (score <= bestScore) continue;
+      let n = this.salvoSize(p, type, c, maxSalvo);
+      if (n) n += this.coverAt(p, c);
+      if (!n || n > maxSalvo) continue;
+      score /= n;
+      if (score > bestScore) { bestScore = score; best = c; this.salvo = n; }
     }
     return best;
   },
@@ -978,13 +1295,74 @@ const AI = {
   // Falls back to a random owned tile when the target has nothing built,
   // which is also the pre-existing behaviour for every target.
   //
+  // SAM cover (see "Nukes against SAM cover"): the best NUKE_AIM_CANDIDATES
+  // structures are each priced in Atom Bombs, the salvo it takes to land one
+  // there, and the pick is the most priority per bomb. If none of those can
+  // be reached, any lesser structure a single bomb gets to will do, and then
+  // up to NUKE_LAND_TRIES random tiles of open ground. this.salvo is left
+  // holding the count for the tile returned; 0 means everything is covered
+  // past the tier's `salvo`, and the tile is then just the top structure (a
+  // MIRV can still use it). The count assumes Silo slots p may not have yet:
+  // maybeNuke saves up for the difference. The tile is the structure's own,
+  // or a standoff point short of it when one bomb from there does the job;
+  // this.salvoWatch is the structure either way.
+  //
   // Fog of war: `p`, the nation firing, aims only at what it has discovered:
   // a structure it can see or, failing that, a tile of the target's it can
   // see. -1 when it can see none of the target's land.
   NUKE_TARGET_PRIORITY: { silo: 4, sam: 3, city: 2, factory: 1, port: 1 },
+  NUKE_AIM_CANDIDATES: 6,
+  NUKE_LAND_TRIES: 4,
+  // Atom Bombs the aim point last returned by nukeTarget / retaliationTarget
+  // takes. Scratch, read back in the same call chain; never sim state.
+  salvo: 1,
+  salvoWatch: -1,
+  _aims: [],
 
   nukeTarget(target, p) {
+    const max = this.profile().salvo;
+    const open = this.nukeTargetOpen(target, p);
+    this.salvo = 0;
+    this.salvoWatch = open;
+    if (open < 0) return -1;
+    const aims = this._aims;
+    if (!aims.length) {
+      const unseen = this.coverAt(p, open);
+      const n = this.salvoSize(p, 'atombomb', open, max - unseen, true);
+      this.salvo = n && n + unseen;
+      return open;
+    }
+    let best = open, bestValue = 0;
+    for (let i = 0; i < aims.length; i++) {
+      // Past the leading candidates a structure is only a way out of having
+      // no shot at all, and only if a single bomb reaches it.
+      const deep = i < this.NUKE_AIM_CANDIDATES;
+      if (!deep && bestValue) break;
+      const c = aims[i], unseen = this.coverAt(p, c.tile);
+      let aim = c.tile, n = this.salvoSize(p, 'atombomb', aim, (deep ? max : 1) - unseen, true);
+      if (n) n += unseen;
+      if (n !== 1 && deep) {
+        const off = this.standoff(p, target, c.tile, 'atombomb');
+        if (off >= 0) { aim = off; n = 1; }
+      }
+      if (n && c.score / n > bestValue) { bestValue = c.score / n; best = aim; this.salvo = n; this.salvoWatch = c.tile; }
+    }
+    if (bestValue) return best;
+    // Every structure is out of reach: open ground, for the troops on it.
+    for (let i = 0; i < this.NUKE_LAND_TRIES; i++) {
+      const tile = this.randomTile(target, p);
+      if (tile < 0 || this.coverAt(p, tile) || this.salvoSize(p, 'atombomb', tile, 1, true) !== 1) continue;
+      this.salvo = 1;
+      return this.salvoWatch = tile;
+    }
+    return best;
+  },
+
+  // nukeTarget's pick before SAM cover is weighed. When that is a structure,
+  // every structure worth a bomb is left in this._aims, best first.
+  nukeTargetOpen(target, p) {
     const fog = Game.fog;
+    const aims = this._aims = [];
     let best = -1, bestScore = 0;
     for (const b of Game.buildings.values()) {
       if (!b.built) continue;
@@ -997,9 +1375,19 @@ const AI = {
       // a Silo.
       const score = weight * 4 + Math.floor(Game.rng() * 4);
       if (score > bestScore) { bestScore = score; best = b.tile; }
+      aims.push({ tile: b.tile, score });
     }
-    if (best >= 0) return best;
+    if (best >= 0) {
+      // Stable, so equal scores keep Game.buildings' own order.
+      aims.sort((a, c) => c.score - a.score);
+      return best;
+    }
+    return this.randomTile(target, p);
+  },
 
+  // A random tile of `target`'s; under fog, one p has discovered (-1 if none).
+  randomTile(target, p) {
+    const fog = Game.fog;
     if (target.tiles.size === 0) return -1;
     let n = Math.floor(Game.rng() * target.tiles.size);
     if (fog) {
@@ -1083,20 +1471,192 @@ const AI = {
     return fallback;
   },
 
-  // Coastal by requirement, not preference — a Port only ever succeeds on a
-  // tile that actually touches water (Game.buildBlockReason), so this can't
-  // reuse buildSite's random-tile-then-filter-for-interior approach: on a
-  // large empire, coastal tiles can be a small fraction of the total, and
-  // blind random sampling missed often enough in testing that bots
-  // effectively never built a Port at all. Reuses navalThink's own real
-  // (if capped) coastalTiles() scan instead, which finds actual coastal
-  // tiles deterministically rather than hoping a handful of random picks
-  // land on one.
-  portSite(p) {
-    for (const t of this.coastalTiles(p)) {
-      if (!Game.structureTooClose(t)) return t;
+  // --- Trade network ----------------------------------------------------------
+  // Where Cities, Factories and Ports go decides what they earn, and bots
+  // used to place them blind: a City or Factory on a random tile, a Port on
+  // the first stretch of coast in the tile list. Most Cities ended up outside
+  // every Factory's range and never saw a train, some Factories linked to
+  // nothing, and Ports went up on lakes or next door to their only partner.
+  //
+  //   Rail (game/rail.js): only a Factory starts trains, and it links the
+  //   Cities and Ports within TRAIN_STATION_MAX_RANGE that a straight or
+  //   one-bend track can reach. So a Factory goes where it links the most
+  //   stop value (railValue), never where it links nothing; a City goes
+  //   inside a Factory's reach, or failing that beside another City so one
+  //   Factory can later serve both.
+  //
+  //   Sea (game/trade.js): a trade ship pays by the length of its route, a
+  //   few thousand for a short hop and 90k and up for a long one, and only
+  //   sails to another nation's Port on the same body of water. So a Port
+  //   goes on the coast whose partners are furthest off (portSite), and not
+  //   at all on water with nobody to trade with and no room for anyone.
+  //
+  // A ship pays both ends several times what a train stop does, so the shared
+  // Factory/Port budget buys PORTS_PER_FACTORY Ports per Factory (economy).
+  //
+  // Fog of war: another nation's structure counts only once discovered.
+  PORTS_PER_FACTORY: 2,
+  RAIL_SITE_TRIES: 16,
+  // Weight of "not on the border" against rail value: a structure changes
+  // hands with its tile, so the border is the worst place for one.
+  RAIL_SITE_INTERIOR: 5,
+  PORT_SITE_SAMPLES: 24,
+  // With no partner Port on it yet, a body of water is worth a Port only if
+  // it is at least this share of all the map's water: the sea, not a lake.
+  PORT_MIN_WATER: 0.02,
+  // Hostile land this close marks a stretch of coast as contested.
+  PORT_HOSTILE_RADIUS: 15,
+
+  // What a `type` built on `tile` adds to p's rail trade. A Factory: the
+  // stops it would link, each at its train-gold rate for p (own 1, another
+  // nation's 2.5, an ally's 3.5, as TRAIN_GOLD_*), plus 1 for a stop no
+  // network reaches yet. A City or Port: 2 inside a Factory's reach, 1 beside
+  // one of p's Cities, else 0. Structures still going up count.
+  railValue(p, type, tile) {
+    const r2 = Game.TRAIN_STATION_MAX_RANGE * Game.TRAIN_STATION_MAX_RANGE;
+    let value = 0;
+    for (const b of Game.buildings.values()) {
+      const hub = b.type === 'factory';
+      // A Factory looks for stops; a stop looks for a Factory, or a City.
+      if (type === 'factory' ? b.type !== 'city' && b.type !== 'port' : !hub && (value || b.type !== 'city')) continue;
+      if (Game.tileDistSq(tile, b.tile) > r2) continue;
+      const o = GameMap.owner[b.tile];
+      if (o < 0 || (o !== p.id && type !== 'factory' && !hub)) continue;
+      if (o !== p.id && (!Game.canTrade(p.id, o) || (Game.fog && !Game.isDiscovered(p.id, b.tile)))) continue;
+      const track = Game.orthogonalPath(tile, b.tile);
+      if (!track || Game.pathLength(track) > Game.RAILROAD_MAX_TILES) continue;
+      if (type !== 'factory') { if (hub) return 2; value = 1; }
+      else value += (o === p.id ? 1 : Game.areAllied(p.id, o) ? 3.5 : 2.5) + (b.station ? 0 : 1);
     }
-    return -1;
+    return value;
+  },
+
+  // The best of RAIL_SITE_TRIES random tiles of p's for a City or Factory, by
+  // railValue and distance from the border. -1 for a Factory with nothing in
+  // reach to link: it would never run a train.
+  railSite(p, type) {
+    const soon = Game.drill ? Game.drillRadius(Game.ticks + this.DRILL_BUILD_HORIZON * Game.TICKS_PER_SEC) : 0;
+    let best = -1, bestScore = -1;
+    for (const tile of this.sampleTiles(p, this.RAIL_SITE_TRIES)) {
+      if (Game.structureTooClose(tile)) continue;
+      if (Game.drill && !Game.drillInside(tile, soon)) continue;
+      const value = this.railValue(p, type, tile);
+      if (type === 'factory' && !value) continue;
+      const score = value * 2 + (this.isInterior(p, tile) ? this.RAIL_SITE_INTERIOR : 0);
+      if (score > bestScore) { bestScore = score; best = tile; }
+    }
+    return best;
+  },
+
+  citySite(p) { return this.railSite(p, 'city'); },
+  factorySite(p) { return this.railSite(p, 'factory'); },
+
+  // `count` random tiles of p's, in p.tiles' own order, off one walk of it
+  // (sampleTile walks it once per tile).
+  sampleTiles(p, count) {
+    const size = p.tiles.size, picks = [], out = [];
+    if (!size) return out;
+    for (let i = 0; i < count; i++) picks.push(Math.floor(Game.rng() * size));
+    picks.sort((a, b) => a - b);
+    let i = 0, k = 0;
+    for (const t of p.tiles) {
+      while (k < count && picks[k] === i) { if (out[out.length - 1] !== t) out.push(t); k++; }
+      if (k >= count) break;
+      i++;
+    }
+    return out;
+  },
+
+  // The bodies of water `tile` touches, as GameMap.waterComponentId ids.
+  seasAt(tile) {
+    const wc = GameMap.waterComponentId, nb = Game.abuf, out = [];
+    const n = GameMap.neighbors(tile, nb);
+    for (let k = 0; k < n; k++) {
+      const c = wc[nb[k]];
+      if (c >= 0 && !out.includes(c)) out.push(c);
+    }
+    return out;
+  },
+
+  // Tile count of every body of water, and of all of them. Fixed geography,
+  // worked out once a map: the same on every client, and not sim state.
+  _waterSizes: null,
+
+  waterSizes() {
+    const wc = GameMap.waterComponentId;
+    let ws = this._waterSizes;
+    if (ws && ws.map === wc) return ws;
+    ws = this._waterSizes = { map: wc, sizes: [], total: 0 };
+    for (let t = 0; t < wc.length; t++) {
+      const c = wc[t];
+      if (c < 0) continue;
+      ws.sizes[c] = (ws.sizes[c] || 0) + 1;
+      ws.total++;
+    }
+    return ws;
+  },
+
+  // Coastal by requirement: a Port only ever succeeds on a tile that touches
+  // water (Game.buildBlockReason). Up to PORT_SITE_SAMPLES of p's coastal
+  // tiles, spread evenly round its border, each scored by the gold a ship
+  // from there would average: every Port p could trade with on the same body
+  // of water, weighted by level as Game.tradingPorts weights its pick, at
+  // Game.tradeShipGold for the straight-line distance (the sea route is at
+  // least that long). A Factory in reach adds a little, since the Port then
+  // takes trains too; hostile land close by takes some away. Before anyone
+  // else has a Port the biggest body of water wins. -1 when no stretch of p's
+  // coast is worth one (see PORT_MIN_WATER).
+  //
+  // Draws nothing from Game.rng: p.borderTiles is walked in its insertion
+  // order, which every client shares.
+  portSite(p) {
+    const coast = [];
+    for (const t of p.borderTiles) if (GameMap.isCoastal(t)) coast.push(t);
+    if (!coast.length) return -1;
+
+    const partners = [];
+    for (const b of Game.buildings.values()) {
+      if (b.type !== 'port' || !b.built) continue;
+      const o = GameMap.owner[b.tile];
+      if (o < 0 || o === p.id || !Game.players[o].alive || !Game.canTrade(p.id, o)) continue;
+      if (Game.fog && !Game.isDiscovered(p.id, b.tile)) continue;
+      partners.push({ b, seas: this.seasAt(b.tile) });
+    }
+
+    const ws = this.waterSizes();
+    const w = GameMap.width, h = GameMap.height, r = this.PORT_HOSTILE_RADIUS, d = Math.round(r * 0.7);
+    const ring = [r, 0, d, d, 0, r, -d, d, -r, 0, -d, -d, 0, -r, d, -d];
+    const soon = Game.drill ? Game.drillRadius(Game.ticks + this.DRILL_BUILD_HORIZON * Game.TICKS_PER_SEC) : 0;
+    const stride = Math.max(1, Math.floor(coast.length / this.PORT_SITE_SAMPLES));
+    let best = -1, bestScore = 0;
+    for (let i = 0; i < coast.length; i += stride) {
+      const t = coast[i];
+      if (Game.structureTooClose(t)) continue;
+      if (Game.drill && !Game.drillInside(t, soon)) continue;
+      const seas = this.seasAt(t);
+      let gold = 0, levels = 0, water = 0;
+      for (const c of seas) water = Math.max(water, ws.sizes[c] / ws.total);
+      for (const { b, seas: theirs } of partners) {
+        if (!seas.some(c => theirs.includes(c))) continue;
+        gold += b.level * Game.tradeShipGold(Game.manhattanDist(t, b.tile));
+        levels += b.level;
+      }
+      if (!levels && water < this.PORT_MIN_WATER) continue;
+
+      const x = t % w, y = (t / w) | 0;
+      let hostile = 0;
+      for (let k = 0; k < ring.length; k += 2) {
+        const rx = x + ring[k], ry = y + ring[k + 1];
+        if (rx < 0 || ry < 0 || rx >= w || ry >= h) continue;
+        const o = GameMap.owner[ry * w + rx];
+        if (o >= 0 && o !== p.id && !Game.areAllied(p.id, o)) hostile++;
+      }
+      // `water` (under 1) only separates sites with no partner yet.
+      const score = ((levels ? gold / levels : 0) + water) *
+        (this.railValue(p, 'port', t) === 2 ? 1.15 : 1) * (1 - hostile / 16);
+      if (score > bestScore) { bestScore = score; best = t; }
+    }
+    return best;
   },
 
   // Picks a sensible coastal destination to send a new Warship toward — not
@@ -1112,14 +1672,6 @@ const AI = {
       if (water >= 0) return water;
     }
     return -1;
-  },
-
-  // Whether p owns any shore at all. Coastal tiles always touch non-owned
-  // water, so walking borderTiles is enough and far cheaper than p.tiles
-  // for a big landlocked nation.
-  hasCoast(p) {
-    for (const t of p.borderTiles) if (GameMap.isCoastal(t)) return true;
-    return false;
   },
 
   warshipCount(p) {

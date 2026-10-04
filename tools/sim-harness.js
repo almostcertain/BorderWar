@@ -889,7 +889,9 @@ function fogSpawnMultiHuman() {
 }
 
 function fogOff() {
-  const cfg = { name: 'fog-off-small-12345', size: 'small', seed: 12345, bots: 8, tribes: 12, ticks: 6000 };
+  // Long enough for the first nukes, and the alliance one of them breaks
+  // (about tick 6400 in this match): the coverage check below needs both.
+  const cfg = { name: 'fog-off-small-12345', size: 'small', seed: 12345, bots: 8, tribes: 12, ticks: 9000 };
   const { Game, Hash } = boot(cfg);
   const check = where => {
     for (const key of ['visionGroupOf', 'visionCells', 'visionStamped', 'visionShare', 'visionMet', 'visionCount']) {

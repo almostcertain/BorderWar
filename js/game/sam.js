@@ -149,11 +149,25 @@ Object.assign(Game, {
         if (b.samQueue.length >= b.level) break;
         b.samQueue.push(this.elapsed);
         this.nukes.splice(this.nukes.indexOf(c.nuke), 1);
+        this.noteNukeShot(c.nuke);
         this.samFlashes.push({ x: c.x, y: c.y, born: this.elapsed });
       }
     }
     for (let i = this.samFlashes.length - 1; i >= 0; i--) {
       if (this.elapsed - this.samFlashes[i].born > this.SAM_FLASH_FX_DURATION) this.samFlashes.splice(i, 1);
     }
+  },
+
+  // What a Nation knows of its own bombs lost to SAMs, kept on the player as
+  // `nukeLoss`: the tile the last one was aimed at, when it was shot down,
+  // and how many aimed at that tile went the same way within one
+  // SAM_COOLDOWN. AI.reviewStrike reads it to tell a strike that was shot
+  // down from one that landed. MIRV warheads are not strikes of their own.
+  noteNukeShot(nuke) {
+    const p = this.players[nuke.ownerId];
+    if (!p || !p.isBot || nuke.nukeType === 'mirvwarhead') return;
+    const last = p.nukeLoss;
+    const again = last && last.dst === nuke.dst && this.elapsed - last.at < this.SAM_COOLDOWN;
+    p.nukeLoss = { dst: nuke.dst, n: again ? last.n + 1 : 1, at: this.elapsed };
   }
 });
