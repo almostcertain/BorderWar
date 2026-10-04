@@ -388,6 +388,7 @@ Object.assign(Game, {
         // Fog of war: a nuke hit tells the victim who launched it.
         if (this.fog) this.markMet(owner, nuke.ownerId);
       }
+      this.removeStationRails(b);
       this.buildings.delete(tile);
     }
 

@@ -322,6 +322,7 @@ Object.assign(Game, {
           if (b.built) op.units[b.type] = Math.max(0, this.unitsOwned(op, b.type) - b.level);
           else op.unitsPending[b.type] = Math.max(0, this.unitsPending(op, b.type) - 1);
         }
+        this.removeStationRails(b);
         this.buildings.delete(t);
       }
       if (o >= 0) { lost[o]++; this.setOwner(t, NEUTRAL); }
