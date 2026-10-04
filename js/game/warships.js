@@ -27,8 +27,8 @@ Object.assign(Game, {
   // is stored the same shape a boat/trade ship already is — {path, pos} — so
   // Game.pathPos below reads all three uniformly.
   WARSHIP_MAX_HEALTH: 1000,               // Config.ts UnitType.Warship.maxHealth
-  WARSHIP_TARGET_RANGE: 130,              // warshipTargettingRange() — engagement/detection radius
-  WARSHIP_PATROL_RANGE: 100,              // warshipPatrolRange() — wander radius around patrolTile
+  WARSHIP_TARGET_RANGE: 65,               // half of warshipTargettingRange() — engagement/detection radius
+  WARSHIP_PATROL_RANGE: 50,               // half of warshipPatrolRange() — wander radius around patrolTile
   WARSHIP_SHELL_COOLDOWN: 2,              // warshipShellAttackRate()=20 ticks @ 10 ticks/sec
   // No OpenFront equivalent — its ShellExecution resolves damage the instant
   // it fires. Slowed well below the "one shell in flight" pace (130/75≈1.73s)
