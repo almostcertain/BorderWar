@@ -2878,6 +2878,22 @@ const UI = {
     this._hidePreLobbyChrome();
   },
 
+  // Join Open Game: the menu's hero card is hidden once connected, so carry
+  // its already-painted map into the lobby panel.
+  showJoinLobbyMap() {
+    const src = document.getElementById('quickJoinMapCanvas');
+    const dst = document.getElementById('joinLobbyMapCanvas');
+    const wrap = document.getElementById('joinLobbyMap');
+    if (document.getElementById('quickJoinMap').classList.contains('hidden')) {
+      wrap.classList.add('hidden');
+      return;
+    }
+    dst.getContext('2d').drawImage(src, 0, 0);
+    document.getElementById('joinLobbyMapNote').textContent =
+      document.getElementById('quickJoinMapNote').textContent;
+    wrap.classList.remove('hidden');
+  },
+
   // Once connected to a lobby (host or join), the other ways to start a
   // match no longer make sense to show — clicking the hero "Join Open Game"
   // button or another mode tab wouldn't leave this lobby, just show a
@@ -2904,6 +2920,7 @@ const UI = {
     document.getElementById('hostLobby').classList.add('hidden');
     document.getElementById('hostCreateBtn').classList.remove('hidden');
     document.getElementById('joinLobby').classList.add('hidden');
+    document.getElementById('joinLobbyMap').classList.add('hidden');
     document.getElementById('joinBtn').classList.remove('hidden');
     document.getElementById('publicLobbyBrowser').classList.remove('hidden');
     document.getElementById('nameRow').classList.remove('hidden');

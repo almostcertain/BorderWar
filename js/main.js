@@ -331,6 +331,7 @@
     document.querySelector('.modeTab[data-mode="join"]').click();
     joinLobby(entry.gameID);
     fromQuickJoin = true;
+    UI.showJoinLobbyMap();
   });
 
   // Starts as soon as the menu does — the hero card has nothing to show

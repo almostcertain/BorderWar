@@ -421,6 +421,11 @@
 
       <div id="joinLobby" class="hidden">
         <div id="joinStatus" class="lobbyStatus"></div>
+        <!-- Copy of the main menu's open-game map, shown after Join Open Game. -->
+        <div id="joinLobbyMap" class="mapPreview hidden">
+          <canvas id="joinLobbyMapCanvas" width="400" height="200"></canvas>
+          <span id="joinLobbyMapNote" class="mapPreviewNote"></span>
+        </div>
         <div class="lobbyLabel">Players <span id="joinPlayerCount"></span></div>
         <ul id="joinRoster" class="lobbyRoster"></ul>
         <div id="joinWaiting">Waiting for the host to start…</div>
