@@ -383,7 +383,7 @@ html, body {
 
 /* --- Pause button (singleplayer) ------------------------------------------ */
 
-#pauseBtn {
+#pauseBtn, #musicBtn {
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 700;
@@ -395,7 +395,9 @@ html, body {
   white-space: nowrap;
 }
 
-#pauseBtn:active { filter: brightness(0.85); }
+#musicBtn { padding: 6px 8px; }
+
+:is(#pauseBtn, #musicBtn):active { filter: brightness(0.85); }
 
 #pauseBtn.paused {
   background: rgba(255, 190, 70, 0.95);
@@ -1553,12 +1555,24 @@ body:has(#overlay.hidden) #optionsBtn { display: none; }
 
 #perfStats {
   position: fixed;
-  left: 8px;
+  left: calc(env(safe-area-inset-left) + 8px);
   bottom: 6px;
   z-index: 8;
   font: 11px/1 ui-monospace, Menlo, monospace;
   opacity: 0.7;
   pointer-events: none;
+}
+/* Phones: the rounded screen corners clip a corner readout, so it sits bottom
+   centre instead, in the strip between the home indicator and the HUD. */
+@media (max-width: 700px) {
+  #perfStats {
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: max(6px, calc(env(safe-area-inset-bottom) - 12px));
+    white-space: nowrap;
+  }
+  /* No home-indicator strip (Android): make the room under the HUD instead. */
+  body:has(#perfStats:not(.hidden)) #hud { padding-bottom: max(calc(env(safe-area-inset-bottom) + 6px), 22px); }
 }
 body:has(#overlay:not(.hidden)) #perfStats { visibility: hidden; }
 
