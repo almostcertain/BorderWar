@@ -194,6 +194,7 @@ const UI = {
     });
 
     document.getElementById('pauseBtn').addEventListener('click', () => this.togglePause());
+    document.getElementById('musicBtn').addEventListener('click', () => this.toggleMusic());
 
     document.getElementById('debugToggle').addEventListener('click', () => {
       this.debugOpen = !this.debugOpen;
@@ -216,6 +217,7 @@ const UI = {
         return;
       }
       if (e.key === 'p' || e.key === 'P') { this.togglePause(); return; }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'm') { this.toggleMusic(); return; }
       if (Replay.active) return; // watching: nothing to build
       const u = Game.UNITS.find(x => x.hotkey === e.key);
       if (u) this.togglePlacing(u.type);
@@ -238,6 +240,13 @@ const UI = {
     if (Replay.active) { Replay.setPaused(Replay.ended() ? false : !Replay.paused); return; }
     if (!Transport.isLocal || !Game.players[Game.me] || Game.winnerId !== null) return;
     LocalServer.setPaused(!LocalServer.paused);
+  },
+
+  // In a match only: the menu has no music to mute, and its own Options
+  // checkbox for the same setting.
+  toggleMusic() {
+    if (!document.getElementById('overlay').classList.contains('hidden')) return;
+    Options.set('musicOn', !Options.get('musicOn'));
   },
 
   // Build-bar icon per unit type, where the file name differs from the type.
@@ -1224,6 +1233,13 @@ const UI = {
     if (pauseBtn._paused !== LocalServer.paused) {
       pauseBtn._paused = LocalServer.paused;
       pauseBtn.innerHTML = LocalServer.paused ? iconHtml('play') + ' Resume' : iconHtml('pause') + ' Pause';
+    }
+
+    const musicBtn = document.getElementById('musicBtn');
+    const musicOn = Options.get('musicOn');
+    if (musicBtn._on !== musicOn) {
+      musicBtn._on = musicOn;
+      musicBtn.innerHTML = iconHtml(musicOn ? 'music' : 'music-off');
     }
 
     this.syncBuildBar();

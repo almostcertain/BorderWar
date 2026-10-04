@@ -57,7 +57,7 @@ Use it to jump to the right file; grep for the method name rather than reading b
 - `js/map.js` (sim): map generation, world-map loading, terrain, rivers, spawns. `js/noise.js`: seeded noise.
 - `js/render.js`: canvas drawing: tiles and territory reveal, camera, structures and icons, placement previews, fronts, boats, labels.
 - `js/ui.js`: DOM panels: build bar, hover panel, `onTap` (click actions), leaderboard, alerts, banners, end screen, lobby screens.
-- `js/input.js` mouse, keys, touch · `js/radial.js` right-click nation menu · `js/fx.js` client-only effects · `js/replay.js` match recording, replay storage and playback (client-only, `docs/replays.md`) · `js/main.js` boot, game loop, multiplayer lobby wiring.
+- `js/input.js` mouse, keys, touch · `js/radial.js` right-click nation menu · `js/fx.js` client-only effects · `js/music.js` generative background music (Web Audio, client-only) · `js/replay.js` match recording, replay storage and playback (client-only, `docs/replays.md`) · `js/main.js` boot, game loop, multiplayer lobby wiring.
 - `js/net/`: `protocol.js` intent shapes and validation · `executor.js` intent to sim (the only mutation path) · `runner.js` turn queue · `transport.js` · `localserver.js` · `hash.js` state digest · `worldmap.js` world map fetch.
 - `server/`: `index.js` HTTP and WS · `gamemanager.js` · `gameserver.js` lobby and turn loop · `client.js` · `log.js`.
 - `tools/`: `sim-harness.js` goldens · `sim-profile.js` headless tick profiler.
