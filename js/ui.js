@@ -203,6 +203,7 @@ const UI = {
     document.getElementById('debugNukeAtom').addEventListener('click', () => this.armDebugNuke('atombomb'));
     document.getElementById('debugNukeHydrogen').addEventListener('click', () => this.armDebugNuke('hydrogenbomb'));
     document.getElementById('debugPeace').addEventListener('click', () => this.armDebugPeace());
+    document.getElementById('debugForfeit').addEventListener('click', () => this.debugForfeit());
 
     // Hotkeys, one digit per structure in bar order, and Escape to disarm.
     // Guarded on the focused element so typing a bot count in the start menu
@@ -477,6 +478,18 @@ const UI = {
 
   // Arms the debug "peace offer" tool: the next tap on a nation makes that
   // nation send you an alliance request. See onTap's 'debugpeace' branch.
+  // DEBUG BYPASS #4 — singleplayer only, same reasoning as the gold buttons.
+  // Gives up the player's land and eliminates them on the spot, which brings
+  // up the defeat screen without playing a match out. The bots carry on.
+  debugForfeit() {
+    if (!Transport.isLocal || !Game.running) return;
+    const me = Game.players[Game.me];
+    if (!me || !me.alive) return;
+    for (const tile of [...me.tiles]) Game.setOwner(tile, NEUTRAL);
+    me.troops = 0;
+    Game.eliminatePlayer(me);
+  },
+
   armDebugPeace() {
     if (!Game.running) return;
     // DEBUG BYPASS #3 — singleplayer only, same reasoning as armDebugNuke.
