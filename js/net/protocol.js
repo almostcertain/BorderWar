@@ -75,7 +75,7 @@ const Protocol = {
   // Which Game.* method that becomes is the Executor's business (MP-1.2).
   UNIT_TYPES: [
     'city', 'factory', 'port', 'fort', 'warship',
-    'silo', 'atombomb', 'hydrogenbomb', 'sam', 'mirv', 'scout', 'drill'
+    'silo', 'atombomb', 'hydrogenbomb', 'sam', 'mirv', 'scout', 'drill', 'radio'
   ],
 
   // The procedural generator's lobby knobs, carried as config.mapGen on

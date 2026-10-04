@@ -47,7 +47,7 @@ if (only && mode === 'neutral') {
 // NEUTRAL_ALLOWED with a reason.
 const neutralDir = path.join(root, 'tools/.neutral');
 const NEUTRAL_ALLOWED = [
-  'UNITS' // fog task 5: the table gained the Scout entry, which a fog-off match can never buy
+  'UNITS' // fog tasks 5 and 11: the table gained the Scout and Radio Tower entries, which a fog-off match can never buy
 ];
 function keyDigests(Game) {
   const omitted = new Set(Game.COSMETIC_STATE);
@@ -422,8 +422,12 @@ function fogBotWatch(sim, name) {
 function fogBotScoutEnd(sim, name) {
   const { Game, AI } = sim;
   const fail = msg => { throw new Error(`FOG BOTS ${name}: ${msg}`); };
-  const out = { scoutNations: 0, finished: 0, writtenOff: 0, afloat: 0 };
+  const out = { scoutNations: 0, finished: 0, writtenOff: 0, afloat: 0, radioTowers: 0 };
   for (const p of Game.players) {
+    // Radio Towers (task 11): only a Nation with no ocean shore buys them.
+    const towers = Game.unitsBuilt(p, 'radio');
+    if (towers > AI.RADIO_CAP) fail(`player ${p.id} built ${towers} Radio Towers`);
+    out.radioTowers += towers;
     const st = p.aiScout;
     if (!st) continue;
     if (!p.isBot) fail(`player ${p.id}, not a Nation, has scouting state`);
@@ -534,7 +538,7 @@ function fogBotsOff() {
   const fail = msg => { throw new Error(`FOG OFF BOTS: ${msg}`); };
   Game.init(Hash._syntheticGameStartInfo(cfg), 0);
   if (!Game.chooseSpawn(Hash.firstLegalSpawn())) fail('no legal human spawn');
-  for (const name of ['fogCoast', 'fogCoastStep', 'scoutThink', 'scoutPoll', 'scoutTarget', 'scoutWriteOff', 'buyScout', 'scoutLaunchWater', 'scoutCap', 'strangerDecision']) {
+  for (const name of ['fogCoast', 'fogCoastStep', 'scoutThink', 'scoutPoll', 'scoutTarget', 'scoutWriteOff', 'buyScout', 'scoutLaunchWater', 'scoutCap', 'strangerDecision', 'buyRadio', 'radioSite', 'hasOceanCoast']) {
     if (typeof AI[name] !== 'function') fail(`AI.${name} is missing`);
     AI[name] = () => fail(`AI.${name} was reached in a fog-off match`);
   }
@@ -1601,6 +1605,78 @@ function fogGatingOff() {
   console.log('fog-gating off: no contact needed in a fog-off match: ok');
 }
 
+// --- `fog`: the Radio Tower (fog task 11) -----------------------------------
+// Placed through the ordinary build intent on the builder's own land. Shows
+// nothing until it finishes, then every cell of its disc at once, and is
+// refused where there is nothing left to show. Bots buy one only without an
+// ocean shore. A fog-off match can hold none.
+function fogRadio() {
+  const { Game, GameMap, Protocol: P, expect, act, nations, tileOf } = fogGatingHarness({ name: 'fog-radio', size: 'small', seed: 12345, bots: 8, tribes: 12, fogOfWar: true });
+  const AI = Game.constructor.constructor('return AI')();
+  const R = Game.VISION_SIGHT_RADIO, human = Game.players[0];
+  const def = Game.unitDef('radio');
+  expect(def && def.fogOnly && !def.action && !def.upgradable && def.hotkey === undefined, 'the Radio Tower entry is not a fogOnly, non-action, non-upgradable structure without a hotkey');
+  const count = () => Game.visionCount[Game.visionGroupOf[0]];
+  const site = tileOf(0);
+  const hidden = Game.visionHiddenAround(0, site, R);
+  expect(hidden > 0, 'the human has nothing left to uncover at the start');
+
+  human.gold = 0;
+  expect(Game.buildBlockReason(0, 'radio', site) === 'Not enough gold' && !act(0, P.intent.buildUnit('radio', site)), 'a tower was sold for no gold');
+  human.gold = 1000000;
+  const foreign = tileOf(nations().find(id => id !== 0));
+  expect(Game.buildBlockReason(0, 'radio', foreign) === 'Your own land only' && !act(0, P.intent.buildUnit('radio', foreign)), 'a tower went up on land the builder does not own');
+  expect(Game.unitCost(human, 'radio') === 50000, `the first tower costs ${Game.unitCost(human, 'radio')}`);
+
+  let before = count();
+  expect(act(0, P.intent.buildUnit('radio', site)), 'the build intent was refused');
+  const b = Game.buildings.get(site);
+  expect(b && b.type === 'radio' && !b.built && human.gold === 950000, 'the tower was not placed and paid for');
+  expect(count() === before && Game.visionHiddenAround(0, site, R) === hidden, 'a tower under construction revealed something');
+  expect(Game.unitCost(human, 'radio') === 100000, 'the second tower is not priced on the linear curve');
+  for (let i = 0; i < def.buildTime * Game.TICKS_PER_SEC + 5 && !b.built; i++) Game.tick();
+  expect(b.built && GameMap.owner[site] === 0, 'the tower did not finish while the human held it');
+  expect(Game.visionHiddenAround(0, site, R) === 0, 'the finished tower left part of its disc undiscovered');
+  expect(count() - before >= hidden, `the tower uncovered ${count() - before} cells, fewer than the ${hidden} that were hidden`);
+  expect(Game.unitsOwned(human, 'radio') === 1 && Game.unitsPending(human, 'radio') === 0, 'the tower is not counted as built');
+
+  // Nothing left to show from here, so a second one is refused and costs nothing.
+  let spare = -1;
+  for (const t of human.tiles) if (!Game.buildings.has(t) && Game.visionHiddenAround(0, t, R) === 0) { spare = t; break; }
+  expect(spare >= 0, 'no free tile inside the uncovered disc');
+  const gold = human.gold;
+  expect(Game.buildBlockReason(0, 'radio', spare) === 'Nothing left to uncover here' && !act(0, P.intent.buildUnit('radio', spare)) && human.gold === gold, 'a tower that would show nothing was sold');
+  expect(!Game.canUpgrade(0, site), 'a Radio Tower can be upgraded');
+
+  // Bots: a Nation on the ocean leaves towers alone; one with no ocean shore
+  // builds one on its border, one at a time, and draws nothing from the rng.
+  const bot = Game.players.find(p => p.isBot && !p.isTribe && p.alive && p.tiles.size > 0 && AI.hasOceanCoast(p) && AI.radioSite(p) >= 0);
+  expect(!!bot, 'no coastal Nation with somewhere to put a tower');
+  bot.gold = 1000000;
+  const rng = Game.rng;
+  Game.rng = () => { throw new Error('FOG GATING: buyRadio drew from Game.rng'); };
+  AI.buyRadio(bot);
+  expect(Game.unitsPending(bot, 'radio') === 0, 'a Nation on the ocean bought a Radio Tower');
+  const realCoast = AI.hasOceanCoast;
+  AI.hasOceanCoast = () => false;
+  AI.buyRadio(bot);
+  let tower = null;
+  for (const x of Game.buildings.values()) if (x.type === 'radio' && GameMap.owner[x.tile] === bot.id) tower = x;
+  expect(tower && Game.unitsPending(bot, 'radio') === 1 && bot.borderTiles.has(tower.tile), 'a landlocked Nation did not put a tower on its border');
+  expect(Game.visionHiddenAround(bot.id, tower.tile, R) >= AI.RADIO_MIN_CELLS, 'the tower the Nation built uncovers too little');
+  AI.buyRadio(bot);
+  expect(Game.unitsPending(bot, 'radio') === 1, 'a Nation started a second tower before the first was finished');
+  AI.hasOceanCoast = realCoast;
+  Game.rng = rng;
+  console.log(`fog-radio: gold, own land, linear price, nothing shown until built, whole disc on completion (${hidden} cells), refused where nothing is left, bots only when landlocked: ok`);
+
+  const off = fogGatingHarness({ name: 'fog-radio-off', size: 'small', seed: 12345, bots: 8, tribes: 12 });
+  off.Game.players[0].gold = 1000000;
+  off.expect(off.Game.buildBlockReason(0, 'radio', off.tileOf(0)) === 'Fog of war matches only' && !off.act(0, off.Protocol.intent.buildUnit('radio', off.tileOf(0))), 'a fog-off match sold a Radio Tower');
+  off.expect(off.Game.visionHiddenAround(0, off.tileOf(0), R) === 0, 'visionHiddenAround answers in a fog-off match');
+  console.log('fog-radio off: refused in a fog-off match: ok');
+}
+
 function fogGating() {
   fogGatingDiplomacy();
   fogGatingDonate();
@@ -1614,6 +1690,7 @@ function runFog() {
   fogOff();
   fogRules();
   fogGating();
+  fogRadio();
   fogSpawnControl();
   fogSpawnMultiHuman();
   fogScoutsOff();

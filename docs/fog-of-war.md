@@ -1,8 +1,7 @@
 # Fog of war (design)
 
-Status: **built on the `feature/fog-of-war` branch, not yet playtested by a
-person.** Tasks 1 to 10 are done; 11 (Radio Tower) is a follow-up and not
-started. No ticket numbers. Where the build differs from the
+Status: **built and on `main`, not yet playtested by a person.** Tasks 1 to
+11 are done (11, the Radio Tower, was added afterwards). No ticket numbers. Where the build differs from the
 design below, "As built" near the end says how.
 
 A match option. When it is on, the map starts black, each nation sees only what
@@ -20,7 +19,7 @@ off, the game plays exactly as it does today.
 | Spawning | Random and fixed when fog is on. Nobody picks a spawn. The countdown is 5 seconds. |
 | Nukes | Can be fired into undiscovered areas. The blast reveals nothing. |
 | Bots | Bound by the same fog as humans. |
-| Radio Tower | Planned follow-up: a cheap building that reveals an area around it, mainly for landlocked nations. Until it exists, a landlocked nation cannot explore beyond its border; that is accepted for the first version. |
+| Radio Tower | A cheap building that reveals a wide area around it once, when it finishes. Mainly for landlocked nations, which cannot launch Scouts. 50k for the first, 50k more for each one after, capped at 250k. |
 | Shared vision | Teammates always share. Allies share while allied and keep what they learned. |
 | Contact | One-sided. Meeting a nation does not make it meet you. Allies share the map but not their contacts. |
 | Trade | Ports only trade between two nations that have both met each other. Rail income inside your own network is unaffected. |
@@ -38,11 +37,10 @@ permanent.
 ### What reveals the map
 
 - **Your territory**, plus a sight radius beyond your border. Expanding on land
-  reveals land. This is the only source a landlocked nation has until the
-  Radio Tower exists.
+  reveals land.
 - **Scouts**, in a radius around the scout as it sails.
 - **Warships**, in a smaller radius around the warship as it sails.
-- **Radio Towers** (follow-up), in a larger radius around the tower, once, when
+- **Radio Towers**, in a larger radius around the tower, once, when
   construction finishes.
 - **Allies and teammates**, as above.
 
@@ -155,8 +153,6 @@ anyone.
   a weaker early economy than fog-off ones. Rail income from your own cities
   and factories still works from the start. Trade ships are still not drawn
   in the fog.
-- **Landlocked nations cannot explore** beyond their border sight until the
-  Radio Tower follow-up exists.
 - **Scouts know the way.** A scout's route is computed on the real map, so it
   steers around continents the player has not seen. The player only learns
   what is revealed along the route.
@@ -364,9 +360,9 @@ Much of the bot logic is already border-based (`borderTargets`, `think`,
   remains, up to the cap.
 - New scout routine: pick the nearest undiscovered `coastSample` to the home
   coast, with ties broken by `Game.rng`.
-- Later: build Radio Towers when landlocked.
+- Build Radio Towers when landlocked (see "Radio Tower (task 11)").
 
-### Radio Tower (follow-up)
+### Radio Tower
 
 `UNITS` entry `radio`, placed on owned land through the ordinary `build` path.
 Cheap, not upgradable, only in fog matches. On completion it stamps one large
@@ -556,6 +552,40 @@ Not checked: real Firefox, a rejoin during a fog match, a real touch device,
 and a bot launching a nuke in a two-client match (bot nukes were covered by
 the dual run, 111 launches a run).
 
+### Radio Tower (task 11)
+
+- `UNITS` entry `radio`, last in the table, marked `fogOnly` but not `action`:
+  it goes through the ordinary `build` intent and sits in `Game.buildings`.
+  Hotkey R, fog matches only.
+- **Price.** Linear like the Fort: 50k, 100k, 150k, 200k, then 250k. Builds
+  in 5 seconds. Not upgradable.
+- **The reveal** is one `revealAround` with `VISION_SIGHT_RADIO` (12 cells,
+  about 100 tiles) in `updateConstruction`, when the tower finishes. It goes
+  to whoever owns the tile at that moment, so a tower overrun while it is
+  being built reveals for its captor. A finished tower that is captured
+  changes hands like a City and reveals nothing more. Allies get the reveal
+  through the usual sharing.
+- **Refused where it would show nothing.** `buildBlockReason` returns
+  "Nothing left to uncover here" when every cell of the disc is already
+  discovered (`Game.visionHiddenAround`). The answer depends only on the
+  builder's own discovered area, so it leaks nothing. With fog off the reason
+  is "Fog of war matches only".
+- **Placement ghost.** A dashed ring shows the disc the tower would uncover.
+  It is centred on the vision cell, not the tile, because discovery is per
+  cell.
+- **Bots** (`AI.buyRadio`). Only a nation with no shore on the ocean buys
+  towers; the rest explore by Scout. One at a time, at most 3 a match, not
+  held back by the savings reserve. The site is the best of about 8 border
+  tiles spread round the border, and nothing is bought unless it uncovers at
+  least 60 cells. No rng is drawn. The generic build loop skips `fogOnly`
+  entries, so a fog-off match never reaches any of this.
+- **Checks.** `sim-harness.js fog` has a `fog-radio` test (price, own land,
+  nothing shown until built, the whole disc on completion, the refusal, bots
+  only when landlocked, refused with fog off), and each scenario reports how
+  many towers bots built. `neutral` still passes.
+- Not done: a tower has no use once built, and there is no way to remove one.
+  It keeps its tile and can be captured.
+
 ## Tasks
 
 | # | Task | Files | Depends on |
@@ -570,7 +600,7 @@ the dual run, 111 launches a run).
 | 8 | Hide unmet nations in leaderboard (top 3 always shown), hover, radial, alerts; "Unknown nation" senders; full map for eliminated players | `ui.js`, `radial.js`, `render.js` | 2, 4 |
 | 9 | Bots respect fog and use scouts | `ai.js` | 5, 7 |
 | 10 | Verification: fog-off neutrality, two-client determinism with fog on, large-map performance | `tools/`, `hash.js` | all |
-| 11 | Radio Tower (follow-up) | `structures.js`, `vision.js`, `ui.js`, `render.js`, `ai.js` | 2, 4 |
+| 11 | Radio Tower | `structures.js`, `vision.js`, `protocol.js`, `ui.js`, `render.js`, `ai.js` | 2, 4 |
 
 After tasks 1 and 2, three tracks can run side by side: display (4, 8),
 scouts (5, 6) and rules and bots (7, 9). Tasks 2 and 3 both edit `core.js`,

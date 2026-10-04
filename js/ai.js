@@ -589,7 +589,10 @@ const AI = {
       // Silo has no flag: it's an ordinary territory-bound structure like
       // City/Factory/Port/Fort, so it rides this generic loop and
       // buildSite(p) (the ternary below's fallback) same as they do.
-      if (u.action) continue;
+      // fogOnly (the Radio Tower; the Scout is `action` as well) has its own
+      // purchase call too — buyRadio, below — and with fog off must not even
+      // reach buildSite, which draws from Game.rng.
+      if (u.action || u.fogOnly) continue;
       if (consideredTypes.has(u.type)) continue;
       const pool = u.costGroup || [u.type];
       for (const t of pool) consideredTypes.add(t);
@@ -680,9 +683,60 @@ const AI = {
 
     // Fog of war: a Scout, once scoutThink has somewhere to send one. After
     // the build order above, so it is paid for out of what that leaves.
-    if (Game.fog) { this.scoutPoll(p); this.buyScout(p); }
+    if (Game.fog) { this.scoutPoll(p); this.buyScout(p); this.buyRadio(p); }
 
     this.maybeNuke(p);
+  },
+
+  // --- Fog of war: Radio Towers (docs/fog-of-war.md) -------------------------
+  // economy()'s hook, fog matches only. A nation with no shore on the ocean
+  // can launch no Scout, so its border sight is all it ever sees; a Radio
+  // Tower is its way past that. Nations that do reach the ocean leave towers
+  // alone and explore by Scout.
+  //
+  // One tower at a time, RADIO_CAP in a match. The site is whichever of up to
+  // RADIO_SITE_SAMPLES border tiles, spread evenly round the border, has the
+  // most undiscovered cells in the tower's disc — the border because that is
+  // where the disc reaches furthest into the black, and it does not matter
+  // that a border tower is soon overrun: what it showed is kept. Nothing is
+  // bought unless that best site uncovers at least RADIO_MIN_CELLS. Like the
+  // Scout it is not held back by the savings reserve: it is a twentieth of a
+  // Silo, and a nation banking for one would otherwise stay blind all match.
+  //
+  // Draws nothing from Game.rng: p.borderTiles is walked in its insertion
+  // order, which every client shares.
+  RADIO_CAP: 3,
+  RADIO_SITE_SAMPLES: 8,
+  RADIO_MIN_CELLS: 60,
+
+  buyRadio(p) {
+    if (Game.unitsPending(p, 'radio') > 0 || Game.unitsBuilt(p, 'radio') >= this.RADIO_CAP) return;
+    if (p.gold < Game.unitCost(p, 'radio')) return;
+    if (this.hasOceanCoast(p)) return;
+    const tile = this.radioSite(p);
+    if (tile >= 0) Game.build(p.id, 'radio', tile);
+  },
+
+  // Whether any of p's land touches the ocean (the largest body of water,
+  // see fogCoast) — a lake shore launches no Scout that gets anywhere.
+  hasOceanCoast(p) {
+    const ocean = this.fogCoast().ocean, wc = GameMap.waterComponentId, nb = Game.abuf;
+    for (const t of p.borderTiles) {
+      const n = GameMap.neighbors(t, nb);
+      for (let k = 0; k < n; k++) if (wc[nb[k]] === ocean) return true;
+    }
+    return false;
+  },
+
+  radioSite(p) {
+    const step = Math.max(1, Math.floor(p.borderTiles.size / this.RADIO_SITE_SAMPLES));
+    let best = -1, bestHidden = this.RADIO_MIN_CELLS - 1, i = 0;
+    for (const t of p.borderTiles) {
+      if (i++ % step !== 0 || Game.buildings.has(t)) continue;
+      const hidden = Game.visionHiddenAround(p.id, t, Game.VISION_SIGHT_RADIO);
+      if (hidden > bestHidden) { bestHidden = hidden; best = t; }
+    }
+    return best;
   },
 
   // A bot with a ready Silo and a warhead's worth of gold banked (see

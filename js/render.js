@@ -1231,6 +1231,31 @@ const Render = {
         ctx.arc(px, mastTop + r * 0.1, r * 0.42, Math.PI * 1.15, Math.PI * 1.85);
         ctx.stroke();
         ctx.lineCap = 'butt';
+      } else if (type === 'radio') {
+        // Radio Tower (fog matches): a tapering mast with a beacon on top and
+        // a wave arc either side of it — the only glyph with anything
+        // radiating from it, which is the whole of what the building does.
+        const top = py - r * 0.3, bot = py + r * 0.66, halfW = r * 0.3;
+        ctx.beginPath();
+        ctx.moveTo(px, top);
+        ctx.lineTo(px + halfW, bot);
+        ctx.lineTo(px - halfW, bot);
+        ctx.closePath();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(px, top - r * 0.08, r * 0.13, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = Math.max(1.2, r * 0.13);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineCap = 'round';
+        const waveY = top - r * 0.08, waveR = r * 0.48;
+        ctx.beginPath();
+        ctx.arc(px, waveY, waveR, -Math.PI * 0.25, Math.PI * 0.25);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(px, waveY, waveR, Math.PI * 0.75, Math.PI * 1.25);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
       } else {
         const bw = r * 0.22, gap = r * 0.12;
         const heights = [r * 0.5, r * 0.85, r * 0.62];
@@ -1253,7 +1278,7 @@ const Render = {
   // held still for STRUCT_SPRITE_SETTLE frames; until then this returns null
   // and the caller draws directly. A new radius drops the old sprites.
   STRUCT_SPRITE_SETTLE: 10,
-  STRUCT_TYPE_IDX: { city: 0, factory: 1, fort: 2, port: 3, silo: 4, sam: 5 },
+  STRUCT_TYPE_IDX: { city: 0, factory: 1, fort: 2, port: 3, silo: 4, sam: 5, radio: 6 },
   structSprites: new Map(),
   structSpriteR: -1,
   structSpriteSteady: 0,
@@ -1758,6 +1783,26 @@ const Render = {
       ctx.lineWidth = Math.max(1, this.dpr * 1.5);
       ctx.strokeStyle = 'rgba(139, 224, 139, 0.55)';
       ctx.stroke();
+    }
+
+    // Radio Tower placement (fog matches): the disc it would uncover once
+    // built. Discovery is per vision cell, so the ring is centred on the
+    // hovered tile's cell rather than the tile — the same disc
+    // Game.revealAround stamps (radius r + 0.5 cells). Geometry only: it is
+    // drawn over the fog and says nothing about what is under it.
+    if (UI.placing === 'radio') {
+      const C = Game.VISION_CELL, x = tile % w, y = (tile / w) | 0;
+      const cx = ((((x / C) | 0) + 0.5) * C - this.cam.x) * s + cw / 2;
+      const cy = ((((y / C) | 0) + 0.5) * C - this.cam.y) * s + ch / 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, (Game.VISION_SIGHT_RADIO + 0.5) * C * s, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(111, 211, 224, 0.07)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
+      ctx.strokeStyle = 'rgba(111, 211, 224, 0.6)';
+      ctx.setLineDash([6 * this.dpr, 5 * this.dpr]);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     // Warship placement: a click can land anywhere now (Game.resolveWarship

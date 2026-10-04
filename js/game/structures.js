@@ -213,6 +213,23 @@ Object.assign(Game, {
     {
       type: 'drill', name: 'The Drill', icon: '🌀',
       baseCost: 20000000, maxCost: 20000000, buildTime: 0, upgradable: false, flat: true, action: true
+    },
+    // Fog of war's Radio Tower (docs/fog-of-war.md). This game's own unit: a
+    // cheap structure on the builder's own land that uncovers a wide disc of
+    // the map (VISION_SIGHT_RADIO) once, the moment it finishes — see
+    // updateConstruction. It is how a landlocked nation, which can launch no
+    // Scout, looks past its border. Discovery is permanent, so the tower has
+    // done all it ever will by then; it stands on as an ordinary capturable
+    // structure and what it showed survives its loss. LINEAR like Fort
+    // (50k, 100k ... capped at 250k), so carpeting a border with them is a
+    // real spend. Placed through the ordinary buildBlockReason/build path —
+    // no `action` flag — but `fogOnly` like the Scout: refused with fog off,
+    // left out of the build bar, no hotkey, and skipped by AI.economy's
+    // generic loop (AI.buyRadio buys it instead). Last in the table so no
+    // other entry's position moves.
+    {
+      type: 'radio', name: 'Radio Tower', icon: '🗼',
+      baseCost: 50000, maxCost: 250000, buildTime: 5, upgradable: false, linear: true, fogOnly: true
     }
   ],
 
@@ -292,6 +309,15 @@ Object.assign(Game, {
     // nearestOwnedCoastNear), so this only fires for a tap too far inland to
     // snap at all.
     if (type === 'port' && !GameMap.isCoastal(tile)) return 'Ports must be on the coast';
+    // Radio Tower: fog matches only, and only where its disc still holds
+    // something the builder has not discovered — a tower that would show
+    // nothing is gold thrown away, since it does nothing else. That answer
+    // comes from the builder's own discovered set alone, so it gives nothing
+    // away about what the fog hides.
+    if (type === 'radio') {
+      if (!this.fog) return 'Fog of war matches only';
+      if (this.visionHiddenAround(playerId, tile, this.VISION_SIGHT_RADIO) === 0) return 'Nothing left to uncover here';
+    }
     if (p.gold < this.unitCost(p, type)) return 'Not enough gold';
     return null;
   },
@@ -407,6 +433,10 @@ Object.assign(Game, {
         // see the "Rail network & trains" section. An upgrade (the branch
         // below) never re-triggers it.
         this.onStructureCompleted(b);
+        // Fog of war's Radio Tower: its one reveal, to whoever holds the
+        // tile now — a tower overrun mid-build finishes, and reveals, under
+        // its new owner. A finished tower captured later reveals nothing.
+        if (b.type === 'radio') this.revealAround(owner, b.tile, this.VISION_SIGHT_RADIO);
       } else if (b.upgrading) {
         b.progress += this.TICK_DT;
         if (b.progress < b.buildTime) continue;

@@ -163,6 +163,33 @@ Object.assign(Game, {
     return (this.visionMet[b * this.visionWords + (g >>> 5)] & (1 << (g & 31))) !== 0;
   },
 
+  // How many cells of the disc revealAround(playerId, tile, radiusCells)
+  // would stamp are still undiscovered by `playerId`'s group: what a Radio
+  // Tower there would add. 0 with fog off, for a player with no vision group
+  // and for a tile off the map. Reads the group's own discovered set only.
+  visionHiddenAround(playerId, tile, radiusCells) {
+    if (!this.fog || !(tile >= 0 && tile < GameMap.owner.length)) return 0;
+    const g = this.visionGroup(playerId);
+    if (g < 0) return 0;
+    const C = this.VISION_CELL, w = GameMap.width;
+    const cw = this.visionCellsW, ch = this.visionCellsH, W = this.visionWords;
+    const cells = this.visionCells, gw = g >>> 5, gb = 1 << (g & 31);
+    const cx = (tile % w) / C | 0, cy = ((tile / w) | 0) / C | 0;
+    const r = radiusCells, r2 = r * r + r;
+    let hidden = 0;
+    for (let dy = -r; dy <= r; dy++) {
+      const y = cy + dy;
+      if (y < 0 || y >= ch) continue;
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy > r2) continue;
+        const x = cx + dx;
+        if (x < 0 || x >= cw) continue;
+        if (!(cells[(y * cw + x) * W + gw] & gb)) hidden++;
+      }
+    }
+    return hidden;
+  },
+
   // --- Mutators (sim only) ---------------------------------------------------
 
   // Reveals a disc of `radiusCells` cells around `tile` to `playerId`'s group

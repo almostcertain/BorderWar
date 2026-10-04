@@ -72,7 +72,7 @@ const UI = {
   // Hotkeys for entries whose Game.UNITS row carries none (the Scout: its row
   // is sim data and was left alone). 'e' for explore; the digits, P and the
   // WASD pan keys are taken.
-  EXTRA_HOTKEYS: { scout: 'e', drill: 'k' },
+  EXTRA_HOTKEYS: { scout: 'e', drill: 'k', radio: 'r' },
 
   // Puts the attack ratio back to its default and moves the slider handle and
   // label to match. The browser restores a range input's last value on refresh
@@ -219,6 +219,9 @@ const UI = {
       // Only a fog match has the button, so only a fog match has the key.
       else if (Game.fog && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === this.EXTRA_HOTKEYS.scout) {
         this.togglePlacing('scout');
+      }
+      else if (Game.fog && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === this.EXTRA_HOTKEYS.radio) {
+        this.togglePlacing('radio');
       }
       else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === this.EXTRA_HOTKEYS.drill) {
         this.togglePlacing('drill');
@@ -1490,6 +1493,9 @@ const UI = {
         : reason ? reason + ' · Esc to cancel'
         : 'Tap anywhere, even into the dark, to send a Scout from your nearest Port · ' +
           formatGold(Game.unitCost(me, 'scout')) + ' gold · Esc to cancel';
+    } else if (this.placing === 'radio') {
+      hintEl.textContent = 'Tap your own land to place a Radio Tower — it uncovers the map around it once built · ' +
+        formatGold(Game.unitCost(me, 'radio')) + ' gold · ' + Game.unitDef('radio').buildTime + 's to build · Esc to cancel';
     } else if (this.placing === 'atombomb' || this.placing === 'hydrogenbomb' || this.placing === 'mirv') {
       const def = Game.unitDef(this.placing);
       const article = this.placing === 'atombomb' ? 'an' : 'a';
