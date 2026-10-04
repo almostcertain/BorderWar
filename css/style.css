@@ -1423,7 +1423,7 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 #optionsBtn:hover { opacity: 0.8; }
 body:has(#overlay.hidden) #optionsBtn { display: none; }
 
-#optionsOverlay, #accountOverlay {
+#optionsOverlay, #accountOverlay, #installGuide {
   position: fixed;
   inset: 0;
   z-index: 12;
@@ -1522,3 +1522,21 @@ body.noHint #hint:not(.warn) { display: none; }
 #drillHud.danger { animation: nukeAlertPulse 0.9s ease-in-out infinite alternate; }
 #drillHudText { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #drillHudTime { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: #fff; }
+
+/* Home-screen install (js/install.js): menu button and the iOS/Firefox guide. */
+#installBtn {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+#installBtn .ic { width: 16px; height: 16px; }
+#installGuide p { margin: 4px 0 0; font-size: 14px; opacity: 0.85; }
+#installSteps { margin: 0; padding-left: 22px; font-size: 14px; line-height: 1.6; }

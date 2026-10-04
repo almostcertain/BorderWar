@@ -39,7 +39,7 @@ const REPO_ROOT = path.join(__dirname, '..');
 // The only parts of the repo the web server hands out (buildinfo.json is
 // answered separately, below). Add to these if index.html starts loading
 // something from a new place.
-const PUBLIC_FILES = new Set(['index.html', 'version.json', 'LICENSE']);
+const PUBLIC_FILES = new Set(['index.html', 'version.json', 'LICENSE', 'manifest.webmanifest']);
 const PUBLIC_DIRS = new Set(['js', 'css', 'assets', 'maps']);
 
 // Minimal content-type table. Just enough for what index.html's own loader
@@ -52,6 +52,7 @@ const CONTENT_TYPES = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',

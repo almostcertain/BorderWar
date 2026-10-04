@@ -7,6 +7,11 @@
 <meta name="theme-color" content="#0b1220">
 <title>BorderWar</title>
 <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
+<!-- Home-screen install (js/install.js). -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/logo/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="BorderWar">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>
   // Cache-bust every load during dev. The stylesheet is written here, in <head>,
   // already carrying ?v=: it blocks first paint, so the page never renders
@@ -172,12 +177,23 @@
   </form>
 </div>
 
+<div id="installGuide" class="hidden">
+  <div class="panel optionsPanel" role="dialog" aria-label="Add to Home Screen">
+    <h2>Add to Home Screen</h2>
+    <p>Play BorderWar full screen, straight from your home screen:</p>
+    <ol id="installSteps"></ol>
+    <button type="button" id="installClose" class="primaryBtn">Got it</button>
+  </div>
+</div>
+
 <div id="overlay">
   <div class="panel menuPanel">
     <div class="menuCol menuMain">
     <button type="button" id="modeBack" class="linkBtn hidden">‹ Back</button>
     <h1 class="brand"><img class="brandMark" src="assets/logo/shield.svg" alt="" draggable="false">BorderWar</h1>
     <p>Expand across the map. Tap neutral land or an enemy nation to send troops along your border.</p>
+    <!-- Phones and tablets only; js/install.js shows it. -->
+    <button type="button" id="installBtn" class="hidden"><img class="ic" src="assets/logo/favicon.svg" alt="" draggable="false"> Add to Home Screen</button>
 
     <!-- Optional accounts (docs/accounts-auth.md). Stays hidden unless the page
          is served by a server with accounts; UI.renderAccount fills it. -->
@@ -423,7 +439,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'account', 'ui', 'radial', 'menubg', 'options', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'account', 'ui', 'radial', 'menubg', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>
