@@ -172,6 +172,7 @@
   // Transport's own business and the lobby screen is long gone.
   let inLobby = false;
   let lobbyLinkOpened = false; // did this lobby's socket ever open?
+  let fromQuickJoin = false; // entered via the main menu's open-game card
 
   Transport.onStatus = function(status) {
     if (!inLobby) return;
@@ -201,6 +202,12 @@
     iAmHost = false;
     Transport.disconnect();
     UI.hideLobby();
+    // Joined from the main menu's open-game card: return there, not to the
+    // join-by-code form that was opened only to host the lobby panel.
+    if (fromQuickJoin) {
+      fromQuickJoin = false;
+      document.getElementById('modeBack').click();
+    }
     // Back on the menu — the hero card is relevant again regardless of which
     // secondary tab happens to be selected, so this no longer checks which
     // one that is (contrast the old join-tab-only polling this replaced).
@@ -212,6 +219,7 @@
     const username = UI.getPlayerName() || 'Host';
     myRole = 'host';
     iAmHost = false; // confirmed once this connection's own lobby_info arrives
+    fromQuickJoin = false;
     inLobby = true;
     lobbyLinkOpened = false;
     stopLobbyListPolling();
@@ -236,6 +244,7 @@
     if (!code) { UI.setLobbyError('Enter a join code.'); return; }
     myRole = 'join';
     iAmHost = false;
+    fromQuickJoin = false;
     inLobby = true;
     lobbyLinkOpened = false;
     stopLobbyListPolling();
@@ -321,6 +330,7 @@
     // Singleplayer tab doesn't connect into a panel nobody can see.
     document.querySelector('.modeTab[data-mode="join"]').click();
     joinLobby(entry.gameID);
+    fromQuickJoin = true;
   });
 
   // Starts as soon as the menu does — the hero card has nothing to show
@@ -612,10 +622,11 @@
 
     // Battery saver: the sim moves 10 times a second, so drawing at the full
     // display rate mostly repaints the same picture. Draw every other frame
-    // instead, except while the camera is moving, where the lost frames show.
+    // instead, except while the camera is moving or a build is being dragged
+    // off the bar, where the lost frames show.
     if (Options.get('saveBattery')) {
       const cam = Render.cam;
-      if (cam.x !== lastCamX || cam.y !== lastCamY || cam.scale !== lastCamScale) {
+      if (UI.barDrag || cam.x !== lastCamX || cam.y !== lastCamY || cam.scale !== lastCamScale) {
         lastCamX = cam.x; lastCamY = cam.y; lastCamScale = cam.scale;
         lastCamMoveAt = now;
       }
