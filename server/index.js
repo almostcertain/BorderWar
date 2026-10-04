@@ -23,6 +23,7 @@ const path = require('path');
 const WebSocket = require('ws');
 const os = require('os');
 const GameManager = require('./gamemanager');
+const Client = require('./client');
 const log = require('./log');
 const { getBuildInfo } = require('../tools/build-info');
 
@@ -187,7 +188,8 @@ const gameManager = new GameManager({ buildID: JSON.parse(BUILD_INFO).id });
 let admin = null;
 try {
   admin = require('./admin').create({
-    gameManager, wss, log, build: JSON.parse(BUILD_INFO).id, persistHistory: PORT === 8124
+    gameManager, wss, log, build: JSON.parse(BUILD_INFO).id, persistHistory: PORT === 8124,
+    drain: (maxMs) => drain('admin drain requested', maxMs)
   });
 } catch (e) {
   log.warn('admin', 'disabled: ' + (e && e.message || e));
@@ -268,18 +270,69 @@ server.listen(PORT, () => {
 // every tracked client is terminated explicitly first. Only then is it safe
 // to close wss and the underlying HTTP server, whose own close() likewise
 // only waits for in-flight requests/sockets to end rather than forcing them.
-function shutdown(signal) {
-  log.info('server', signal + ' received, shutting down');
-  for (const ws of wss.clients) ws.terminate();
-  wss.close(() => {
-    server.close(() => {
-      log.info('server', 'shutdown complete');
-      process.exit(0);
+//
+// Anyone still connected is told why first, with a moment for that message
+// to leave before the sockets are cut.
+let stopping = false;
+function shutdown(reason) {
+  if (stopping) return;
+  stopping = true;
+  log.info('server', reason + ', shutting down');
+  for (const ws of wss.clients) {
+    Client.closeWithError(ws, GameManager.RESTARTING_ERROR, GameManager.RESTARTING_MESSAGE);
+  }
+  setTimeout(() => {
+    for (const ws of wss.clients) ws.terminate();
+    wss.close(() => {
+      server.close(() => {
+        log.info('server', 'shutdown complete');
+        process.exit(0);
+      });
+      // Keep-alive HTTP connections would otherwise hold server.close() open.
+      if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
     });
-  });
+  }, 500);
 }
 
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
+// Drain: stop taking new games, let ACTIVE matches play out, then shut down.
+// Triggered by the first Ctrl+C / SIGTERM, or by POST /admin/drain
+// (tools/drain-server.js). `maxMs` > 0 caps the wait; a later call can only
+// shorten it. Returns the current state for the caller to report.
+const DRAIN_POLL_MS = 2000;
+let drainDeadline = null; // epoch ms, or null for "however long it takes"
+let drainTimerID = null;
+function drain(reason, maxMs) {
+  if (maxMs > 0) {
+    const deadline = Date.now() + maxMs;
+    if (drainDeadline === null || deadline < drainDeadline) drainDeadline = deadline;
+  }
+  if (!gameManager.draining) {
+    gameManager.beginDrain();
+    const n = gameManager.activeGameCount();
+    log.info('server', reason + ', draining: no new games; waiting for ' + n + ' active game'
+      + (n === 1 ? '' : 's') + ' to finish'
+      + (drainDeadline === null ? '' : ' (at most ' + Math.round((drainDeadline - Date.now()) / 60000) + ' min)'));
+    const check = () => {
+      if (gameManager.activeGameCount() === 0) return shutdown('drain complete');
+      if (drainDeadline !== null && Date.now() >= drainDeadline) return shutdown('drain time limit reached');
+      drainTimerID = setTimeout(check, DRAIN_POLL_MS);
+    };
+    check();
+  }
+  return { draining: true, activeGames: gameManager.activeGameCount(), deadline: drainDeadline };
+}
+
+// First signal drains; a second one stops now.
+function onSignal(signal) {
+  if (gameManager.draining) {
+    if (drainTimerID !== null) clearTimeout(drainTimerID);
+    return shutdown(signal + ' received again');
+  }
+  drain(signal + ' received');
+  if (!stopping) log.info('server', 'press Ctrl+C again to stop now');
+}
+
+process.on('SIGINT', () => onSignal('SIGINT'));
+process.on('SIGTERM', () => onSignal('SIGTERM'));
 
 module.exports = { server, wss, gameManager, accounts, PORT };

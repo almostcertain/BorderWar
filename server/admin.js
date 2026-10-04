@@ -1,8 +1,10 @@
-// Admin stats: a read-only view of what this server is doing right now.
+// Admin stats: a view of what this server is doing right now, plus the drain switch.
 //
 //   GET /admin        the page (server/admin.html); public, holds no data
 //   GET /admin/stats  JSON snapshot; needs `Authorization: Bearer <token>`
 //   GET /admin/history[?since=ms]  one sample a minute for the page's charts
+//   POST /admin/drain[?maxMinutes=n]  stop taking new games, exit once active
+//                     matches finish (tools/drain-server.js); same token
 //
 // The token is BORDERWAR_ADMIN_TOKEN if set, otherwise a random one generated
 // on first start and kept in server/data/admin-token.txt (gitignored). There is
@@ -130,6 +132,7 @@ function create(opts) {
       now: now,
       server: {
         build: build,
+        draining: !!gameManager.draining,
         node: process.version,
         startedAt: startedAt,
         uptimeMs: now - startedAt,
@@ -205,6 +208,14 @@ function create(opts) {
   // Answers /admin and anything under /admin/.
   function handle(req, res) {
     const urlPath = req.url.split('?')[0];
+    if (urlPath === '/admin/drain') {
+      if (!opts.drain) return send(res, 404, 'text/plain', 'Not found');
+      if (req.method !== 'POST') return send(res, 405, 'text/plain', 'Method not allowed');
+      if (!authorized(req)) return send(res, 401, 'application/json; charset=utf-8', '{"error":"unauthorized"}');
+      const m = /[?&]maxMinutes=(\d+(?:\.\d+)?)/.exec(req.url);
+      return send(res, 200, 'application/json; charset=utf-8',
+        JSON.stringify(opts.drain(m ? Number(m[1]) * 60000 : 0)));
+    }
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'Method not allowed');
     if (urlPath === '/admin' || urlPath === '/admin/') {
       return fs.readFile(PAGE_FILE, (err, data) => {

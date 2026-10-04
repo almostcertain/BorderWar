@@ -60,6 +60,10 @@ class GameManager {
     this.buildID = opts && opts.buildID;
     this.games = new Map(); // gameID -> GameServer
 
+    // Set by beginDrain(): the server is about to stop. No new lobbies, no
+    // new matches; matches already ACTIVE play out (and can be rejoined).
+    this.draining = false;
+
     // unref() so this timer alone never keeps a Node process (or a test
     // script) alive — it's a housekeeping sweep, not load-bearing work.
     this._reapIntervalID = setInterval(() => this.reap(), REAP_INTERVAL_MS);
@@ -79,6 +83,7 @@ class GameManager {
   // would let a stale client's cached join code silently land in a
   // different lobby than the one it saw.
   _spawnAutoLobby() {
+    if (this.draining) return;
     const entry = AUTO_LOBBY_ROTATION[this._autoLobbyRotationIndex % AUTO_LOBBY_ROTATION.length];
     this._autoLobbyRotationIndex++;
 
@@ -105,6 +110,28 @@ class GameManager {
   _onAutoLobbyStarted(oldGameID) {
     log.info('game ' + oldGameID, 'open lobby started - rotating in a replacement');
     this._spawnAutoLobby();
+  }
+
+  // Stop taking new games ahead of a shutdown (server/index.js drain()).
+  // Every lobby is closed with a message, the open lobby included, and from
+  // here on a `join` is refused. ACTIVE matches are left alone. One-way.
+  beginDrain() {
+    if (this.draining) return;
+    this.draining = true;
+    for (const [gameID, game] of this.games) {
+      if (game.stage !== Protocol.GAME_PHASE.LOBBY) continue;
+      const sockets = Array.from(game.clients.values(), (c) => c.ws);
+      game.end('server draining'); // FINISHED first, so the closes below don't advance the lobby
+      this.games.delete(gameID);
+      for (const ws of sockets) Client.closeWithError(ws, GameManager.RESTARTING_ERROR, GameManager.RESTARTING_MESSAGE);
+      log.info('game ' + gameID, 'lobby closed (server draining)');
+    }
+  }
+
+  activeGameCount() {
+    let n = 0;
+    for (const game of this.games.values()) if (game.stage === Protocol.GAME_PHASE.ACTIVE) n++;
+    return n;
   }
 
   createGame(gameID) {
@@ -247,6 +274,11 @@ class GameManager {
       }
 
       // join
+      if (this.draining) {
+        log.warn('server', 'rejected join to "' + msg.gameID + '": server draining');
+        Client.closeWithError(ws, GameManager.RESTARTING_ERROR, GameManager.RESTARTING_MESSAGE);
+        return;
+      }
       if (!this.games.has(msg.gameID) && this.games.size >= GameManager.MAX_CONCURRENT_GAMES) {
         // Gates only the creation of a brand-new lobby — joining one that
         // already exists is never blocked by this, no matter how many other
@@ -355,5 +387,10 @@ class GameManager {
     }
   }
 }
+
+// What a player is told when the server is draining or stopping. The client
+// (js/net/transport.js, js/main.js) keys off the error code.
+GameManager.RESTARTING_ERROR = 'server-restarting';
+GameManager.RESTARTING_MESSAGE = 'The server is restarting for an update. Try again in a few minutes.';
 
 module.exports = GameManager;

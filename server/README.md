@@ -24,7 +24,19 @@ node index.js
 
 (or `npm start`, which just runs `node index.js`). It listens on port `8124` by
 default; override with `PORT=<n> node index.js`. Ctrl+C sends `SIGINT`, which
-the server handles gracefully (terminates open sockets, then exits).
+drains the server: lobbies are closed with a "server is restarting" message, no
+new games can start, and it exits once the matches in progress have finished.
+Press Ctrl+C again to stop immediately (players still get the message).
+
+To do the same from another window, with a progress readout:
+
+```
+node tools/drain-server.js              # wait as long as the matches take
+node tools/drain-server.js --max-minutes 30
+```
+
+It calls `POST /admin/drain` with the admin token and returns when the server
+has exited. The Cloudflare tunnel is a separate process; stop it afterwards.
 
 ### Mac quick start
 
