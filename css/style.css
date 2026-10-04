@@ -853,6 +853,10 @@ html, body {
   color: inherit;
   font: inherit;
   cursor: pointer;
+  /* Sideways still scrolls the bar; an upward drag is left to ui.js's
+     drag-to-place (onBarMove) instead of being claimed as a page pan. */
+  touch-action: pan-x;
+  -webkit-touch-callout: none;
 }
 
 .bbKey {

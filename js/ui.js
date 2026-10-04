@@ -34,7 +34,7 @@ const UI = {
   dismissed: new Set(),
 
   placing: null,      // structure type armed for placement, if any
-  placeHover: -1,     // tile under the cursor while armed (mouse only)
+  placeHover: -1,     // tile under the cursor while armed (mouse hover, or a build-bar drag)
   flashText: '',
   flashUntil: 0,
 
@@ -275,6 +275,13 @@ const UI = {
     };
     bar.addEventListener('scroll', updateFade);
     new ResizeObserver(updateFade).observe(bar);
+
+    // Drag-to-place. Delegated to the bar rather than bound per button, since
+    // rebuildBuildBar replaces the buttons.
+    bar.addEventListener('pointerdown', e => this.onBarDown(e));
+    bar.addEventListener('pointermove', e => this.onBarMove(e));
+    bar.addEventListener('pointerup', e => this.onBarUp(e));
+    bar.addEventListener('pointercancel', e => this.onBarUp(e));
     // A rebuilt bar can change width without the bar's own box changing.
     this._updateBarFade = updateFade;
     updateFade();
@@ -306,7 +313,12 @@ const UI = {
         cost: btn.querySelector('.bbCost'),
         count: btn.querySelector('.bbCount')
       });
-      btn.addEventListener('click', () => this.togglePlacing(btn.dataset.type));
+      btn.addEventListener('click', () => {
+        // The click that ends a drag-to-place (mouse only; touch sends none)
+        // must not also toggle the button it started on.
+        if (this._barDragged) { this._barDragged = false; return; }
+        this.togglePlacing(btn.dataset.type);
+      });
     }
     if (this._updateBarFade) this._updateBarFade();
   },
@@ -315,6 +327,86 @@ const UI = {
   // differs from what the bar was built for.
   syncBuildBar() {
     if (this._barFog !== !!Game.fog) this.rebuildBuildBar();
+  },
+
+  // Drag-to-place: pressing a build button and dragging up onto the map arms
+  // it and carries the placement ghost along; letting go places it there, as
+  // a tap on that spot would. Mostly for touch, which has no hover and so
+  // otherwise never sees the ghost before committing. Dragging sideways still
+  // scrolls the bar (touch-action: pan-x on .buildBtn), which is why only an
+  // upward drag starts one.
+  BAR_DRAG_START: 12,   // px, the same tolerance Input uses for tap-vs-drag
+  // A finger covers the spot it is on, so on touch the ghost rides this far
+  // above it.
+  BAR_DRAG_LIFT: 56,
+
+  onBarDown(e) {
+    this._barDragged = false;
+    this.barDrag = null;
+    const btn = e.target.closest('.buildBtn');
+    if (!btn || e.button !== 0 || !Game.running) return;
+    this.barDrag = {
+      id: e.pointerId, type: btn.dataset.type, btn, x0: e.clientX, y0: e.clientY,
+      lift: e.pointerType === 'mouse' ? 0 : this.BAR_DRAG_LIFT, active: false
+    };
+  },
+
+  onBarMove(e) {
+    const d = this.barDrag;
+    if (!d || e.pointerId !== d.id) return;
+    if (!d.active) {
+      const up = d.y0 - e.clientY;
+      if (up < this.BAR_DRAG_START || up < Math.abs(e.clientX - d.x0)) return;
+      if (this.placing !== d.type) this.togglePlacing(d.type);
+      if (this.placing !== d.type) { this.barDrag = null; return; }
+      d.active = true;
+      // Touch is captured to the button already; a mouse is not, and would
+      // stop reporting here the moment it left the bar.
+      try { d.btn.setPointerCapture(e.pointerId); } catch {}
+    }
+    // Put away mid-drag (Escape, or the player died).
+    if (this.placing !== d.type) { this.barDrag = null; return; }
+    this.placeHover = this.barDragOverMap(e) ? this.placeTileAt(e.clientX, e.clientY - d.lift) : -1;
+  },
+
+  onBarUp(e) {
+    const d = this.barDrag;
+    if (!d || e.pointerId !== d.id) return;
+    this.barDrag = null;
+    if (!d.active) return;
+    this._barDragged = true;
+    if (this.placing !== d.type) return;
+    // Let go back over the HUD, or the browser took the gesture: put it away.
+    if (e.type === 'pointercancel' || !this.barDragOverMap(e)) { this.cancelPlacing(); return; }
+    this.onTap(e.clientX, e.clientY - d.lift);
+    // A refused placement stays armed for a follow-up tap; with a mouse the
+    // hover takes the ghost back over, but touch has none, so it would be
+    // left standing where the finger lifted.
+    if (d.lift) this.placeHover = -1;
+  },
+
+  // Whether the pointer itself (not the lifted ghost) is over the map rather
+  // than the HUD.
+  barDragOverMap(e) {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    return !!el && el.id === 'game';
+  },
+
+  // The tile a tap at this screen point would act on with the current build
+  // armed: an existing same-type structure nearby (upgrade), else the
+  // rail/coast snap, else the tile itself. Mirrors onTap's own resolution so
+  // the ghost is honest about what a tap will do.
+  placeTileAt(sx, sy) {
+    const near = Render.findStructureNear(sx, sy, this.placing);
+    if (near) return near.tile;
+    const railSnap = this.placing === 'city' ? Render.findRailSnapTile(sx, sy) : -1;
+    const coastSnap = this.placing === 'port'
+      ? Game.nearestOwnedCoastNear(Game.me, Render.screenToTile(sx, sy), Game.PORT_SNAP_MAX_DIST) : -1;
+    // Warship placement has no click-time snap at all — a click can land
+    // anywhere on the map (Game.resolveWarshipLaunch snaps it to the nearest
+    // open water and picks a launching Port on its own), so it just gets the
+    // raw tile, same as any tile that isn't near a rail/coast for city/port.
+    return railSnap >= 0 ? railSnap : coastSnap >= 0 ? coastSnap : Render.screenToTile(sx, sy);
   },
 
   // Puts away whatever build is armed — structure, nuke, warship or the debug
