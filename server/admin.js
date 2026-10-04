@@ -60,11 +60,14 @@ function loadToken(log) {
   if (fromEnv) return fromEnv;
   try {
     const saved = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
-    if (saved) return saved;
+    if (saved) {
+      try { fs.chmodSync(TOKEN_FILE, 0o600); } catch (e) { /* not ours to change */ }
+      return saved;
+    }
   } catch (e) { /* not created yet */ }
   const token = crypto.randomBytes(24).toString('hex');
   fs.mkdirSync(path.dirname(TOKEN_FILE), { recursive: true });
-  fs.writeFileSync(TOKEN_FILE, token + '\n');
+  fs.writeFileSync(TOKEN_FILE, token + '\n', { mode: 0o600 });
   log.info('admin', 'generated admin token in ' + TOKEN_FILE);
   return token;
 }

@@ -38,6 +38,29 @@ node tools/drain-server.js --max-minutes 30
 It calls `POST /admin/drain` with the admin token and returns when the server
 has exited. The Cloudflare tunnel is a separate process; stop it afterwards.
 
+### Player accounts: data and admin commands
+
+Accounts live in one SQLite file, `server/data/borderwar.db` (override with
+`BORDERWAR_DB`). It holds emails and password hashes, so treat `server/data/` as
+private: it is gitignored, never served over HTTP, and the server sets the
+database, its backups and the admin token to owner-only access (macOS/Linux; on
+Windows, keep the folder out of shared or synced locations).
+
+The server writes a backup to `server/data/backups/` once a day and keeps the
+last 14. To restore, stop the server and copy a backup over `borderwar.db`
+(delete the `-wal` and `-shm` files beside it).
+
+Run these on the host; they are safe while the server is up:
+
+```
+node server/accounts/admin.js export <email>           # a player's data as JSON (data requests)
+node server/accounts/admin.js reset-password <email>   # temporary password, signs them out
+node server/accounts/admin.js revoke-sessions <email>  # sign one account out everywhere
+node server/accounts/admin.js revoke-sessions --all    # sign everyone out
+```
+
+If the database or host may have been exposed, follow `docs/breach-response.md`.
+
 ### Mac quick start
 
 Prereqs (once): Node (`brew install node`) and, for internet play,

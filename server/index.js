@@ -150,6 +150,10 @@ const BUILD_INFO = JSON.stringify(getBuildInfo());
 let accounts = null;
 try {
   accounts = require('./accounts/routes').create({ dbPath: process.env.BORDERWAR_DB, log });
+  const dbFile = process.env.BORDERWAR_DB || require('./accounts/db').DEFAULT_PATH;
+  if (dbFile !== ':memory:') {
+    require('./accounts/backup').start(accounts.db, path.join(path.dirname(dbFile), 'backups'), { log });
+  }
 } catch (e) {
   log.warn('accounts', 'disabled: ' + (e && e.message || e));
 }

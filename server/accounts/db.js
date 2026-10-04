@@ -72,8 +72,11 @@ function migrate(db) {
 // `file` may be ':memory:' (tests).
 function open(file) {
   file = file || DEFAULT_PATH;
-  if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(file);
+  // Emails and password hashes: readable by the server's own user only. SQLite
+  // gives the -wal and -shm files the same mode. (No effect on Windows.)
+  if (file !== ':memory:') { try { fs.chmodSync(file, 0o600); } catch (e) { /* not ours to change */ } }
   db.exec('PRAGMA foreign_keys = ON');
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
   migrate(db);

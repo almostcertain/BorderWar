@@ -210,12 +210,16 @@ the open internet.
 - **Admin reset:** `node server/accounts/admin.js reset-password <email>` run on the
   host prints a one-time temporary password and clears that user's sessions. This is
   the only recovery path, at the owner's discretion.
-- **Logging:** never log passwords, tokens, cookies or full emails. Log sign-ups,
-  sign-ins and failures with user id and IP.
+- **Logging:** never log passwords, tokens, cookies, emails or IP addresses. Log
+  sign-ups, sign-ins and failures with user id only (#53).
 - **Personal data held:** email, display name, match results. Delete-account removes all of it.
-- **Backups:** the DB is one file; `tools/live-mac.command` copies it to
-  `server/data/backups/` daily, keeping 14. `server/data/` is gitignored and is not
-  under the static server's `PUBLIC_DIRS`.
+- **Backups:** the DB is one file; the server itself (`server/accounts/backup.js`)
+  snapshots it to `server/data/backups/` daily, keeping 14. `server/data/` is
+  gitignored, is not under the static server's `PUBLIC_DIRS`, and the DB, backups and
+  admin token are set to owner-only file access. The 14 days is quoted in
+  `privacy.html`; change both together.
+- **Data requests and incidents:** `admin.js export <email>` produces a player's data;
+  `admin.js revoke-sessions --all` signs everyone out. See `docs/breach-response.md`.
 - **Out of scope (D2 still holds):** this authenticates *who* a player is. It does
   not stop a modified client from cheating in a match, and stats inherit that.
 

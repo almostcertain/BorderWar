@@ -298,3 +298,64 @@ test('routes: a login with old scrypt parameters is re-hashed', async () => {
   assert.strictEqual(await passwords.verify(PASS, stored), true);
   s.close();
 });
+
+test('admin: export, reset password, revoke sessions', async () => {
+  const admin = require('./admin');
+  const db = dbModule.open(':memory:');
+  const hash = await passwords.hash(PASS, FAST);
+  db.prepare('INSERT INTO users (email, pass_hash, display_name, tag, settings_json, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run('a@b.co', hash, 'A', 'TAG', '{"lowGfx":true}', 1000);
+  db.prepare('INSERT INTO users (email, pass_hash, display_name, created_at) VALUES (?, ?, ?, ?)').run('c@d.co', hash, 'C', 1000);
+  db.prepare('INSERT INTO matches (game_id, ended_at, duration_turns, map, mode, nation_count) VALUES (?, ?, ?, ?, ?, ?)')
+    .run('g1', 5000, 300, 'large', 'ffa', 8);
+  db.prepare('INSERT INTO match_players (match_id, user_id, player_id, result, place) VALUES (1, 1, 3, ?, 2)').run('loss');
+  const s = sessionsModule.create(db, () => 2000);
+  const token = s.start(1);
+  s.start(2);
+
+  assert.strictEqual(admin.exportUser(db, 'nobody@b.co'), null);
+  const out = admin.exportUser(db, ' A@B.co ', () => 9000);
+  assert.deepStrictEqual(out.account, {
+    id: 1, email: 'a@b.co', displayName: 'A', tag: 'TAG', settings: { lowGfx: true }, createdAt: '1970-01-01T00:00:01.000Z'
+  });
+  assert.strictEqual(out.sessions.length, 1);
+  assert.deepStrictEqual(out.matches.map(m => [m.gameId, m.result, m.place]), [['g1', 'loss', 2]]);
+  // No secrets in an export.
+  assert.doesNotMatch(JSON.stringify(out), /scrypt|pass_hash|token/i);
+
+  assert.strictEqual(await admin.resetPassword(db, 'nobody@b.co', FAST), null);
+  const temp = await admin.resetPassword(db, 'a@b.co', FAST);
+  const stored = db.prepare('SELECT pass_hash FROM users WHERE id = 1').get().pass_hash;
+  assert.strictEqual(await passwords.verify(temp, stored), true);
+  assert.strictEqual(await passwords.verify(PASS, stored), false);
+  assert.strictEqual(s.userIdFor(token), null);
+
+  assert.strictEqual(admin.revokeSessions(db, 'nobody@b.co'), null);
+  s.start(1);
+  assert.strictEqual(admin.revokeSessions(db, 'a@b.co'), 1);
+  assert.strictEqual(admin.revokeSessions(db, null), 1);
+  db.close();
+});
+
+test('backup: one file a day, oldest pruned, restorable', () => {
+  const fs = require('fs'), os = require('os'), path = require('path');
+  const backup = require('./backup');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bw-backup-'));
+  const db = dbModule.open(':memory:');
+  db.prepare('INSERT INTO users (email, pass_hash, display_name, created_at) VALUES (?, ?, ?, ?)').run('a@b.co', 'x', 'A', 1);
+  const DAY = 24 * 60 * 60 * 1000;
+  let t = Date.UTC(2026, 0, 1, 12);
+
+  const first = backup.run(db, dir, () => t, 3);
+  assert.strictEqual(path.basename(first), 'borderwar-2026-01-01.db');
+  assert.strictEqual(backup.run(db, dir, () => t, 3), null);   // same day: nothing new
+  for (let i = 0; i < 4; i++) { t += DAY; backup.run(db, dir, () => t, 3); }
+  assert.deepStrictEqual(fs.readdirSync(dir).sort(),
+    ['borderwar-2026-01-03.db', 'borderwar-2026-01-04.db', 'borderwar-2026-01-05.db']);
+
+  const copy = dbModule.open(path.join(dir, 'borderwar-2026-01-05.db'));
+  assert.strictEqual(copy.prepare('SELECT email FROM users').get().email, 'a@b.co');
+  copy.close();
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
