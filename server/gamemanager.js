@@ -32,12 +32,14 @@ const HEARTBEAT_INTERVAL_MS = 60 * 1000;
 // cycles through, in order, wrapping — `maxNations` is the total Nation-slot
 // count for that entry (bots + humans never exceeds it; see GameServer._
 // startAutoLobby). small is excluded: too cramped for an open game, especially
-// on the multi-landmass landforms a random procedural map can roll. large has
-// four times medium's area but only twice its slots, so it plays roomier
-// rather than just bigger.
+// on the multi-landmass landforms a random procedural map can roll. The
+// counts are the singleplayer defaults for each size (js/main.js's
+// BOTS_FOR_SIZE/TRIBES_FOR_SIZE — World's 82 Nations / 400 Tribes on
+// 2000x1000, scaled by tile count), so an open game is as crowded as a
+// singleplayer one on the same map.
 const AUTO_LOBBY_ROTATION = [
-  { mapSize: 'medium', maxNations: 14, tribes: 24 },
-  { mapSize: 'large', maxNations: 28, tribes: 48 }
+  { mapSize: 'medium', maxNations: 46, tribes: 225 },
+  { mapSize: 'large', maxNations: 82, tribes: 400 }
 ];
 const AUTO_LOBBY_DIFFICULTY = 'medium';
 
@@ -187,7 +189,7 @@ class GameManager {
       const entry = { gameID: game.gameID, playerCount: game.clients.size, isAuto: !!game.isAutoLobby };
       if (game.isAutoLobby) {
         entry.mapSize = game.autoConfig.mapSize;
-        entry.seed = game.autoSeed; // lets the menu preview the map
+        // No seed here: auto games run with fog, so the menu must not preview the map.
         entry.minPlayers = GameServer.autoLobbyMinPlayers;
         entry.maxPlayers = game.autoConfig.maxNations;
         entry.autoStartAt = game._autoStartAt; // null while no countdown is running

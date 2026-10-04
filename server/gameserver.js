@@ -673,7 +673,8 @@ class GameServer {
       bots: bots,
       tribes: this.autoConfig.tribes,
       difficulty: this.autoConfig.difficulty,
-      seed: this.autoSeed
+      seed: this.autoSeed,
+      fogOfWar: true
     });
   }
 
@@ -780,7 +781,7 @@ class GameServer {
         gameMode: config.gameMode === 'team' ? 'team' : 'ffa',
         playerTeams: GameServer.normalizePlayerTeams(config.playerTeams),
         // Fog of war (docs/fog-of-war.md): a strict boolean. The auto lobby
-        // passes none, so it is always off.
+        // always turns it on (_startAutoLobby).
         fogOfWar: config.fogOfWar === true
       },
       players: players
