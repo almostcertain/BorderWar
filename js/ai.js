@@ -1052,14 +1052,11 @@ const AI = {
   // one's radius buys nothing but wastes gold and a build slot — skip
   // any candidate tile already covered, built or still under construction.
   //
-  // The setback is a FRACTION of the protection radius, not the flat 4 tiles
-  // this held while Game.fortRange() was a flat 30. Those two numbers are the
-  // same knob read twice: the buffer buys survivability by trading away
-  // forward coverage, and 4/30 is the ratio that was tuned. Left absolute, a
-  // medium-map fort (radius 7.5) set back 4 tiles would reach only 3.5 tiles
-  // past the border — a bot spending up to 250k gold on an aura that covers
-  // essentially none of the ground being fought over. Scaled, xlarge still
-  // gets exactly 4 and the smaller sizes get 1-2.
+  // The setback is a FRACTION of the protection radius rather than a flat
+  // tile count. Those two numbers are the same knob read twice: the buffer
+  // buys survivability by trading away forward coverage, and 4/30 is the
+  // ratio that was tuned (4 tiles back when the radius was 30). At the
+  // current flat radius of 25 it comes to 3 tiles on every map size.
   FORT_BUFFER_RATIO: 4 / 30,
 
   fortBorderBuffer() {

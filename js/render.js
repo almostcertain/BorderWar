@@ -1738,9 +1738,8 @@ const Render = {
     // tile highlight below so that small, more important square/ring sits
     // on top rather than under a dashed line.
     // Fort placement: show the protection radius while hovering. Read live
-    // from Game.fortRange() rather than hardcoded at 30 — the radius scales
-    // with map size now, so the preview ring has to as well or it would
-    // promise four times the coverage a fort actually gives on medium.
+    // from Game.fortRange() rather than hardcoded, so the preview ring always
+    // matches the coverage a fort actually gives.
     if (UI.placing === 'fort' && !(hoverB && hoverB.type === 'fort')) {
       const cx = px + s / 2, cy = py + s / 2;
       ctx.beginPath();

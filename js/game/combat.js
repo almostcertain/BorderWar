@@ -235,49 +235,26 @@ Object.assign(Game, {
   // A built fort within fortRange() tiles of a contested tile multiplies the
   // attacker's troop cost (FORT_DEF_MULT) and movement cost (FORT_SPEED_MULT).
   //
-  // The two multipliers are theirs verbatim. The RANGE is not, and deliberately
-  // so: 30 tiles is an absolute constant tuned against the only board OpenFront
-  // actually plays on — their World map, 2000x1000 with 651,569 land tiles per
-  // their own resources/maps/world/manifest.json (map4x and map16x in that same
-  // manifest are downsampled render assets, not playable sizes). Every other
-  // quantity in a fight scales with MAP_SIZES — nation area, army cap, the
-  // length of the front — but a flat radius does not, so the protected disc's
-  // share of the world exploded as the map shrank:
+  // The two multipliers are theirs verbatim. The RANGE is not: it is one flat
+  // radius on every map size, a little under their 30.
   //
-  //   pi*30^2 = 2827 tiles      as % of land (LAND_FRACTION 0.40)
-  //     small  12,500 land       22.6%
-  //     medium 50,000 land        5.7%     <- default
-  //     large  200,000 land       1.4%
-  //     xlarge 800,000 land       0.35%
-  //     OpenFront World           0.43%
+  // It is flat because nation size is flat. The default Nation/Tribe counts
+  // follow map AREA (js/main.js, BOT_DENSITY/TRIBE_DENSITY), so an average
+  // nation starts with about the same land, ~1,700 tiles, on small, medium and
+  // large alike. A radius that scaled with map width (as this once did: 7.5 /
+  // 15 / 30) made the same structure cover ~10% of a nation on small and ~170%
+  // on large. Holding the radius fixed keeps a fort the same size against the
+  // thing it protects.
   //
-  // At medium that is 13x OpenFront's intended footprint, and the numbers stop
-  // being a tax and start being a wall: a 3,000-tile nation at 70% of cap holds
-  // ~24k troops, and committing all of it buys 3,354 tiles of open ground but
-  // only 671 inside a fort aura — while clearing one full disc costs ~101k
-  // troops against a cap of ~34k. Worse, that nation is only ~55 tiles across
-  // and the disc is 60 wide, so there is no flank to go around; in OpenFront the
-  // front is far longer than the aura and routing around a post is the answer.
-  //
-  // So hold their RELATIVE reach instead of their absolute one: 30 tiles on a
-  // 2000-wide map is 1.5% of map width, which is what FORT_RANGE_BASE /
-  // FORT_RANGE_REF_WIDTH encodes. xlarge lands on exactly 30 again, and the
-  // smaller sizes get the aura OpenFront would have given them. FORT_RANGE_MIN
-  // keeps small from collapsing to a 3.75-tile disc that a fort could not
-  // meaningfully protect anything with.
-  FORT_RANGE_BASE: 30,
-  FORT_RANGE_REF_WIDTH: 2000,
-  FORT_RANGE_MIN: 6,
+  // 25 rather than 30 is a balance call: pi*25^2 = 1,963 tiles, roughly one
+  // average nation, where 30 (2,827) blankets well past it.
+  FORT_RANGE: 25,
   FORT_DEF_MULT: 5,
   FORT_SPEED_MULT: 3,
 
-  // Ordered base*width/ref (not base*(width/ref)) so every MAP_SIZES width
-  // lands on a value exact in binary floating point — 3.75 / 7.5 / 15 / 30,
-  // squaring to 56.25 / 225 / 900 — which a lockstep sim needs, since this
-  // feeds tileCost and stepAttack on every client.
+  // An integer, so fortInRange's squared compare is exact on every client.
   fortRange() {
-    const r = this.FORT_RANGE_BASE * GameMap.width / this.FORT_RANGE_REF_WIDTH;
-    return r < this.FORT_RANGE_MIN ? this.FORT_RANGE_MIN : r;
+    return this.FORT_RANGE;
   },
 
   // True when a fully-built fort owned by `ownerId` is within fortRange()
