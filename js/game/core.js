@@ -253,8 +253,8 @@ const Game = {
   // measured ~700ms one-time cost; per-tick simulation cost is driven by
   // player/attack count, not tile count, so it stays flat regardless of size.
   MAP_SIZES: {
-    small:  { width:  500, height: 250 },   // OpenFront's World, map16x
-    medium: { width: 1000, height: 500 },   // OpenFront's World, map4x
+    small:  { width: 1000, height: 500 },   // was 500x250 (OpenFront's map16x)
+    medium: { width: 1500, height: 750 },   // was 1000x500 (OpenFront's map4x)
     large:  { width: 2000, height: 1000 }   // OpenFront's World, full resolution
   },
 
