@@ -184,20 +184,12 @@
     <input id="accountPassword" type="password" placeholder="Password" autocomplete="current-password" maxlength="128">
     <input id="accountConfirm" type="password" placeholder="Confirm password" autocomplete="new-password" maxlength="128" class="hidden">
     <div id="accountNote" class="hidden">At least 8 characters. There's no password reset yet, so keep this somewhere safe.</div>
+    <label id="accountAge" class="optRow hidden"><input id="accountAgeBox" type="checkbox"> <span>I am 13 or older</span></label>
+    <div id="accountPrivacy" class="hidden">By creating an account you agree to the <a href="terms.html" target="_blank" rel="noopener">Terms of Service</a> and <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</div>
     <div id="accountError" class="hidden"></div>
     <button type="submit" id="accountSubmit" class="primaryBtn">Sign in</button>
     <div id="accountLinks"><button type="button" id="accountToggle" class="linkBtn">Create account</button><button type="button" id="accountCancel" class="linkBtn">Cancel</button></div>
   </form>
-</div>
-
-<div id="installGuide" class="hidden">
-  <div class="panel optionsPanel" role="dialog" aria-label="Add to Home Screen">
-    <h2>Add to Home Screen</h2>
-    <div id="accountPrivacy" class="hidden">By creating an account you agree to the <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</div>
-    <p>Play BorderWar full screen, straight from your home screen:</p>
-    <ol id="installSteps"></ol>
-    <button type="button" id="installClose" class="primaryBtn">Got it</button>
-  </div>
 </div>
 
 <!-- Signed-in account management: a menu of three actions, then one form whose
@@ -222,6 +214,15 @@
     <div id="manageDone" class="hidden"></div>
     <div id="manageLinks"><button type="button" id="manageBack" class="linkBtn hidden">‹ Back</button><button type="button" id="manageClose" class="linkBtn">Close</button></div>
   </form>
+</div>
+
+<div id="installGuide" class="hidden">
+  <div class="panel optionsPanel" role="dialog" aria-label="Add to Home Screen">
+    <h2>Add to Home Screen</h2>
+    <p>Play BorderWar full screen, straight from your home screen:</p>
+    <ol id="installSteps"></ol>
+    <button type="button" id="installClose" class="primaryBtn">Got it</button>
+  </div>
 </div>
 
 <div id="overlay">
@@ -443,6 +444,7 @@
       <a href="LICENSE" target="_blank" rel="noopener">AGPLv3</a>.
       <a href="https://github.com/almostcertain/BorderWar" target="_blank" rel="noopener">Source</a>
       · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a>
+      · <a href="terms.html" target="_blank" rel="noopener">Terms</a>
     </div>
   </div>
 </div>

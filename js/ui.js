@@ -2352,6 +2352,9 @@ const UI = {
       $('accountToggle').textContent = on ? 'I have an account' : 'Create account';
       confirm.classList.toggle('hidden', !on);
       $('accountNote').classList.toggle('hidden', !on);
+      $('accountPrivacy').classList.toggle('hidden', !on);
+      $('accountAge').classList.toggle('hidden', !on);
+      $('accountAgeBox').checked = false;
       pass.autocomplete = on ? 'new-password' : 'current-password';
       showError('');
     };
@@ -2365,7 +2368,6 @@ const UI = {
       overlay.classList.remove('hidden');
       email.focus();
     });
-      $('accountPrivacy').classList.toggle('hidden', !on);
     $('accountToggle').addEventListener('click', () => setCreating(!creating));
     $('accountCancel').addEventListener('click', close);
     overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
@@ -2384,6 +2386,7 @@ const UI = {
       if (creating && pass.value.length < 8) return showError('Password must be at least 8 characters');
       if (creating && pass.value !== confirm.value) return showError('The passwords do not match');
       if (!pass.value) return showError('Enter your password');
+      if (creating && !$('accountAgeBox').checked) return showError('You must be 13 or older to create an account');
 
       // A new account starts with whatever is in the menu's name and tag fields.
       const name = ($('playerName').value || '').trim();
@@ -2412,23 +2415,10 @@ const UI = {
       });
     });
 
+    this.setupManageAccount();
     Account.init().then(() => this.renderAccount());
   },
 
-  renderAccount() {
-    const strip = document.getElementById('accountStrip');
-    strip.classList.toggle('hidden', !Account.available);
-    if (!Account.available) return;
-    const user = Account.user;
-    document.getElementById('accountStatus').textContent = user ? 'Signed in as ' + user.email + ' ·' : 'Playing as guest ·';
-    document.getElementById('accountSignIn').classList.toggle('hidden', !!user);
-    document.getElementById('accountSignOut').classList.toggle('hidden', !user);
-  },
-
-    this.setupManageAccount();
-  // The one name field on the main menu, shared by singleplayer, host and
-  // join. Read (and remembered) at the moment a game or lobby is started, so
-  // it is written once per use rather than on every keystroke. Empty means the
   // The signed-in "Account" dialog: change email, change password, delete
   // account. Each asks for the current password, as the server requires.
   setupManageAccount() {
@@ -2515,6 +2505,20 @@ const UI = {
     });
   },
 
+  renderAccount() {
+    const strip = document.getElementById('accountStrip');
+    strip.classList.toggle('hidden', !Account.available);
+    if (!Account.available) return;
+    const user = Account.user;
+    document.getElementById('accountStatus').textContent = user ? 'Signed in as ' + user.email + ' ·' : 'Playing as guest ·';
+    document.getElementById('accountSignIn').classList.toggle('hidden', !!user);
+    document.getElementById('accountManage').classList.toggle('hidden', !user);
+    document.getElementById('accountSignOut').classList.toggle('hidden', !user);
+  },
+
+  // The one name field on the main menu, shared by singleplayer, host and
+  // join. Read (and remembered) at the moment a game or lobby is started, so
+  // it is written once per use rather than on every keystroke. Empty means the
   // caller falls back to its own default.
   getPlayerName() {
     const name = (document.getElementById('playerName').value || '').trim();
@@ -2522,7 +2526,6 @@ const UI = {
     // The optional team tag rides in the name as "[TAG] name" (OpenFront's
     // clan-tag convention), so it needs no protocol change; the sim reads it
     // back out in Teams.tagOf.
-    document.getElementById('accountManage').classList.toggle('hidden', !user);
     const tag = (document.getElementById('playerTag').value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5);
     document.getElementById('playerTag').value = tag;
     try { localStorage.setItem('borderwar_tag', tag); } catch (e) { /* ignore */ }
