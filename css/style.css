@@ -404,6 +404,83 @@ html, body {
 
 #pauseBtn.hidden { display: none; }
 
+/* --- Replay playback (js/replay.js) ----------------------------------------
+   The bar sits where the HUD's controls would be. body.replaying is on for the
+   whole of a replay and takes away everything that would let the viewer act. */
+#replayBar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 8px);
+  transform: translateX(-50%);
+  z-index: 9;
+  width: min(680px, calc(100vw - 16px));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(8, 14, 26, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+#replayBar button {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#replayBar button:active { filter: brightness(0.85); }
+#replayPlay.paused { background: rgba(255, 190, 70, 0.95); color: #2a1a00; }
+#replaySeek { flex: 1; min-width: 60px; }
+#replayTime { white-space: nowrap; opacity: 0.85; }
+
+#replayBar select {
+  max-width: 120px;
+  padding: 5px 6px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #131c2e;
+  color: inherit;
+}
+
+#replayRevealRow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+
+body.replaying #hud { bottom: calc(env(safe-area-inset-bottom) + 54px); background: none; }
+body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pauseBtn, #debugToggle, #debugPanel) { display: none !important; }
+
+@media (max-width: 700px) {
+  #replayBar { flex-wrap: wrap; justify-content: center; }
+  #replaySeek { order: -1; flex-basis: 100%; }
+  body.replaying #hud { bottom: calc(env(safe-area-inset-bottom) + 84px); }
+}
+
+#replayList { max-height: 260px; }
+#replayList li { display: flex; align-items: center; gap: 8px; }
+#replayList li.lobbyListEmpty { opacity: 0.6; font-size: 13px; }
+#replayList .replayInfo { flex: 1; min-width: 0; cursor: pointer; }
+#replayList .replayInfo small { display: block; opacity: 0.6; font-size: 11px; }
+#replayList .replayInfo:hover { text-decoration: underline; }
+
+.panel #replayList button {
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+#endReplayRow { display: flex; justify-content: center; gap: 14px; }
+.panel #endReplayRow button { padding: 0; margin: 0; font-size: 13px; background: transparent; }
+#endOverlay.minimized #endReplayRow { display: none; }
+
 /* --- Incoming-nuke warning ------------------------------------------------ */
 /* One row per hostile nuke that will hit the player's land, naming who fired
    it and counting down to impact. Tap a row to jump to the target. Red and
@@ -1446,7 +1523,8 @@ body:has(#overlay.hidden) #optionsBtn { display: none; }
 .optionsPanel h2 { margin: 0 0 4px; text-align: center; }
 .optRow { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
 .optRow input[type="checkbox"] { flex: none; margin: 0; }
-.optRow select { margin-left: auto; }
+.optRow select, .optRow input[type="range"] { margin-left: auto; }
+.optRow input[type="range"] { width: 140px; }
 .optRow small { display: block; font-size: 11px; opacity: 0.6; }
 
 /* Accounts: the menu strip and the sign-in dialog (docs/accounts-auth.md). */

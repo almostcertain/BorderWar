@@ -98,6 +98,18 @@
      placement to everyone; #drillHud (inside #hud) is the live shrink timer. -->
 <div id="drillBanner" class="hidden"><span id="drillBannerText"></span></div>
 
+<!-- Replay playback controls (js/replay.js, docs/replays.md). UI.setupReplays
+     wires them; UI.updateReplayBar shows the bar only while a replay plays. -->
+<div id="replayBar" class="hidden">
+  <button id="replayPlay" type="button" title="Play / pause (P)"></button>
+  <button id="replaySpeed" type="button" title="Playback speed">1x</button>
+  <input id="replaySeek" type="range" min="0" max="1" step="1" value="0" aria-label="Replay position">
+  <span id="replayTime"></span>
+  <select id="replayView" class="hidden" title="Whose view to follow" aria-label="Whose view to follow"></select>
+  <label id="replayRevealRow" class="hidden" title="Show the whole map instead of what this player had discovered"><input id="replayReveal" type="checkbox" checked> Whole map</label>
+  <button id="replayExit" type="button">Exit</button>
+</div>
+
 <div id="radial" class="hidden"><div id="radialMenu"></div></div>
 
 <div id="hud">
@@ -237,6 +249,7 @@
       <button type="button" class="modeTab" data-mode="join">Join custom lobby</button>
       <button type="button" class="modeTab" data-mode="host">Host</button>
       <button type="button" class="modeTab" data-mode="sp">Singleplayer</button>
+      <button type="button" class="modeTab" data-mode="replay">Replays</button>
     </div>
 
     <div id="spMode" class="modeBody hidden">
@@ -377,6 +390,15 @@
       </div>
     </div>
 
+    <!-- Matches this browser recorded (js/replay.js), newest first, plus
+         loading one from a file. UI.renderReplayList fills the list. -->
+    <div id="replayMode" class="modeBody hidden">
+      <div class="lobbyLabel">Recent matches on this device</div>
+      <ul id="replayList" class="lobbyRoster"></ul>
+      <button id="replayLoadBtn" type="button" class="lobbyLeave">Load replay file…</button>
+      <input id="replayFile" type="file" accept=".json,application/json" class="hidden">
+    </div>
+
     <div id="lobbyError" class="hidden"></div>
     </div>
 
@@ -407,6 +429,7 @@
     <h1 id="endTitle">Defeated</h1>
     <p id="endText"></p>
     <button id="restartBtn">Play Again</button>
+    <div id="endReplayRow" class="hidden"><button id="endReplayBtn" type="button" class="linkBtn">Watch replay</button><button id="endSaveBtn" type="button" class="linkBtn">Download replay</button></div>
   </div>
 </div>
 
@@ -439,7 +462,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'account', 'ui', 'radial', 'menubg', 'options', 'install', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'render', 'input', 'account', 'ui', 'radial', 'menubg', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

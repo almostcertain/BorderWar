@@ -18,6 +18,11 @@
   // Web Worker; §8 divergence #2 explains why we take the budget instead.
   const SIM_BUDGET_MS = 8;
 
+  // The same budget while a replay is seeking (js/replay.js). A jump is a
+  // long run of turns the viewer is waiting on, so the sim gets most of the
+  // frame and the picture drops to a few frames a second until it arrives.
+  const SEEK_BUDGET_MS = 48;
+
   // performance.now() at the moment the most recent turn finished executing.
   // Only ever used for render smoothing — see Game.renderElapsed below.
   let lastTurnAt = 0;
@@ -211,6 +216,7 @@
     lobbyLinkOpened = false;
     stopLobbyListPolling();
 
+    Replay.finish();
     Transport.disconnect();
     Runner.reset();
     UI.showHostLobby(gameID);
@@ -234,6 +240,7 @@
     lobbyLinkOpened = false;
     stopLobbyListPolling();
 
+    Replay.finish();
     Transport.disconnect();
     Runner.reset();
     UI.showJoinLobby();
@@ -354,7 +361,36 @@
   function onConnect() {
     Runner.reset();
     Executor.reset();
+    // Transport.connect has just pointed Runner.onHash at itself. Replay sits
+    // in front: it keeps hashes while recording and checks them while playing.
+    const sendHash = Runner.onHash;
+    Runner.onHash = (turnNumber, hash) => {
+      Replay.onHash(turnNumber, hash);
+      sendHash(turnNumber, hash);
+    };
   }
+
+  // --- Replays (js/replay.js, docs/replays.md) --------------------------------
+  //
+  // A replay is one more path through the same connect/onConnect/
+  // onServerMessage pipeline: a local connection whose LocalServer feeds
+  // recorded turns. Replay calls back here because this file owns connections.
+  Replay.host = {
+    connect(feed) {
+      inLobby = false;
+      myRole = 'sp';
+      stopLobbyListPolling();
+      Transport.disconnect();
+      Runner.reset();
+      Transport.connect(onConnect, onServerMessage, { local: true, replay: feed });
+    },
+    exit() {
+      Transport.disconnect();
+      Runner.reset();
+      Replay.stop();
+      backToMenu();
+    }
+  };
 
   // Everything a server says to us (§4's server->client table). Two messages
   // matter in Phase 1; `lobby_info` and `error` are MP-2.3's additions, live
@@ -433,6 +469,10 @@
         UI.reset();
         UI.enterSpawnSelect();
 
+        // A fresh match is recorded; a replay being played is not.
+        if (Replay.active) Replay.onMatchReady();
+        else Replay.begin(info, msg.myClientID, myPlayerId);
+
         // The catch-up backlog. Empty at a fresh start; non-empty after a
         // rejoin (§4), and the drain loop below is what works through it.
         if (Array.isArray(msg.turns)) for (const t of msg.turns) Runner.addTurn(t);
@@ -497,6 +537,7 @@
     inLobby = false;
     myRole = 'sp';
     stopLobbyListPolling();
+    Replay.finish();
     Transport.disconnect();
     Runner.reset();
 
@@ -539,12 +580,21 @@
     lastPanFrameAt = now;
     Input.updateKeyPan(panDt);
 
-    const budgetEnd = performance.now() + SIM_BUDGET_MS;
-    while (Runner.pendingTurns() > 0 && performance.now() < budgetEnd) {
+    // A seeking replay refills the queue itself between turns rather than
+    // waiting on LocalServer's 5 ms pump, up to the turn it is heading for.
+    const seeking = Replay.seeking();
+    const budgetEnd = performance.now() + (seeking ? SEEK_BUDGET_MS : SIM_BUDGET_MS);
+    while (performance.now() < budgetEnd) {
+      if (Runner.pendingTurns() === 0) {
+        if (!seeking || Runner.currTurn >= Replay.seekTarget) break;
+        LocalServer.pumpNow();
+        if (Runner.pendingTurns() === 0) break;
+      }
       Runner.executeNextTurn();
       Transport.turnComplete();
       lastTurnAt = performance.now();
     }
+    Replay.frame();
 
     // MP-4.1: catch-up progress. Purely a readout of what the drain loop just
     // above already did — this owns no logic of its own, only whether a
@@ -553,7 +603,8 @@
     // after this frame's budget-limited pass), but a same-tick backlog is
     // always ≤1 turn in ordinary play, so in practice this only ever shows
     // during the kind of multi-hundred-turn backlog a rejoin produces.
-    UI.updateCatchup(Runner.pendingTurns());
+    // A replay's own bar says where a seek has got to.
+    UI.updateCatchup(Replay.active ? 0 : Runner.pendingTurns());
 
     // Smooth clock for animation only. Wall-clock time since the last executed
     // turn, CLAMPED TO ONE TICK: the sim's authoritative state is whatever the
@@ -566,6 +617,7 @@
 
     Render.draw();
     UI.update();
+    UI.updateReplayBar();
     Options.perfFrame(now);
     // Called every frame, unconditionally: checkEndGame now also has to
     // notice this client's own defeat the instant it happens, which can be
@@ -575,7 +627,11 @@
   }
 
   document.getElementById('startBtn').addEventListener('click', start);
-  document.getElementById('restartBtn').addEventListener('click', () => {
+  document.getElementById('restartBtn').addEventListener('click', backToMenu);
+
+  // From a finished match, or out of a replay, to the main menu.
+  function backToMenu() {
+    Replay.finish();
     document.getElementById('endOverlay').classList.add('hidden');
     document.getElementById('overlay').classList.remove('hidden');
     // The lobby that fed the finished match is gone; don't show its stale code.
@@ -587,7 +643,9 @@
     // which would otherwise leave the debug panel floating over this menu.
     document.getElementById('debugPanel').classList.add('hidden');
     document.getElementById('debugToggle').classList.add('hidden');
-  });
+    // The Replays tab may be the one showing, and the list has just changed.
+    UI.refreshReplayList();
+  }
 
   requestAnimationFrame(loop);
 })();

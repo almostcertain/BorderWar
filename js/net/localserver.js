@@ -157,6 +157,22 @@ const LocalServer = {
   // only in effect — a real server owns its own clock and ignores nothing here.
   paused: false,
 
+  // --- Replay ----------------------------------------------------------------
+  //
+  // Playing back a recorded match (js/replay.js, docs/replays.md): MP-5.2's
+  // "replay-mode LocalServer that feeds archived turns". When set, by start()
+  // from `opts.replay`, it is
+  //
+  //   { gameStartInfo, myClientID, count, byTurn: Map(turnNumber -> intents) }
+  //
+  // and three things change: `start` carries the recorded gameStartInfo and
+  // the recorder's clientID, endTurn takes each turn's intents from `byTurn`
+  // instead of from the client, and the pump stops for good after `count`
+  // turns. Intents and the `winner` vote from the watching client are dropped.
+  // Speed, pause and burst work exactly as they do live, which is what the
+  // replay bar's controls are.
+  replay: null,
+
   // --- Lifecycle -------------------------------------------------------------
 
   // Begin a match. `opts` carries what the real server would have decided in
@@ -184,7 +200,8 @@ const LocalServer = {
       this.clientID = Executor.LOCAL_CLIENT_ID;
     }
 
-    this.gameStartInfo = {
+    this.replay = opts.replay || null;
+    this.gameStartInfo = this.replay ? this.replay.gameStartInfo : {
       gameID: typeof opts.gameID === 'string' ? opts.gameID : 'local',
       seed: opts.seed >>> 0,
       config: {
@@ -222,7 +239,7 @@ const LocalServer = {
 
     // `turns: []` — a fresh match has no catch-up backlog. A rejoin is the
     // case where this is non-empty; see onMessage's `rejoin`.
-    this._emit(Protocol.msg.start([], this.gameStartInfo, this.clientID));
+    this._emit(Protocol.msg.start([], this.gameStartInfo, this.replay ? this.replay.myClientID : this.clientID));
 
     this._pumpID = setInterval(() => this._pump(), this.PUMP_INTERVAL_MS);
   },
@@ -252,6 +269,7 @@ const LocalServer = {
     this.speed = 1;
     this._burstRemaining = 0;
     this.paused = false;
+    this.replay = null;
   },
 
   // Hold or release the pump. Resuming restarts the turn clock so the first
@@ -283,6 +301,7 @@ const LocalServer = {
         // it goes on here and not at the sender for the same reason it does in
         // multiplayer — authorship is the one thing a relay is authoritative
         // about (§1), and the Executor resolves the acting player from it.
+        if (this.replay) return true; // a replay's turns are already written
         this.intents.push(Protocol.stamp(clientMsg.intent, this.clientID));
         return true;
 
@@ -310,6 +329,7 @@ const LocalServer = {
         // Client-voted game end. One client, so one vote decides. The pump
         // stops: the match is finished and further turns would be simulated
         // against an ended game.
+        if (this.replay) return true; // the viewer may still scrub back
         this.winner = clientMsg.winner;
         this.stop();
         return true;
@@ -360,12 +380,19 @@ const LocalServer = {
   _pump() {
     if (!this.running || this.paused) return;
 
+    // A replay has a last turn. Past it there is nothing to emit, burst or not.
+    if (this.replay && this.turns.length >= this.replay.count) {
+      this._burstRemaining = 0;
+      return;
+    }
+
     if (this._burstRemaining > 0) {
       // Burst: emit as many turns as the backlog allows this tick. Bounded on
       // both sides — by the remaining count and by the backlog cap — so this
       // loop always terminates and never emits more than asked.
       while (this._burstRemaining > 0 &&
-             (this.turns.length - this.turnsExecuted) < this.MAX_REPLAY_BACKLOG_TURNS) {
+             (this.turns.length - this.turnsExecuted) < this.MAX_REPLAY_BACKLOG_TURNS &&
+             !(this.replay && this.turns.length >= this.replay.count)) {
         this._burstRemaining--;
         this.endTurn();
       }
@@ -403,7 +430,8 @@ const LocalServer = {
   // A caller that wants one turn, now, gets one turn, now — which is what makes
   // this testable without a wall clock, and is how MP-1.5 can single-step.
   endTurn() {
-    const turn = Protocol.turn(this.turns.length, this.intents);
+    const intents = this.replay ? (this.replay.byTurn.get(this.turns.length) || []) : this.intents;
+    const turn = Protocol.turn(this.turns.length, intents);
     this.turns.push(turn);
     this.intents = [];
     this.turnStartTime = Date.now();
@@ -428,6 +456,11 @@ const LocalServer = {
     if (n <= 0) return;
     this._burstRemaining += n;
   },
+
+  // Run the pump now instead of waiting for its next 5 ms tick. main.js calls
+  // this between turns while a replay is seeking, so a long jump is limited by
+  // how fast the sim runs rather than by one backlog's worth of turns a frame.
+  pumpNow() { this._pump(); },
 
   // Turns still queued to emit in the current burst. For tests and for a
   // progress indicator.

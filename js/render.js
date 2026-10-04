@@ -697,6 +697,8 @@ const Render = {
   //     altRelationOf and drawDiploBadges already treat as "no viewer".
   fogActive() {
     if (!Game.fog || Game.winnerId !== null) return false;
+    // A replay shows the whole map unless the viewer asks for one player's fog.
+    if (Replay.active && Replay.revealAll) return false;
     const me = Game.players[Game.me];
     return !!me && me.alive && Game.visionGroup(Game.me) >= 0;
   },

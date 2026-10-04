@@ -139,6 +139,7 @@ const UI = {
     this.setupBuildBar();
     this.setupLobby();
     this.setupAccount();
+    this.setupReplays();
 
     // DEBUG BYPASS #1 — dev-only gold cheats.
     //
@@ -216,6 +217,7 @@ const UI = {
       }
       if (e.key === 'p' || e.key === 'P') { this.togglePause(); return; }
       if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'm') { this.toggleMusic(); return; }
+      if (Replay.active) return; // watching: nothing to build
       const u = Game.UNITS.find(x => x.hotkey === e.key);
       if (u) this.togglePlacing(u.type);
       // Only a fog match has the button, so only a fog match has the key.
@@ -234,6 +236,7 @@ const UI = {
   // Singleplayer only, and only while a match is live: LocalServer stops its
   // pump when paused, which freezes the sim since it advances on turn arrival.
   togglePause() {
+    if (Replay.active) { Replay.setPaused(Replay.ended() ? false : !Replay.paused); return; }
     if (!Transport.isLocal || !Game.players[Game.me] || Game.winnerId !== null) return;
     LocalServer.setPaused(!LocalServer.paused);
   },
@@ -799,6 +802,7 @@ const UI = {
   },
 
   onTap(sx, sy) {
+    if (Replay.active) return; // watching: a tap is not an order
     if (Game.spawning) {
       const tile = Render.screenToTile(sx, sy);
       if (tile < 0) return;
@@ -2078,6 +2082,10 @@ const UI = {
   },
 
   showEnd(title, text) {
+    // A replay has no result of its own to announce; its bar shows the end.
+    if (Replay.active) return;
+    Replay.noteResult(title);
+    document.getElementById('endReplayRow').classList.toggle('hidden', !Replay.snapshot());
     document.getElementById('endTitle').textContent = title;
     document.getElementById('endText').textContent = text;
     // #22: a popup over the live map. Each new result (e.g. Victory/Game Over
@@ -2113,7 +2121,8 @@ const UI = {
     const bodies = {
       sp: document.getElementById('spMode'),
       host: document.getElementById('hostMode'),
-      join: document.getElementById('joinMode')
+      join: document.getElementById('joinMode'),
+      replay: document.getElementById('replayMode')
     };
     // Picking a mode swaps the open-game card out for that mode's form; Back
     // (#modeBack) undoes it. A class on #overlay rather than `hidden` on the
@@ -2129,6 +2138,7 @@ const UI = {
         this.setLobbyError('');
         // The preview skips drawing while its panel is hidden.
         this.refreshMapPreview(tab.dataset.mode === 'host' ? 'host' : '');
+        if (tab.dataset.mode === 'replay') this.refreshReplayList();
       });
     });
     back.addEventListener('click', () => {
@@ -2154,6 +2164,157 @@ const UI = {
     let savedTag = '';
     try { savedTag = localStorage.getItem('borderwar_tag') || ''; } catch (e) { /* ignore */ }
     document.getElementById('playerTag').value = savedTag;
+  },
+
+  // --- Replays (js/replay.js, docs/replays.md) ---------------------------------
+  //
+  // The menu's Replays tab and the playback bar. Replay holds the state and
+  // does the work; this is the DOM around it.
+
+  setupReplays() {
+    const $ = (id) => document.getElementById(id);
+
+    $('replayLoadBtn').addEventListener('click', () => $('replayFile').click());
+    $('replayFile').addEventListener('change', () => {
+      const file = $('replayFile').files[0];
+      $('replayFile').value = '';
+      if (!file) return;
+      Replay.readFile(file)
+        .then((record) => Replay.put(record).then(() => this.playReplay(record)))
+        .catch((err) => this.setLobbyError(err.message));
+    });
+
+    $('endReplayBtn').addEventListener('click', () => {
+      const record = Replay.snapshot();
+      if (record) this.playReplay(record);
+    });
+    $('endSaveBtn').addEventListener('click', () => {
+      const record = Replay.snapshot();
+      if (record) Replay.download(record);
+    });
+
+    $('replayPlay').addEventListener('click', () => this.togglePause());
+    $('replaySpeed').addEventListener('click', () => Replay.cycleSpeed());
+    // Dragging only moves the readout; the jump happens on release, because a
+    // backward jump replays the match from the start.
+    $('replaySeek').addEventListener('input', () => { this._replayDragging = true; });
+    $('replaySeek').addEventListener('change', () => {
+      this._replayDragging = false;
+      Replay.seek(+$('replaySeek').value);
+    });
+    $('replayView').addEventListener('change', () => Replay.setView(+$('replayView').value));
+    $('replayReveal').addEventListener('change', () => { Replay.revealAll = $('replayReveal').checked; });
+    $('replayExit').addEventListener('click', () => Replay.host.exit());
+  },
+
+  playReplay(record) {
+    const err = Replay.play(record);
+    if (err) this.setLobbyError(err);
+  },
+
+  refreshReplayList() {
+    Replay.list().then((list) => this.renderReplayList(list));
+  },
+
+  // "12:40" from a turn count.
+  replayClock(turns) {
+    const s = Math.floor(turns * Game.TICK_DT);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  },
+
+  renderReplayList(list) {
+    const ul = document.getElementById('replayList');
+    ul.innerHTML = '';
+    if (list.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'lobbyListEmpty';
+      li.textContent = 'No replays yet. Matches you play are saved here automatically.';
+      ul.appendChild(li);
+      return;
+    }
+    list.forEach((record) => {
+      const info = record.gameStartInfo || {};
+      const cfg = info.config || {};
+      const humans = Array.isArray(info.players) ? info.players.length : 1;
+      const when = new Date(record.startedAt || record.savedAt);
+      const older = record.build && window.BUILD_ID && record.build !== window.BUILD_ID;
+
+      const li = document.createElement('li');
+      const label = document.createElement('span');
+      label.className = 'replayInfo';
+      label.title = 'Watch';
+      label.textContent = (record.result || 'Unfinished') + ' · ' +
+        (cfg.map === 'world' ? 'The World' : 'Procedural ' + (cfg.mapSize || ''));
+      const sub = document.createElement('small');
+      sub.textContent = when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
+        when.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) +
+        ' · ' + this.replayClock(record.turnCount) +
+        ' · ' + (humans > 1 ? humans + ' players' : 'Solo') +
+        (older ? ' · older version' : '');
+      label.appendChild(sub);
+      label.addEventListener('click', () => this.playReplay(record));
+
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.textContent = 'Save';
+      save.title = 'Download as a file';
+      save.addEventListener('click', () => Replay.download(record));
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.textContent = '✕';
+      del.title = 'Delete';
+      del.addEventListener('click', () => Replay.remove(record.id).then(() => this.refreshReplayList()));
+
+      li.appendChild(label);
+      li.appendChild(save);
+      li.appendChild(del);
+      ul.appendChild(li);
+    });
+  },
+
+  // Once a frame from main.js. Shows the bar only while a replay plays.
+  updateReplayBar() {
+    const $ = (id) => document.getElementById(id);
+    const bar = $('replayBar');
+    if (bar._record !== Replay.record) {
+      bar._record = Replay.record;
+      bar.classList.toggle('hidden', !Replay.active);
+      if (Replay.active) {
+        // Humans only: they are whose views differ in an interesting way.
+        const players = Replay.record.gameStartInfo.players || [];
+        const view = $('replayView');
+        view.innerHTML = '';
+        for (const p of players) {
+          const opt = document.createElement('option');
+          opt.value = p.playerId;
+          opt.textContent = p.username;
+          view.appendChild(opt);
+        }
+        view.value = Replay.viewAs;
+        view.classList.toggle('hidden', players.length < 2);
+        $('replayReveal').checked = Replay.revealAll;
+        this._replayDragging = false;
+      }
+    }
+    if (!Replay.active) return;
+
+    const seek = $('replaySeek');
+    const len = Replay.length();
+    if (+seek.max !== len) seek.max = len;
+    if (!this._replayDragging) seek.value = Replay.turn();
+    $('replayTime').textContent = (Replay.seeking() ? 'Seeking ' : '') +
+      this.replayClock(this._replayDragging ? +seek.value : Replay.turn()) + ' / ' + this.replayClock(len);
+
+    const waiting = Replay.paused || Replay.ended();
+    const play = $('replayPlay');
+    if (play._waiting !== waiting) {
+      play._waiting = waiting;
+      play.innerHTML = iconHtml(waiting ? 'play' : 'pause');
+      play.classList.toggle('paused', waiting);
+    }
+    $('replaySpeed').textContent = Replay.speed + 'x';
+    $('replayRevealRow').classList.toggle('hidden', !Game.fog);
   },
 
   // --- Accounts (docs/accounts-auth.md §2.1) -----------------------------------
