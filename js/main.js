@@ -588,7 +588,8 @@
 
   function loop(now) {
     requestAnimationFrame(loop);
-    if (!Render.tileCanvas) return;
+    // Perf.bench drives turns and frames itself (js/perf.js).
+    if (!Render.tileCanvas || Perf.benching) return;
 
     // Clamped so a tab-switch's huge gap doesn't fling the camera on return.
     const panDt = lastPanFrameAt ? Math.min(0.1, (now - lastPanFrameAt) / 1000) : 0;
@@ -605,9 +606,11 @@
         LocalServer.pumpNow();
         if (Runner.pendingTurns() === 0) break;
       }
+      const turnStart = performance.now();
       Runner.executeNextTurn();
       Transport.turnComplete();
       lastTurnAt = performance.now();
+      Perf.simTurn(lastTurnAt - turnStart);
     }
     Replay.frame();
 
@@ -644,9 +647,12 @@
     const since = (performance.now() - lastTurnAt) / 1000;
     Game.renderElapsed = Game.elapsed + Math.max(0, Math.min(Game.TICK_DT, since));
 
+    const drawStart = performance.now();
     Render.draw();
+    const drawEnd = performance.now();
     UI.update();
     UI.updateReplayBar();
+    Perf.drawn(now, drawEnd - drawStart, performance.now() - drawEnd);
     Options.perfFrame(now);
     // Called every frame, unconditionally: checkEndGame now also has to
     // notice this client's own defeat the instant it happens, which can be

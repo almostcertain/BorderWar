@@ -1528,6 +1528,15 @@ body:has(#overlay.hidden) #optionsBtn { display: none; }
 .optRow select, .optRow input[type="range"] { margin-left: auto; }
 .optRow input[type="range"] { width: 140px; }
 .optRow small { display: block; font-size: 11px; opacity: 0.6; }
+.panel button#optCopyPerf {
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  border-radius: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: #6b9bff;
+}
 
 /* Accounts: the menu strip and the sign-in dialog (docs/accounts-auth.md). */
 #accountStrip { font-size: 13px; opacity: 0.85; }

@@ -46,6 +46,8 @@ const Options = (function() {
     frames++;
     if (now - sampleStart < 500) return;
     let text = Math.round(frames * 1000 / (now - sampleStart)) + ' fps';
+    const work = Perf.hud();
+    if (work) text += ' · ' + work;
     if (Transport.rtt !== null && !Transport.isLocal) text += ' · ' + Transport.rtt + ' ms';
     perfEl.textContent = text;
     frames = 0; sampleStart = now;
@@ -69,6 +71,20 @@ const Options = (function() {
   volEl.addEventListener('input', () => {
     Music.preview(true);
     set('musicVol', parseFloat(volEl.value));
+  });
+
+  // Copies Perf.text() so numbers from a player's own machine can be pasted
+  // into a report. Falls back to the console where the clipboard is refused.
+  const copyEl = document.getElementById('optCopyPerf');
+  copyEl.addEventListener('click', () => {
+    const report = Perf.text();
+    const done = label => {
+      copyEl.textContent = label;
+      setTimeout(() => { copyEl.textContent = 'Copy performance report'; }, 1500);
+    };
+    console.log(report);
+    if (!navigator.clipboard) { done('Printed to console'); return; }
+    navigator.clipboard.writeText(report).then(() => done('Copied'), () => done('Printed to console'));
   });
 
   const close = () => { overlayEl.classList.add('hidden'); Music.preview(false); };

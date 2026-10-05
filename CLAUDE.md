@@ -39,7 +39,7 @@ Every client runs the same simulation from the same seed and inputs, so the sim 
 
 For anything visible in the game, start the `borderwar` preview (`.claude/launch.json`) and check the console for errors before calling it done. Never run dev servers via Bash.
 
-- Test performance work on the `large` map (2000x1000, formerly named xlarge). The Browser pane has no `requestAnimationFrame`, so don't trust unpaced frame times; use allocation/heap metrics instead.
+- Test performance work on the `large` map (2000x1000, formerly named xlarge). The Browser pane has no `requestAnimationFrame`, so don't trust unpaced frame times; use allocation/heap metrics instead. The measuring tools (`Perf.bench` in the pane, `sim-profile.js --json/--vs`, `cpu-top.js`) are described in `docs/perf-tools.md`.
 
 ## Where code goes
 
@@ -57,10 +57,10 @@ Use it to jump to the right file; grep for the method name rather than reading b
 - `js/map.js` (sim): map generation, world-map loading, terrain, rivers, spawns. `js/noise.js`: seeded noise.
 - `js/render.js`: canvas drawing: tiles and territory reveal, camera, structures and icons, placement previews, fronts, boats, labels.
 - `js/ui.js`: DOM panels: build bar, hover panel, `onTap` (click actions), leaderboard, alerts, banners, end screen, lobby screens.
-- `js/input.js` mouse, keys, touch · `js/radial.js` right-click nation menu · `js/fx.js` client-only effects · `js/music.js` generative background music (Web Audio, client-only) · `js/replay.js` match recording, replay storage and playback (client-only, `docs/replays.md`) · `js/main.js` boot, game loop, multiplayer lobby wiring.
+- `js/input.js` mouse, keys, touch · `js/radial.js` right-click nation menu · `js/fx.js` client-only effects · `js/music.js` generative background music (Web Audio, client-only) · `js/replay.js` match recording, replay storage and playback (client-only, `docs/replays.md`) · `js/perf.js` frame/sim/draw timing, Show FPS readout, benchmark (client-only, `docs/perf-tools.md`) · `js/main.js` boot, game loop, multiplayer lobby wiring.
 - `js/net/`: `protocol.js` intent shapes and validation · `executor.js` intent to sim (the only mutation path) · `runner.js` turn queue · `transport.js` · `localserver.js` · `hash.js` state digest · `worldmap.js` world map fetch.
 - `server/`: `index.js` HTTP and WS · `gamemanager.js` · `gameserver.js` lobby and turn loop · `client.js` · `log.js`.
-- `tools/`: `sim-harness.js` goldens · `sim-profile.js` headless tick profiler.
+- `tools/`: `sim-harness.js` goldens · `sim-profile.js` headless tick profiler · `cpu-top.js` self time from a `.cpuprofile`.
 
 ## Communication
 

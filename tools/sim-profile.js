@@ -3,7 +3,10 @@
 // reports tick-time percentiles, total time per sim phase / AI method, and
 // the worst ticks with what dominated them. Measurement only — never feeds
 // anything back into the sim.
-//   node tools/sim-profile.js [ticks=6000] [map=world|small|medium|large] [seed=12345] [bots=8] [tribes=12] [--fog] [--drill=TICK]
+//   node tools/sim-profile.js [ticks=6000] [map=world|small|medium|large] [seed=12345] [bots=8] [tribes=12] [--fog] [--drill=TICK] [--json=FILE] [--vs=FILE]
+// --json=FILE saves the run's summary (percentiles, spike counts, ms per tick
+// by phase); --vs=FILE prints this run against a summary saved earlier, for a
+// before/after on the same machine. See docs/perf-tools.md.
 // --drill=TICK places The Drill (docs/battle-royale.md) at that tick, on the
 // nation-owned tile nearest the map's top-left corner (a large start radius:
 // the worst case for the circle's sweep), paid for by injected gold.
@@ -60,4 +63,24 @@ const vision=['visionGroupOf','visionCells','visionStamped','visionShare','visio
 console.log('memory MB: heapUsed',mb(mem.heapUsed),'arrayBuffers',mb(mem.arrayBuffers),'| vision arrays',mb(vision),'groups',Game.visionGroups,'words',Game.visionWords,'cells',Game.visionCellsW*Game.visionCellsH);
 if(FOG){waits.sort((a,b)=>a-b);const w=p=>waits.length?waits[Math.floor(p*(waits.length-1))]:0;console.log('scout route waits (ticks): orders',waits.length,'mean',(waits.reduce((a,b)=>a+b,0)/Math.max(1,waits.length)).toFixed(2),'p50',w(.5),'p95',w(.95),'p99',w(.99),'max',w(1),'| peak scouts afloat',scoutPeak);}
 if(DRILL_AT&&Game.drill){const d=Game.drill;const ms=rows.filter(r=>r.t>d.placedTick&&r.br.stepDrill!==undefined).map(r=>r.br.stepDrill).sort((a,b)=>a-b);const dq=p=>ms[Math.floor(p*(ms.length-1))].toFixed(2);if(ms.length)console.log('stepDrill ms over',ms.length,'ticks: mean',(ms.reduce((a,b)=>a+b)/ms.length).toFixed(3),'p50',dq(.5),'p99',dq(.99),'max',dq(1),'| winner',Game.winnerId,'at',((Game.ticks-d.placedTick)/Game.TICKS_PER_SEC/60).toFixed(2),'min after placement');}
-console.log('final hash',Hash.compute(),'ticks',Game.ticks);
+const finalHash=Hash.compute();
+console.log('final hash',finalHash,'ticks',Game.ticks);
+const argOf=n=>{const a=process.argv.find(x=>x.startsWith('--'+n+'='));return a?a.slice(n.length+3):null;};
+const summary={args:{ticks:TICKS,map:MAP,seed:SEED,bots:BOTS,tribes:TRIBES,fog:FOG,drill:DRILL_AT},node:process.version,cpu:require('os').cpus()[0].model,ranTicks:rows.length,finalHash,
+  tick:{mean:+(dts.reduce((a,b)=>a+b)/dts.length).toFixed(2),p50:+q(.5),p95:+q(.95),p99:+q(.99),max:+q(1)},
+  over:{16:rows.filter(r=>r.dt>16).length,33:rows.filter(r=>r.dt>33).length,50:rows.filter(r=>r.dt>50).length,100:rows.filter(r=>r.dt>100).length},
+  phaseMsPerTick:Object.fromEntries(Object.entries(tot).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,+(v/rows.length).toFixed(3)]))};
+const vsFile=argOf('vs');
+if(vsFile){const b=JSON.parse(fs.readFileSync(vsFile,'utf8'));const pct=(n,o)=>o?((n-o)/o*100>=0?'+':'')+((n-o)/o*100).toFixed(0)+'%':'';
+  const row=(k,o,n)=>console.log(' ',String(k).padEnd(28),String(o??'-').padStart(9),String(n??'-').padStart(9),' ',o!=null&&n!=null?pct(n,o):'');
+  console.log('VS',vsFile,JSON.stringify(b.args)===JSON.stringify(summary.args)?'':'(DIFFERENT ARGS: '+JSON.stringify(b.args)+')');
+  // Same hash = the sim did the same thing, so the timings compare like for like.
+  console.log(' final hash',b.finalHash===finalHash?'identical (behaviour-neutral)':'DIFFERS (sim behaviour changed; whole-run numbers are indicative only)');
+  console.log(' ','tick ms'.padEnd(28),'before'.padStart(9),'now'.padStart(9));
+  for(const k of ['mean','p50','p95','p99','max'])row(k,b.tick[k],summary.tick[k]);
+  for(const k of [16,33,50,100])row('ticks >'+k+'ms',b.over[k],summary.over[k]);
+  console.log(' ','ms per tick by phase'.padEnd(28));
+  const keys=[...new Set([...Object.keys(summary.phaseMsPerTick),...Object.keys(b.phaseMsPerTick)])].filter(k=>Math.max(summary.phaseMsPerTick[k]||0,b.phaseMsPerTick[k]||0)>=0.05).slice(0,25);
+  for(const k of keys)row(k,b.phaseMsPerTick[k],summary.phaseMsPerTick[k]);}
+const jsonFile=argOf('json');
+if(jsonFile){fs.writeFileSync(jsonFile,JSON.stringify(summary,null,1));console.log('saved',jsonFile);}

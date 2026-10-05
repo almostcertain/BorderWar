@@ -160,7 +160,7 @@
       <input id="optSaveBattery" type="checkbox"> <span>Battery saver<small>Limits the game to 30 fps; on by default on phones and tablets</small></span>
     </label>
     <label class="optRow">
-      <input id="optShowPerf" type="checkbox"> <span>Show FPS / ping<small>Ping shows in online games</small></span>
+      <input id="optShowPerf" type="checkbox"> <span>Show FPS / ping<small>Also sim and draw time; ping shows in online games</small></span>
     </label>
     <label class="optRow">
       <input id="optHideHint" type="checkbox"> <span>Hide hint bar<small>Warnings still appear</small></span>
@@ -184,6 +184,7 @@
         <option value="1.4">Extra large</option>
       </select>
     </label>
+    <button type="button" id="optCopyPerf" class="linkBtn" title="Copies frame, sim and draw timings from the current or last match, to paste into a bug report.">Copy performance report</button>
     <button type="button" id="optionsClose" class="primaryBtn">Done</button>
   </div>
 </div>
@@ -507,7 +508,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'render', 'input', 'account', 'ui', 'radial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'render', 'input', 'account', 'ui', 'radial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>
