@@ -97,8 +97,9 @@ const Tutorial = {
     },
     {
       title: 'Make peace',
-      text: touch => (touch ? 'Press and hold' : 'Right-click') +
-        ' another nation and choose Peace to offer an alliance. Allies cannot attack each other.',
+      text: touch => 'Nations are the brightly coloured territories; the beige ones are tribes, which make no alliances. ' +
+        (touch ? 'Press and hold' : 'Right-click') + ' a nation and choose Peace. Allies cannot attack each other. ' +
+        (touch ? 'Pinch' : 'Scroll') + ' to zoom out if none is in view.',
       done: me => Game.requests.some(r => r.from === me.id) ||
         Game.alliances.some(a => a.a === me.id || a.b === me.id)
     },
