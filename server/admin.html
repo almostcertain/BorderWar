@@ -13,6 +13,7 @@
   header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
   #status { color:var(--dim); font-size:12px; margin-left:auto; }
   button { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; font:inherit; }
+  select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 6px; font:inherit; max-width:200px; }
   button:hover { border-color:var(--dim); }
   input { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 10px; font:inherit; width:min(360px,100%); }
   #login { max-width:420px; margin:12vh auto; display:grid; gap:10px; }
@@ -76,6 +77,7 @@
     <h1>BorderWar server</h1>
     <span id="build" class="tag"></span>
     <span id="status"></span>
+    <select id="tz" aria-label="Time zone"></select>
     <button id="pause" type="button">Pause</button>
     <button id="logout" type="button">Forget token</button>
   </header>
@@ -101,7 +103,7 @@
   var REFRESH_MS = 3000;
   var KEY = 'borderwar-admin-token';
   var $ = function (id) { return document.getElementById(id); };
-  var token = null, timer = null, paused = false;
+  var token = null, timer = null, paused = false, lastUpdate = 0;
   try { token = localStorage.getItem(KEY); } catch (e) {}
 
   function el(tag, cls, text) {
@@ -201,6 +203,7 @@
   var SVGNS = 'http://www.w3.org/2000/svg';
   var HISTORY_MS = 60000;
   var RANGE_KEY = 'borderwar-admin-range';
+  var TZ_KEY = 'borderwar-admin-tz';
   var RANGES = [
     { label: '1 hour', ms: 3600e3, bucket: 60e3, sub: 'Per minute' },
     { label: '24 hours', ms: 86400e3, bucket: 600e3, sub: 'Peak per 10 minutes' },
@@ -223,10 +226,41 @@
     if (parent) parent.appendChild(n);
     return n;
   }
-  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  // Time zone: '' is the browser's own, otherwise an IANA name or 'UTC'.
+  var tz = '', fmtHm = null, fmtDay = null, fmtFull = null;
+  try { tz = localStorage.getItem(TZ_KEY) || ''; } catch (e) {}
+  function setZone(z) {
+    try {
+      var o = z ? { timeZone: z } : {};
+      fmtHm = new Intl.DateTimeFormat([], Object.assign({ hour: '2-digit', minute: '2-digit', hour12: false }, o));
+      fmtDay = new Intl.DateTimeFormat([], Object.assign({ weekday: 'short' }, o));
+      fmtFull = new Intl.DateTimeFormat([], Object.assign({ timeStyle: 'medium' }, o));
+      tz = z;
+    } catch (e) { if (z) setZone(''); }
+  }
+  setZone(tz);
   function clock(t) {
-    var d = new Date(t), hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
-    return view.r.ms > 86400e3 ? d.toLocaleDateString([], { weekday: 'short' }) + ' ' + hm : hm;
+    var hm = fmtHm.format(t);
+    return view.r.ms > 86400e3 ? fmtDay.format(t) + ' ' + hm : hm;
+  }
+  function buildZones() {
+    var sel = $('tz'), zones = [];
+    try { zones = Intl.supportedValuesOf('timeZone'); } catch (e) {}
+    if (zones.indexOf('UTC') < 0) zones.unshift('UTC');
+    var local = '';
+    try { local = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) {}
+    var opt = el('option', null, 'Browser time' + (local ? ' (' + local + ')' : ''));
+    opt.value = '';
+    sel.appendChild(opt);
+    zones.forEach(function (z) { var o = el('option', null, z); o.value = z; sel.appendChild(o); });
+    sel.value = tz;
+    if (sel.value !== tz) { setZone(''); sel.value = ''; }
+    sel.addEventListener('change', function () {
+      setZone(sel.value);
+      try { localStorage.setItem(TZ_KEY, tz); } catch (e) {}
+      if (view) renderCharts();
+      if (lastUpdate) $('status').textContent = 'Updated ' + fmtFull.format(lastUpdate);
+    });
   }
   // A 1/2/5 step that puts about four gridlines under max.
   function niceStep(max) {
@@ -458,7 +492,8 @@
         if (!s) return;
         render(s);
         if (!histTimer) loadHistory();
-        $('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
+        lastUpdate = Date.now();
+        $('status').textContent = 'Updated ' + fmtFull.format(lastUpdate);
         $('status').style.color = '';
         schedule();
       })
@@ -490,6 +525,7 @@
     if (paused) clearTimeout(timer); else refresh();
   });
 
+  buildZones();
   buildCharts();
   if (token) refresh(); else showLogin('');
 })();
