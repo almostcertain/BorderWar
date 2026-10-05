@@ -1669,7 +1669,7 @@ const UI = {
       if (hoverB && hoverB.type === this.placing && hoverB.built) {
         hintEl.textContent = 'Tap to upgrade this ' + def.name + ' to level ' + (hoverB.level + 1) +
           ' · ' + formatGold(Game.unitCost(me, this.placing)) + ' gold' +
-          ' · ' + def.buildTime + 's · Esc to cancel';
+          (Game.UPGRADE_TIME ? ' · ' + Game.UPGRADE_TIME + 's' : '') + ' · Esc to cancel';
       } else {
         hintEl.textContent = 'Tap your own land to place a ' + def.name +
           ' · ' + formatGold(Game.unitCost(me, this.placing)) + ' gold' +

@@ -1560,7 +1560,7 @@ const Render = {
       if (!b.built || b.upgrading) {
         const barW = r * 1.7, barH = Math.max(2 * this.dpr, r * 0.24);
         const bx = px - barW / 2, by = py + r + barH * 1.3;
-        const pct = Math.max(0, Math.min(1, b.progress / b.buildTime));
+        const pct = b.buildTime > 0 ? Math.max(0, Math.min(1, b.progress / b.buildTime)) : 1;
         ctx.fillStyle = 'rgba(8, 14, 26, 0.85)';
         ctx.fillRect(bx, by, barW, barH);
         ctx.fillStyle = b.upgrading ? 'rgba(255, 205, 110, 0.95)' : 'rgba(130, 215, 255, 0.95)';

@@ -30,20 +30,25 @@ Object.assign(Game, {
   // same. See maxTroopsRaw, which spends that same sum on the pop bonus.
   //
   // buildTime is seconds of construction after placement, ticked in
-  // Game.tick — see updateConstruction. Chosen short enough to stay a visible
-  // pause rather than a real commitment; the gold cost is already the real
-  // one. OpenFront's own upgrades are instant (UpgradeStructureExecution has
-  // no tick phase at all) — the timer here is this game's own addition, so
-  // upgrading reuses buildTime rather than a ported duration.
+  // Game.tick — see updateConstruction. Each is their unitInfo's
+  // constructionDuration converted from ticks (10 a second): City and Factory
+  // 2*10, Port and Defense Post 5*10, Missile Silo 10*10, SAM Launcher
+  // SAM_CONSTRUCTION_TICKS = 30*10. Radio Tower is this game's own unit and
+  // keeps its own number.
+  //
+  // OpenFront's upgrades are instant (UpgradeStructureExecution has no tick
+  // phase at all), so UPGRADE_TIME is 0: the level lands on the next
+  // updateConstruction pass. It is its own dial rather than buildTime so an
+  // upgrade never inherits a structure's construction time.
+  UPGRADE_TIME: 0,
   UNITS: [
     {
       type: 'city', name: 'City', icon: '🏙', hotkey: '1',
-      baseCost: 125000, maxCost: 1000000, buildTime: 8, upgradable: true
+      baseCost: 125000, maxCost: 1000000, buildTime: 2, upgradable: true
     },
     // OpenFront's UnitType.Factory: same cost curve as City, and the same
-    // constructionDuration ratio (both 2*10 ticks in their config — 1:1 —
-    // which is why this reuses city's own non-ported buildTime dial rather
-    // than inventing a different one). Their costWrapper actually pools
+    // constructionDuration (both 2*10 ticks in their config). Their
+    // costWrapper actually pools
     // Factory's count together with Port (see Port's own entry below, added
     // later) rather than pricing against its own count alone — costGroup
     // below is what wires that in. What a Factory actually DOES — recruiting
@@ -52,7 +57,7 @@ Object.assign(Game, {
     // through updateConstruction() the instant one finishes.
     {
       type: 'factory', name: 'Factory', icon: '🏭', hotkey: '2',
-      baseCost: 125000, maxCost: 1000000, buildTime: 8, upgradable: true,
+      baseCost: 125000, maxCost: 1000000, buildTime: 2, upgradable: true,
       costGroup: ['factory', 'port']
     },
     // OpenFront's UnitType.Port: same exponential cost curve as City/Factory,
@@ -63,13 +68,10 @@ Object.assign(Game, {
     // handling below, and the Factory entry's own comment (written before
     // Port existed) noting this was the one deliberate gap left to close once
     // Port arrived. constructionDuration is 5*10 ticks in their config (2.5x
-    // City/Factory's own 2*10) but buildTime here is this game's own pacing
-    // dial, not a literal tick port (see the class comment above), so this
-    // just reuses the same 8s City/Factory already use as fellow members of
-    // the upgradable/exponential family.
+    // City/Factory's own 2*10).
     {
       type: 'port', name: 'Port', icon: '⚓', hotkey: '3',
-      baseCost: 125000, maxCost: 1000000, buildTime: 8, upgradable: true,
+      baseCost: 125000, maxCost: 1000000, buildTime: 5, upgradable: true,
       costGroup: ['factory', 'port']
     },
     // OpenFront's UnitType.DefensePost. Cost curve is LINEAR (not exponential):
@@ -132,7 +134,7 @@ Object.assign(Game, {
     // Silo & Nukes" section below.
     {
       type: 'silo', name: 'Missile Silo', icon: '🚀', hotkey: '6',
-      baseCost: 1000000, maxCost: 1000000, buildTime: 8, upgradable: true, flat: true
+      baseCost: 1000000, maxCost: 1000000, buildTime: 10, upgradable: true, flat: true
     },
     // OpenFront's UnitType.AtomBomb/HydrogenBomb: also flat-cost (see Silo's
     // own comment on the `flat` curve), and `action: true` for the same
@@ -169,7 +171,7 @@ Object.assign(Game, {
     // nukes — lives in the "SAM Launcher & Interceptors" section below.
     {
       type: 'sam', name: 'SAM Launcher', icon: '📡', hotkey: '9',
-      baseCost: 1500000, maxCost: 3000000, buildTime: 8, upgradable: true, linear: true
+      baseCost: 1500000, maxCost: 3000000, buildTime: 30, upgradable: true, linear: true
     },
     // OpenFront's UnitType.MIRV (ticket #28) — the top-tier multi-warhead
     // strike, ported against MIRVExecution.ts/Config.ts. Same `action: true`
@@ -482,11 +484,10 @@ Object.assign(Game, {
     if (!this.canUpgrade(playerId, tile)) return false;
     const p = this.players[playerId];
     const b = this.buildings.get(tile);
-    const def = this.unitDef(b.type);
     p.gold -= this.unitCost(p, b.type);   // priced before the level goes up
     b.upgrading = true;
     b.progress = 0;
-    b.buildTime = def.buildTime;   // the upgrade timer, reusing the same bar
+    b.buildTime = this.UPGRADE_TIME;   // the upgrade timer, reusing the same bar
     // Same two counters a fresh build touches — an in-flight upgrade prices
     // the next build/upgrade higher immediately, exactly like a queued build
     // does, and unitsBuilt's ceiling climbs the moment gold is committed.
