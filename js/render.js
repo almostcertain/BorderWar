@@ -528,6 +528,7 @@ const Render = {
   repaintAll() {
     this.buildTiles();
     this.qHead = this.qTail = 0;   // everything queued is painted from the live owner now
+    if (this.jCount) this.jCount.fill(0);
   },
 
   // Fixed-ratio blend toward FALLOUT_TINT, done in unpacked RGB space and
@@ -546,9 +547,21 @@ const Render = {
     );
   },
 
+  // The owner of each tile as currently drawn. Tiles are painted from this,
+  // never from GameMap.owner directly: while a paced reveal (below) is part
+  // way through a turn the canvas shows a mix of old and new owners, and a
+  // border tone worked out from the sim's owners would leave the visible edge
+  // without its border wherever the sim has already moved past it. Every
+  // change to a tile here repaints its four neighbours too, so the canvas is
+  // always exactly paintTile() of this array and the border never breaks.
+  shownOwner: null,
+
   buildTiles() {
     const w = GameMap.width, h = GameMap.height;
-    const owner = GameMap.owner, px = this.pixels;
+    const live = GameMap.owner, px = this.pixels;
+    if (!this.shownOwner || this.shownOwner.length !== live.length) this.shownOwner = new live.constructor(live.length);
+    const owner = this.shownOwner;
+    owner.set(live);
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         this.paintTile(y * w + x, x, y, w, h, owner, px);
@@ -568,14 +581,25 @@ const Render = {
   // never worse than buildTiles()'s own unconditional full blit.
   buildTilesIncremental(dirtyTiles) {
     const w = GameMap.width, h = GameMap.height;
-    const owner = GameMap.owner, px = this.pixels;
+    const owner = GameMap.owner, shown = this.shownOwner, px = this.pixels;
     const layer = this.tileLayer;
-    for (const i of dirtyTiles) {
-      const x = i % w, y = (i / w) | 0;
-      this.paintTile(i, x, y, w, h, owner, px);
-      this.markLayerTile(layer, x, y);
-    }
+    for (const i of dirtyTiles) this.showTile(i, w, h, owner, shown, px, layer);
     this.flushLayerPuts(layer, this.tileCtx, this.image);
+  },
+
+  // Brings one tile's drawn owner up to date and repaints it, plus its four
+  // neighbours when the owner moved, since their border tone depends on it.
+  showTile(i, w, h, owner, shown, px, layer) {
+    const x = i % w, y = (i / w) | 0;
+    const moved = shown[i] !== owner[i];
+    shown[i] = owner[i];
+    this.paintTile(i, x, y, w, h, shown, px);
+    this.markLayerTile(layer, x, y);
+    if (!moved) return;
+    if (x > 0) { this.paintTile(i - 1, x - 1, y, w, h, shown, px); this.markLayerTile(layer, x - 1, y); }
+    if (x < w - 1) { this.paintTile(i + 1, x + 1, y, w, h, shown, px); this.markLayerTile(layer, x + 1, y); }
+    if (y > 0) { this.paintTile(i - w, x, y - 1, w, h, shown, px); this.markLayerTile(layer, x, y - 1); }
+    if (y < h - 1) { this.paintTile(i + w, x, y + 1, w, h, shown, px); this.markLayerTile(layer, x, y + 1); }
   },
 
   // --- Paced territory reveal ------------------------------------------------
@@ -587,8 +611,8 @@ const Render = {
   // insertion-ordered), so the edge sweeps forward rather than jumping.
   //
   // Pure presentation: the sim, the wire and the state hash never see it.
-  // The canvas trails GameMap.owner by at most REVEAL_MS, and every tile is
-  // painted from the *current* owner when its slot comes up, so it always
+  // The canvas trails GameMap.owner by at most REVEAL_MS, and every tile
+  // takes the *current* owner when its slot comes up (showTile), so it always
   // converges to exactly what buildTiles() would draw. Set smoothTerritory
   // false to fall back to the old paint-on-arrival behaviour.
   smoothTerritory: true,
@@ -598,12 +622,49 @@ const Render = {
   qHead: 0,
   qTail: 0,
 
+  // 'jitter' scatters each turn's tiles instead of sweeping them in conquest
+  // order: a tile is hashed to one of JITTER_BUCKETS buckets and one bucket is
+  // painted every JITTER_MS / JITTER_BUCKETS. Batches are not flushed when the
+  // next turn lands, so with JITTER_MS above the turn length consecutive turns
+  // overlap and the front dissolves forward with no 10Hz pulse. The canvas
+  // trails GameMap.owner by at most JITTER_MS however fast turns arrive.
+  // 'ordered' is the conquest-order sweep described above.
+  revealMode: 'jitter',
+  JITTER_MS: 150,
+  JITTER_BUCKETS: 9,
+  JITTER_MAX_STEPS: 3,
+  jTiles: [],
+  jCount: null,
+  jSlot: 0,
+  jBucket: 0,
+
+  enqueueJitter(dirty) {
+    const N = this.JITTER_BUCKETS;
+    if (!this.jCount || this.jCount.length !== N) {
+      this.jCount = new Int32Array(N);
+      this.jTiles = [];
+      for (let b = 0; b < N; b++) this.jTiles.push(new Int32Array(1 << 12));
+    }
+    const B = this.jTiles, C = this.jCount;
+    for (const i of dirty) {
+      const b = (Math.imul(i, 2654435761) >>> 0) % N;
+      let arr = B[b];
+      if (C[b] === arr.length) {
+        arr = new Int32Array(arr.length * 2);
+        arr.set(B[b]);
+        B[b] = arr;
+      }
+      arr[C[b]++] = i;
+    }
+  },
+
   // Moves this frame's dirty tiles into the reveal queue, timestamped across
   // [now, now + REVEAL_MS]. Anything still queued from the previous turn is
   // flushed first: turns arriving faster than REVEAL_MS (debug burst, catch-up,
   // a sped-up local game) degrade gracefully to paint-on-arrival instead of
   // building up lag.
   enqueueDirty(dirty, now) {
+    if (this.revealMode === 'jitter') { this.enqueueJitter(dirty); return; }
     const n = dirty.size;
     if (this.qHead < this.qTail) this.releaseTiles(Infinity);
     if (this.qTile.length < n) {
@@ -620,21 +681,32 @@ const Render = {
   },
 
   // Paints every queued tile whose slot has come up (all of them for
-  // Infinity), then blits just the chunks they fell in.
+  // Infinity), then blits just the chunks they fell in. Both queues are
+  // drained whatever revealMode is, so switching mode mid-game strands nothing.
   releaseTiles(now) {
     const T = this.qTile, TM = this.qTime, tail = this.qTail;
     let head = this.qHead;
-    if (head >= tail) return;
+    const C = this.jCount;
+    if (head >= tail && !C) return;
     const w = GameMap.width, h = GameMap.height;
-    const owner = GameMap.owner, px = this.pixels;
+    const owner = GameMap.owner, shown = this.shownOwner, px = this.pixels;
     const layer = this.tileLayer;
-    while (head < tail && TM[head] <= now) {
-      const i = T[head++];
-      const x = i % w, y = (i / w) | 0;
-      this.paintTile(i, x, y, w, h, owner, px);
-      this.markLayerTile(layer, x, y);
-    }
+    while (head < tail && TM[head] <= now) this.showTile(T[head++], w, h, owner, shown, px, layer);
     this.qHead = head;
+    if (C) {
+      const N = C.length;
+      const slot = now === Infinity ? this.jSlot + N : Math.floor(now / (this.JITTER_MS / N));
+      // A frame held up by a slow turn drains at most JITTER_MAX_STEPS buckets,
+      // or the tiles that turn just queued would all land at once.
+      let steps = Math.min(now === Infinity ? N : this.JITTER_MAX_STEPS, slot - this.jSlot);
+      this.jSlot = now === Infinity ? this.jSlot : slot;
+      while (steps-- > 0) {
+        const b = this.jBucket = ((this.jBucket | 0) + 1) % N;
+        const arr = this.jTiles[b], n = C[b];
+        for (let k = 0; k < n; k++) this.showTile(arr[k], w, h, owner, shown, px, layer);
+        C[b] = 0;
+      }
+    }
     this.flushLayerPuts(layer, this.tileCtx, this.image);
   },
 
@@ -968,11 +1040,12 @@ const Render = {
     // overlay knows whether ownership moved this frame too.
     const territoryChanged = Game.dirty || Game.dirtyTiles.size > 0;
     if (this.altView) this.updateAltRelations(false);
-    if (Game.dirty) {
+    if (Game.dirty || !this.shownOwner || this.shownOwner.length !== GameMap.owner.length) {
       this.buildTiles();
       Game.dirty = false;
       Game.dirtyTiles.clear();
       this.qHead = this.qTail = 0;   // the full rebuild already painted everything queued
+      if (this.jCount) this.jCount.fill(0);
     } else if (this.smoothTerritory) {
       const now = performance.now();
       if (Game.dirtyTiles.size) {
