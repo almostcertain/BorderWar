@@ -584,7 +584,7 @@
   // Battery saver (see loop). 30 ms sits between one and two 60 Hz frames, so
   // the cap lands on 30 fps whatever the display's refresh rate.
   const SAVER_FRAME_MS = 30, CAM_SETTLE_MS = 250;
-  let lastDrawAt = 0, lastCamMoveAt = 0, lastCamX = 0, lastCamY = 0, lastCamScale = 0;
+  let lastDrawAt = 0, lastCamMoveAt = 0, lastCamX = 0, lastCamY = 0, lastCamScale = 0, lastPlaceHover = -1;
 
   function loop(now) {
     requestAnimationFrame(loop);
@@ -626,12 +626,15 @@
 
     // Battery saver: the sim moves 10 times a second, so drawing at the full
     // display rate mostly repaints the same picture. Draw every other frame
-    // instead, except while the camera is moving or a build is being dragged
-    // off the bar, where the lost frames show.
+    // instead, except while something is following the player's hand, where
+    // the lost frames show: the camera moving, a finger or button down on the
+    // map, a build dragged off the bar, or the placement ghost being aimed.
     if (Options.get('saveBattery')) {
       const cam = Render.cam;
-      if (UI.barDrag || cam.x !== lastCamX || cam.y !== lastCamY || cam.scale !== lastCamScale) {
+      if (UI.barDrag || Input.pointers.size || UI.placeHover !== lastPlaceHover ||
+          cam.x !== lastCamX || cam.y !== lastCamY || cam.scale !== lastCamScale) {
         lastCamX = cam.x; lastCamY = cam.y; lastCamScale = cam.scale;
+        lastPlaceHover = UI.placeHover;
         lastCamMoveAt = now;
       }
       if (now - lastCamMoveAt > CAM_SETTLE_MS && now - lastDrawAt < SAVER_FRAME_MS) return;
