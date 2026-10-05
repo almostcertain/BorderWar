@@ -522,6 +522,7 @@
         lastTurnAt = performance.now();
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('endOverlay').classList.add('hidden');
+        sendPresence();
       };
 
       // World is normally already preloaded well before this point (fetched
@@ -716,6 +717,31 @@
     // The Replays tab may be the one showing, and the list has just changed.
     UI.refreshReplayList();
   }
+
+  // --- Singleplayer presence (server/presence.js) ------------------------------
+  //
+  // A singleplayer match never opens a socket, so the server can't see it.
+  // While one is on screen, say so every 30 s; the admin page counts the pages
+  // it has heard from lately. The id is random, made per page load and stored
+  // nowhere. Tutorials count; replays, the menu and hidden tabs don't.
+  const PRESENCE_MS = 30000;
+  const presenceID = Array.from(crypto.getRandomValues(new Uint8Array(8)),
+    (b) => b.toString(16).padStart(2, '0')).join('');
+  let presenceOff = false;
+  function sendPresence() {
+    if (presenceOff || document.hidden) return;
+    if (!Transport.connected || !Transport.isLocal || Replay.active) return;
+    if (!document.getElementById('overlay').classList.contains('hidden')) return;
+    fetch('presence', { method: 'POST', body: presenceID, credentials: 'omit', cache: 'no-store' })
+      .then((r) => {
+        // Not there at all (the static dev server): stop asking. Anything else
+        // is a server that will be back.
+        if (r.status === 404 || r.status === 405 || r.status === 501) presenceOff = true;
+      })
+      .catch(() => { /* offline, or the server is restarting */ });
+  }
+  setInterval(sendPresence, PRESENCE_MS);
+  document.addEventListener('visibilitychange', sendPresence);
 
   requestAnimationFrame(loop);
 })();

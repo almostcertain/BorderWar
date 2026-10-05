@@ -170,6 +170,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     return res.end('Not found');
   }
+  if (urlPath === '/presence') return presence.handle(req, res);
   if (req.method === 'GET' && urlPath === '/lobbies') return serveLobbyList(req, res);
   if (req.method === 'GET' && urlPath === '/buildinfo.json') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -185,6 +186,10 @@ const wss = new WebSocket.Server({ server, path: '/ws' });
 
 const gameManager = new GameManager({ buildID: JSON.parse(BUILD_INFO).id });
 
+// Singleplayer matches never reach the WS server; the page reports them here
+// so the admin page can count them (server/presence.js).
+const presence = require('./presence').create();
+
 // Admin stats page (server/admin.js): /admin, token-protected. Optional like
 // accounts: if the token can't be read or written, /admin is 404.
 // Chart history is saved to disk only on the default port, so a dev server
@@ -192,7 +197,7 @@ const gameManager = new GameManager({ buildID: JSON.parse(BUILD_INFO).id });
 let admin = null;
 try {
   admin = require('./admin').create({
-    gameManager, wss, log, build: JSON.parse(BUILD_INFO).id, persistHistory: PORT === 8124,
+    gameManager, wss, presence, log, build: JSON.parse(BUILD_INFO).id, persistHistory: PORT === 8124,
     drain: (maxMs) => drain('admin drain requested', maxMs)
   });
 } catch (e) {
