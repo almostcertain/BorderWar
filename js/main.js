@@ -4,6 +4,7 @@
   Input.setup(canvas);
   Radial.setup();
   UI.setup();
+  Tutorial.setup();
 
   // How long one frame may spend advancing the simulation before it has to
   // hand the frame back to the renderer (docs/multiplayer-architecture.md §5).
@@ -403,6 +404,31 @@
     }
   };
 
+  // --- Tutorial (js/tutorial.js, docs/tutorial.md) ----------------------------
+  //
+  // A singleplayer match with a fixed configuration, started the way start()
+  // starts one. Tutorial calls back here because this file owns connections.
+  Tutorial.host = {
+    start(config) {
+      inLobby = false;
+      myRole = 'sp';
+      stopLobbyListPolling();
+      Replay.finish();
+      Transport.disconnect();
+      Runner.reset();
+      Transport.connect(onConnect, onServerMessage, Object.assign({
+        local: true,
+        gameID: 'local',
+        username: UI.getPlayerName() || 'You'
+      }, config));
+    },
+    exit() {
+      Transport.disconnect();
+      Runner.reset();
+      backToMenu();
+    }
+  };
+
   // Everything a server says to us (§4's server->client table). Two messages
   // matter in Phase 1; `lobby_info` and `error` are MP-2.3's additions, live
   // only on a real (non-local) connection — LocalServer never emits either.
@@ -480,9 +506,12 @@
         UI.reset();
         UI.enterSpawnSelect();
 
-        // A fresh match is recorded; a replay being played is not.
+        Tutorial.matchReady();
+
+        // A fresh match is recorded; a replay being played is not. Nor is a
+        // tutorial: its free gold is not in the turns (js/tutorial.js).
         if (Replay.active) Replay.onMatchReady();
-        else Replay.begin(info, msg.myClientID, myPlayerId);
+        else if (!Tutorial.active) Replay.begin(info, msg.myClientID, myPlayerId);
 
         // The catch-up backlog. Empty at a fresh start; non-empty after a
         // rejoin (§4), and the drain loop below is what works through it.
@@ -654,6 +683,7 @@
     Render.draw();
     const drawEnd = performance.now();
     UI.update();
+    Tutorial.frame();
     UI.updateReplayBar();
     Perf.drawn(now, drawEnd - drawStart, performance.now() - drawEnd);
     Options.perfFrame(now);

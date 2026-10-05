@@ -601,6 +601,38 @@ body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pau
 
 /* --- Radial menu ---------------------------------------------------------- */
 
+/* --- Hover descriptions (UI.setupTips) ------------------------------------ */
+
+/* Above everything in a match, the options button included, and never in the
+   way of a click: it sits over the thing it describes. */
+#tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 30;
+  max-width: 250px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(8, 14, 26, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.tipTitle { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; margin-bottom: 3px; }
+.tipKey {
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+.tipBody { opacity: 0.85; }
+
 /* --- Hover panel: quick stats for the nation under the cursor -------------- */
 
 /* 2x throughout — the original 220px/13px reading was too small to make out
@@ -1651,5 +1683,65 @@ body.noHint #hint:not(.warn) { display: none; }
   cursor: pointer;
 }
 #installBtn .ic { width: 16px; height: 16px; }
+
+/* --- Tutorial (js/tutorial.js) --------------------------------------------- */
+
+/* Small on purpose: an offer for a newcomer, not a fifth way to play. */
+#tutorialBtn {
+  align-self: center;
+  padding: 5px 14px;
+  border: 1px solid rgba(109, 180, 255, 0.45);
+  border-radius: 999px;
+  background: rgba(109, 180, 255, 0.1);
+  color: #a9cdff;
+  font-size: 13px;
+  cursor: pointer;
+}
+#tutorialBtn:hover { background: rgba(109, 180, 255, 0.2); }
+/* A mode's form is open, or a lobby: the offer has been passed over. */
+#overlay.modeOpen #tutorialBtn { display: none; }
+
+/* The coach panel, first thing in the HUD so it sits right above the controls
+   it talks about, on a phone as on a desktop. */
+#tutorial {
+  padding: 7px 10px 8px;
+  border-radius: 10px;
+  background: rgba(30, 62, 112, 0.92);
+  border: 1px solid rgba(109, 180, 255, 0.6);
+  font-size: 13px;
+  line-height: 1.35;
+}
+#tutorial.tutNew { animation: tutIn 0.35s ease-out; }
+@keyframes tutIn { from { transform: translateY(6px); opacity: 0.3; } }
+#tutHead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+#tutStep { font-size: 11px; opacity: 0.65; font-variant-numeric: tabular-nums; }
+#tutStep:empty { display: none; }
+#tutTitle { flex: 1 1 auto; font-weight: 700; font-size: 14px; }
+#tutorial .linkBtn { flex: 0 0 auto; margin: 0; padding: 2px 0 2px 6px; color: #a9cdff; }
+/* Keeps its line when not showing, so the HUD does not jump each time the
+   match is held and released. */
+#tutPaused { margin-top: 3px; font-size: 11px; font-weight: 600; color: #ffd27a; }
+#tutPaused.off { visibility: hidden; }
+#tutBtns { display: flex; gap: 8px; margin-top: 7px; }
+#tutBtns button {
+  flex: 1 1 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+#tutBtns #tutKeep { background: #2f6fe0; border-color: #2f6fe0; }
+
+/* The control the current step is about. Inset, because the build bar clips
+   anything drawn outside its buttons. */
+.tutGlow { animation: tutGlow 1.1s ease-in-out infinite; border-radius: 8px; }
+@keyframes tutGlow {
+  0%, 100% { box-shadow: inset 0 0 0 2px rgba(109, 180, 255, 0.95); }
+  50% { box-shadow: inset 0 0 0 2px rgba(109, 180, 255, 0.15); }
+}
 #installGuide p { margin: 4px 0 0; font-size: 14px; opacity: 0.85; }
 #installSteps { margin: 0; padding-left: 22px; font-size: 14px; line-height: 1.6; }

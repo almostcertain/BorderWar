@@ -74,6 +74,32 @@ const UI = {
   // WASD pan keys are taken.
   EXTRA_HOTKEYS: { scout: 'e', drill: 'k', radio: 'r' },
 
+  // What each build-bar entry is for, shown when the mouse rests on its
+  // button (setupTips). Kept here rather than in Game.UNITS: that table is sim
+  // data and the goldens hash it. Numbers are read from the sim's constants so
+  // a balance change cannot leave a tip behind.
+  UNIT_TIPS: {
+    city: () => 'Raises your maximum population. Tap one you own to upgrade it. Each City or upgrade costs more than the last.',
+    factory: () => 'Lays rail to nearby Cities and runs trains between them. Every train pays gold, and a train to another nation pays both of you.',
+    port: () => 'Built on the coast. Sends trade ships to other nations\' Ports, paying both sides gold; longer routes pay more. Needed to launch ships.',
+    fort: () => 'Defends your land within ' + Game.FORT_RANGE + ' tiles: it costs attackers ' + Game.FORT_DEF_MULT +
+      'x the troops to take and they advance ' + Game.FORT_SPEED_MULT + 'x slower.',
+    warship: () => 'Patrols the water where you send it. Sinks enemy boats and warships and captures unfriendly trade ships. Needs a Port. Shift-drag to select, then tap water to move.',
+    silo: () => 'Launches your Atom Bombs, Hydrogen Bombs and MIRVs. Reloads for ' + Game.SILO_COOLDOWN +
+      's after each launch. Each upgrade adds another missile slot.',
+    atombomb: () => 'A nuclear strike launched from your nearest ready Missile Silo. Its blast reaches ' +
+      Game.NUKE_MAGNITUDES.atombomb.outer + ' tiles from where it lands. Enemy SAM Launchers can shoot it down.',
+    hydrogenbomb: () => 'A far larger nuclear strike: its blast reaches ' + Game.NUKE_MAGNITUDES.hydrogenbomb.outer +
+      ' tiles, against the Atom Bomb\'s ' + Game.NUKE_MAGNITUDES.atombomb.outer + '. Needs a Missile Silo.',
+    sam: () => 'Shoots down enemy nukes that fly within its range. Reloads for ' + Game.SAM_COOLDOWN +
+      's after each shot. Upgrades widen the range and add charges.',
+    mirv: () => 'Splits into ' + Game.MIRV_WARHEAD_COUNT + ' warheads that rain down across a huge area. Needs a Missile Silo. The price rises every time anyone launches one.',
+    scout: () => 'An unarmed ship that uncovers the map as it sails. Launched from your nearest Port; send it anywhere, even into the dark.',
+    drill: () => 'Starts the endgame. After a ' + Game.DRILL_COUNTDOWN_S + 's warning the world closes in on this spot over ' +
+      Math.round(Game.DRILL_SHRINK_S / 60) + ' minutes, and the last nation standing wins. One per match, and it cannot be stopped.',
+    radio: () => 'Uncovers the map in a wide circle around it once built. A way to see past your border without a Port.'
+  },
+
   // Puts the attack ratio back to its default and moves the slider handle and
   // label to match. The browser restores a range input's last value on refresh
   // (and it keeps whatever the player dragged it to across matches), so the DOM
@@ -137,6 +163,7 @@ const UI = {
     });
 
     this.setupBuildBar();
+    this.setupTips();
     this.setupLobby();
     this.setupAccount();
     this.setupReplays();
@@ -239,6 +266,9 @@ const UI = {
   togglePause() {
     if (Replay.active) { Replay.setPaused(Replay.ended() ? false : !Replay.paused); return; }
     if (!Transport.isLocal || !Game.players[Game.me] || Game.winnerId !== null) return;
+    // A tutorial holds the match itself while the player reads; it keeps the
+    // player's own pause apart from that (js/tutorial.js).
+    if (Tutorial.active) { Tutorial.togglePause(); return; }
     LocalServer.setPaused(!LocalServer.paused);
   },
 
@@ -311,16 +341,20 @@ const UI = {
   rebuildBuildBar() {
     const bar = document.getElementById('buildBar');
     const fog = this._barFog = !!Game.fog;
-    bar.innerHTML = Game.UNITS.filter(u => !u.fogOnly || fog).map(u =>
-      `<button class="buildBtn" data-type="${u.type}">
-         <span class="bbKey">${u.hotkey || this.EXTRA_HOTKEYS[u.type] || ''}</span>
+    bar.innerHTML = Game.UNITS.filter(u => !u.fogOnly || fog).map(u => {
+      const key = u.hotkey || this.EXTRA_HOTKEYS[u.type] || '';
+      const tip = this.UNIT_TIPS[u.type];
+      const tipAttr = tip ? ` data-tip-title="${u.name}" data-tip-key="${key}" data-tip="${escapeHtml(tip())}"` : '';
+      return `<button class="buildBtn" data-type="${u.type}"${tipAttr}>
+         <span class="bbKey">${key}</span>
          <span class="bbIcon">${iconHtml(this.UNIT_ICONS[u.type] || u.type)}</span>
          <span class="bbBody">
            <span class="bbName">${u.name}</span>
            <span class="bbCost"></span>
          </span>
          <span class="bbCount"></span>
-       </button>`).join('');
+       </button>`;
+    }).join('');
 
     this.buildEls = new Map();
     for (const btn of bar.querySelectorAll('.buildBtn')) {
@@ -337,6 +371,61 @@ const UI = {
       });
     }
     if (this._updateBarFade) this._updateBarFade();
+  },
+
+  // Hover descriptions. Any element carrying data-tip gets one, with optional
+  // data-tip-title and data-tip-key (a hotkey) for a heading; the build bar and
+  // the radial menu write theirs as they render, the fixed HUD has them in
+  // index.html. One delegated pointerover does the lot, because both of those
+  // rewrite their elements and a removed element sends no pointerout: every
+  // move onto a new element lands here, and either finds a tip or clears it.
+  //
+  // Mouse only. Touch has no hover, and a tip that appeared on press would sit
+  // under the finger and over the drag-to-place ghost.
+  TIP_DELAY_MS: 350,
+
+  setupTips() {
+    const el = document.getElementById('tip');
+    let shownFor = null, timer = 0;
+    const hide = () => {
+      clearTimeout(timer);
+      shownFor = null;
+      el.classList.add('hidden');
+    };
+    const show = target => {
+      shownFor = target;
+      const d = target.dataset;
+      el.innerHTML =
+        (d.tipTitle ? `<div class="tipTitle">${escapeHtml(d.tipTitle)}` +
+          (d.tipKey ? `<span class="tipKey">${escapeHtml(d.tipKey.toUpperCase())}</span>` : '') + '</div>' : '') +
+        `<div class="tipBody">${escapeHtml(d.tip)}</div>`;
+      el.classList.remove('hidden');
+      // Above the element, centred on it; below instead when there is no room
+      // (the buttons along the top edge), and never off either side.
+      const r = target.getBoundingClientRect(), m = 6;
+      const w = el.offsetWidth, h = el.offsetHeight;
+      const x = Math.max(m, Math.min(window.innerWidth - w - m, r.left + r.width / 2 - w / 2));
+      const y = r.top - h - m >= m ? r.top - h - m : Math.min(window.innerHeight - h - m, r.bottom + m);
+      el.style.left = Math.round(x) + 'px';
+      el.style.top = Math.round(y) + 'px';
+    };
+    document.addEventListener('pointerover', e => {
+      if (e.pointerType === 'touch') return;
+      const target = e.target.closest ? e.target.closest('[data-tip]') : null;
+      if (target && target === shownFor) return;
+      // Already reading one: the next appears at once, as a row of buttons
+      // swept across should. From nothing, wait, so tips do not flicker up
+      // every time the cursor crosses the HUD on its way somewhere else.
+      const wasShown = !el.classList.contains('hidden');
+      hide();
+      if (!target) return;
+      if (wasShown) show(target);
+      else timer = setTimeout(() => { if (target.isConnected) show(target); }, this.TIP_DELAY_MS);
+    });
+    // A press is the player acting on the thing, not asking about it.
+    document.addEventListener('pointerdown', hide, true);
+    document.documentElement.addEventListener('pointerleave', hide);
+    window.addEventListener('blur', hide);
   },
 
   // Cheap enough for every frame; a no-op unless the match's fog setting
@@ -728,7 +817,8 @@ const UI = {
     // the phase's own turn counter (Game.ticks stays frozen at 0 throughout
     // the whole spawn phase by design, so it can't drive this).
     const remaining = Math.max(0, Math.ceil((Game.SPAWN_PHASE_TURNS - Game.spawnPhaseTicks) * Game.TICK_DT));
-    const hint = Game.fog ? this.SPAWN_FOG_HINT : (this.spawnSent ? this.SPAWN_SENT_HINT : this.SPAWN_HINT);
+    const hint = Game.fog ? this.SPAWN_FOG_HINT : this.spawnSent ? this.SPAWN_SENT_HINT
+      : Tutorial.active ? Tutorial.SPAWN_HINT : this.SPAWN_HINT;
     // Solo matches start on the tap, so there is no deadline worth showing.
     el.textContent = Game.humanCount > 1 || Game.fog ? hint + ' · ' + remaining + 's' : hint;
   },
@@ -1227,12 +1317,15 @@ const UI = {
 
     const pauseBtn = document.getElementById('pauseBtn');
     pauseBtn.classList.toggle('hidden', !Transport.isLocal || Game.winnerId !== null);
-    pauseBtn.classList.toggle('paused', LocalServer.paused);
+    // The tutorial's own hold is not the player's pause, and the button only
+    // speaks for the player's.
+    const paused = Tutorial.active ? Tutorial.userPaused : LocalServer.paused;
+    pauseBtn.classList.toggle('paused', paused);
     // Only rewritten on a change: this runs every frame, and replacing the
     // button's contents at 60Hz would reload its icon and break :active.
-    if (pauseBtn._paused !== LocalServer.paused) {
-      pauseBtn._paused = LocalServer.paused;
-      pauseBtn.innerHTML = LocalServer.paused ? iconHtml('play') + ' Resume' : iconHtml('pause') + ' Pause';
+    if (pauseBtn._paused !== paused) {
+      pauseBtn._paused = paused;
+      pauseBtn.innerHTML = paused ? iconHtml('play') + ' Resume' : iconHtml('pause') + ' Pause';
     }
 
     const musicBtn = document.getElementById('musicBtn');

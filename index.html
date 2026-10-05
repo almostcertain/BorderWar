@@ -32,8 +32,8 @@
      transport, and the panel additionally stays closed until this is clicked. -->
 <div id="topBtns">
 <button id="debugToggle" class="hidden" type="button" title="Toggle debug panel">Debug ▸</button>
-<button id="pauseBtn" class="hidden" type="button" title="Pause (P)"><img class="ic" src="assets/icons/pause.svg" alt="" draggable="false"> Pause</button>
-<button id="musicBtn" type="button" title="Music (M)" aria-label="Music"><img class="ic" src="assets/icons/music.svg" alt="" draggable="false"></button>
+<button id="pauseBtn" class="hidden" type="button" data-tip-title="Pause" data-tip-key="P" data-tip="Freezes the match. Singleplayer only."><img class="ic" src="assets/icons/pause.svg" alt="" draggable="false"> Pause</button>
+<button id="musicBtn" type="button" data-tip-title="Music" data-tip-key="M" data-tip="Turns the background music on or off." aria-label="Music"><img class="ic" src="assets/icons/music.svg" alt="" draggable="false"></button>
 </div>
 
 <div id="debugPanel" class="hidden">
@@ -112,9 +112,26 @@
   <button id="replayExit" type="button">Exit</button>
 </div>
 
+<!-- Hover descriptions: UI.setupTips fills and places it. -->
+<div id="tip" class="hidden"></div>
+
 <div id="radial" class="hidden"><div id="radialMenu"></div></div>
 
 <div id="hud">
+  <!-- The tutorial's coach panel (js/tutorial.js); hidden in every other match. -->
+  <div id="tutorial" class="hidden">
+    <div id="tutHead">
+      <span id="tutStep"></span><span id="tutTitle"></span>
+      <button type="button" id="tutSkip" class="linkBtn">Skip step</button>
+      <button type="button" id="tutExit" class="linkBtn">Exit</button>
+    </div>
+    <div id="tutText"></div>
+    <div id="tutPaused" class="off">Paused until you make a move</div>
+    <div id="tutBtns" class="hidden">
+      <button type="button" id="tutKeep">Keep playing</button>
+      <button type="button" id="tutMenu">Main menu</button>
+    </div>
+  </div>
   <div id="nukeAlert" class="hidden"></div>
   <div id="donationAlert" class="hidden"></div>
   <div id="drillHud" class="hidden"><span id="drillHudText"></span><span id="drillHudTime"></span></div>
@@ -126,8 +143,8 @@
   </div>
   <div id="frontsRow" class="hidden"></div>
   <div id="statusRow">
-    <div id="growthChip"><span id="troopGrowth"></span></div>
-    <div id="popBar">
+    <div id="growthChip" data-tip-title="Troop growth" data-tip="Troops gained each second. Growth is fastest with the bar a little under half full and slows as it fills; this turns orange once you are past that point."><span id="troopGrowth"></span></div>
+    <div id="popBar" data-tip-title="Troops" data-tip="Troops at home, out of the most your nation can hold. The second segment is troops away on attacks. The mark shows where growth is fastest. More land and more Cities raise the maximum.">
       <div id="popBarFill"></div>
       <div id="popBarMarch"></div>
       <div id="popBarPeak"></div>
@@ -136,9 +153,9 @@
         <span id="troopValue">0</span><span id="popBarSep">/</span><span id="troopCap">0</span>
       </div>
     </div>
-    <div id="goldChip"><span class="hpIcon"><img class="ic" src="assets/icons/gold.svg" alt="" draggable="false"></span><span id="goldValue">0</span></div>
+    <div id="goldChip" data-tip-title="Gold" data-tip="Pays for buildings, ships and nukes. Comes in steadily, and faster with trade ships and trains."><span class="hpIcon"><img class="ic" src="assets/icons/gold.svg" alt="" draggable="false"></span><span id="goldValue">0</span></div>
   </div>
-  <div id="ratioRow">
+  <div id="ratioRow" data-tip-title="Attack ratio" data-tip="The share of your troops sent with each attack or boat. Send less to keep growing, more to hit harder.">
     <span id="ratioLabel"><span id="ratioValue">20%</span> <span id="ratioTroops"></span></span>
     <input id="ratio" type="range" min="5" max="100" step="5" value="20">
   </div>
@@ -148,7 +165,7 @@
 
 <div id="perfStats" class="hidden"></div>
 
-<button id="optionsBtn" type="button" title="Options" aria-label="Options"><img class="ic" src="assets/icons/cog.svg" alt="" draggable="false"></button>
+<button id="optionsBtn" type="button" data-tip="Options" aria-label="Options"><img class="ic" src="assets/icons/cog.svg" alt="" draggable="false"></button>
 
 <div id="optionsOverlay" class="hidden">
   <div class="panel optionsPanel" role="dialog" aria-label="Options">
@@ -243,6 +260,8 @@
     <button type="button" id="modeBack" class="linkBtn hidden">‹ Back</button>
     <h1 class="brand"><img class="brandMark" src="assets/logo/shield.svg" alt="" draggable="false">BorderWar</h1>
     <p>Expand across the map. Tap neutral land or an enemy nation to send troops along your border.</p>
+    <!-- A guided first match (js/tutorial.js). -->
+    <button type="button" id="tutorialBtn">New here? Play the tutorial</button>
     <!-- Phones and tablets only; js/install.js shows it. -->
     <button type="button" id="installBtn" class="hidden"><img class="ic" src="assets/logo/favicon.svg" alt="" draggable="false"> Add to Home Screen</button>
 
@@ -508,7 +527,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'render', 'input', 'account', 'ui', 'radial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'render', 'input', 'account', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>
