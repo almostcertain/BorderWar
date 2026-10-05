@@ -700,6 +700,31 @@
   document.getElementById('startBtn').addEventListener('click', start);
   document.getElementById('restartBtn').addEventListener('click', backToMenu);
 
+  // The in-game Exit button. A match still being played takes two clicks, the
+  // second within EXIT_ARM_MS; a decided one leaves on the first. Replays
+  // have their own Exit on the replay bar, and this one is hidden there.
+  const EXIT_ARM_MS = 3000;
+  const exitBtn = document.getElementById('exitBtn');
+  let exitArmTimer = 0;
+  function disarmExit() {
+    clearTimeout(exitArmTimer);
+    exitBtn.classList.remove('armed');
+    exitBtn.textContent = 'Exit';
+  }
+  exitBtn.addEventListener('click', () => {
+    if (Game.winnerId === null && !exitBtn.classList.contains('armed')) {
+      exitBtn.classList.add('armed');
+      exitBtn.textContent = 'Exit match?';
+      exitArmTimer = setTimeout(disarmExit, EXIT_ARM_MS);
+      return;
+    }
+    disarmExit();
+    Tutorial.stop();
+    Transport.disconnect();
+    Runner.reset();
+    backToMenu();
+  });
+
   // From a finished match, or out of a replay, to the main menu.
   function backToMenu() {
     Replay.finish();

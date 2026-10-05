@@ -383,7 +383,7 @@ html, body {
 
 /* --- Pause button (singleplayer) ------------------------------------------ */
 
-#pauseBtn, #musicBtn {
+#pauseBtn, #musicBtn, #exitBtn {
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 700;
@@ -397,7 +397,12 @@ html, body {
 
 #musicBtn { padding: 6px 8px; }
 
-:is(#pauseBtn, #musicBtn):active { filter: brightness(0.85); }
+:is(#pauseBtn, #musicBtn, #exitBtn):active { filter: brightness(0.85); }
+
+/* Clicked once mid-match, waiting for the confirming click (main.js). */
+#exitBtn.armed {
+  background: rgba(215, 60, 60, 0.95);
+}
 
 #pauseBtn.paused {
   background: rgba(255, 190, 70, 0.95);
@@ -457,7 +462,7 @@ html, body {
 #replayRevealRow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 
 body.replaying #hud { bottom: calc(env(safe-area-inset-bottom) + 54px); background: none; }
-body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pauseBtn, #debugToggle, #debugPanel) { display: none !important; }
+body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pauseBtn, #exitBtn, #debugToggle, #debugPanel) { display: none !important; }
 
 @media (max-width: 700px) {
   #replayBar { flex-wrap: wrap; justify-content: center; }
