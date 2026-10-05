@@ -3297,14 +3297,18 @@ const Render = {
     const seen = this.seenBuf, queue = this.queueBuf;
     const nb = this.labelNb || (this.labelNb = new Int32Array(4));
     const labels = this.labelsPending;
+    // Fog: only the land the viewer has discovered is walked, so a nation
+    // seen in part is anchored and sized by the part that shows, and nothing
+    // about the label says how much more of it lies in the black.
+    const fog = this.fogged;
 
     {
       const p = Game.players[playerId];
       if (!p || !p.alive || p.tiles.size === 0) return;
-      let best = null;
+      let best = null, shown = 0;
 
       for (const start of p.tiles) {
-        if (seen[start]) continue;
+        if (seen[start] || (fog && this.fogHides(start))) continue;
         let head = 0, tail = 0, sx = 0, sy = 0;
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
         queue[tail++] = start; seen[start] = 1;
@@ -3319,9 +3323,10 @@ const Render = {
           const n = GameMap.neighbors(i, nb);
           for (let k = 0; k < n; k++) {
             const j = nb[k];
-            if (owner[j] === p.id && !seen[j]) { seen[j] = 1; queue[tail++] = j; }
+            if (owner[j] === p.id && !seen[j] && !(fog && this.fogHides(j))) { seen[j] = 1; queue[tail++] = j; }
           }
         }
+        shown += tail;
         if (!best || tail > best.count) {
           best = { count: tail, cx: sx / tail, cy: sy / tail,
                    bw: maxX - minX + 1, bh: maxY - minY + 1 };
@@ -3334,15 +3339,17 @@ const Render = {
       // actually owns. Re-running the fill keeps `queue` holding that component.
       let ax = Math.round(best.cx), ay = Math.round(best.cy);
       const centreIdx = GameMap.idx(Math.max(0, Math.min(w - 1, ax)), Math.max(0, Math.min(GameMap.height - 1, ay)));
-      if (owner[centreIdx] !== p.id) {
+      if (owner[centreIdx] !== p.id || (fog && this.fogHides(centreIdx))) {
         let bestD = Infinity;
         for (const i of p.tiles) {
+          if (fog && this.fogHides(i)) continue;
           const x = i % w, y = (i / w) | 0;
           const d = (x - best.cx) * (x - best.cx) + (y - best.cy) * (y - best.cy);
           if (d < bestD) { bestD = d; ax = x; ay = y; }
         }
       }
-      labels.push({ id: p.id, x: ax, y: ay, count: best.count, bw: best.bw, bh: best.bh });
+      labels.push({ id: p.id, x: ax, y: ay, count: best.count, bw: best.bw, bh: best.bh,
+                    clipped: fog && shown < p.tiles.size });
     }
   },
 
@@ -3390,6 +3397,7 @@ const Render = {
   LABEL_REDRAW_MAX: 8,
   LABEL_REFRESH_MS: 500,
   LABEL_UPSCALE_MAX: 1.1,     // stretch an old sprite at most this much before redrawing it
+  FOG_LABEL_MIN_SPAN: 15,     // CSS px: sqrt of the on-screen area a part-seen nation needs to be named (drawLabels)
   LABEL_ICON_BITS: [['target', 1], ['teammate', 2], ['ally', 4], ['traitor', 8], ['embargo', 16]],
   labelSprites: new Map(),    // player id -> sprite (see labelSprite)
   labelFrame: 0,
@@ -3542,10 +3550,9 @@ const Render = {
       const px = (L.x + 0.5 - this.cam.x) * s + cw / 2;
       const py = (L.y + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -80 || py < -80 || px > cw + 80 || py > ch + 80) continue;
-      // Fog: a nation is named only where its label sits, the middle of its
-      // largest landmass. Land of it seen at the edge of the fog goes unnamed
-      // until that is discovered; moving the label to the visible part would
-      // put a size-scaled name on a sliver.
+      // Fog: the sweep anchored the label inside the discovered part of the
+      // nation (computeLabelSlice); this only covers a label left over from
+      // before the fog was reset.
       if (fog && this.fogHides(L.y * GameMap.width + L.x)) continue;
 
       // Size against the blob's real on-screen box and the measured text, not
@@ -3554,8 +3561,17 @@ const Render = {
       const boxW = L.bw * s, boxH = L.bh * s;
       const areaSpan = Math.sqrt(L.count) * s;
       const minFont = 9 * this.dpr;
+      // Fog: a neighbour mostly in the black shows as a strip along the
+      // border, too thin to letter by the rule above, and with no hover on a
+      // phone its name and troops could not be read at all. Such a strip is
+      // named at the smallest size instead, once it is big enough on screen
+      // to tell whose name it is; the overflow lands mostly on the fog.
+      const floorFont = L.clipped && areaSpan >= this.FOG_LABEL_MIN_SPAN * this.dpr;
       let font = Math.min(22 * this.dpr, areaSpan * 0.24, boxH * 0.30);
-      if (font < minFont) continue;
+      if (font < minFont) {
+        if (!floorFont) continue;
+        font = minFont;
+      }
 
       // Troops at home — the same figure the bar shows, and the one that
       // actually defends, so a nation that has emptied itself reads as soft.
@@ -3586,7 +3602,10 @@ const Render = {
       const widest = Math.max(nameW, sp.troopsEm * font);
       if (widest > boxW * 0.92) {
         font *= boxW * 0.92 / widest;         // shrink to fit rather than overflow
-        if (font < minFont) continue;
+        if (font < minFont) {
+          if (!floorFont) continue;
+          font = minFont;
+        }
       }
       // Whole device pixels, so a settled sprite is stamped 1:1 and stays crisp.
       font = Math.round(font);

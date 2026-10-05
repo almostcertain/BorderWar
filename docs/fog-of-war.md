@@ -434,8 +434,14 @@ notes are under "Vision state".
 - The fog colour is the canvas backdrop (`FOG_COLOR`, `#060a14`), so the map
   edge does not show as an outline.
 - In fog matches labels, badges, front numbers and popups are drawn over the
-  fog and culled by their anchor tile. A nation is named on the map only once
-  its label anchor (the centre of its largest landmass) is discovered.
+  fog and culled by their anchor tile. A nation's label (name and troops) is
+  anchored and sized by its largest *discovered* stretch of land, so a
+  neighbour mostly in the black is still named on the strip that shows
+  (changed 2026-10-05: it used to wait for the centre of the whole nation to
+  be discovered, which left a phone, with no hover, unable to read a
+  neighbour's troops). A strip too thin for the normal sizing rule is
+  lettered at the minimum size once it is big enough on screen
+  (`FOG_LABEL_MIN_SPAN`); the label gives no hint of the hidden land's size.
 - The placement ghost is drawn over the fog, since nukes and scouts aim
   blind. A warship ghost is refused unless the hovered tile and its
   destination are both discovered.
