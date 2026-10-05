@@ -49,7 +49,9 @@ pause (scheduling only, invisible to the sim), driven each frame by
 
 The player's own Pause (button or P) is kept apart as `Tutorial.userPaused`:
 `UI.togglePause` hands off to `Tutorial.togglePause` during a tutorial, and the
-button shows only the player's pause, never the freeze.
+button shows only the player's pause, never the freeze. That Pause, like the
+Debug panel, exists only on a development host (`UI.debugAllowed`); on the live
+site the freeze is the only thing that holds a match.
 
 ### The free gold (the one sim write)
 

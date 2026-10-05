@@ -51,6 +51,16 @@ const UI = {
   // Whether the debug panel is expanded; closed by default, toggled by #debugToggle.
   debugOpen: false,
 
+  // The debug button and panel, and Pause, are for development, so they exist only where
+  // the page is served from a developer's own machine or home network, never
+  // from the live site. Decided once from the address; nothing a player can
+  // type into the URL turns it on.
+  DEBUG_HOST: /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|.*\.localhost|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/
+    .test(location.hostname),
+  // Singleplayer as well: every debug action writes around the intent
+  // pipeline (see the BYPASS notes in setup()).
+  debugAllowed() { return this.DEBUG_HOST && Transport.isLocal; },
+
   // The player's own warships currently selected via Input's shift-drag box
   // (or a shift-click on a single one) — see selectWarshipsInBox/
   // selectWarshipAt below. Holds direct object references straight into
@@ -184,7 +194,7 @@ const UI = {
     // can't be pressed against an empty player list.
     for (const btn of document.querySelectorAll('#debugPanel button[data-gold]')) {
       btn.addEventListener('click', () => {
-        if (!Transport.isLocal) return;
+        if (!this.debugAllowed()) return;
         const me = Game.players[Game.me];
         if (me) me.gold += +btn.dataset.gold;
       });
@@ -207,7 +217,7 @@ const UI = {
     // singleplayer-only in effect — a real server would ignore the request —
     // but there is nothing here for it to desync.
     document.getElementById('debugFastForward').addEventListener('click', () => {
-      if (!Transport.isLocal) return;
+      if (!this.debugAllowed()) return;
       LocalServer.burst(Math.round(300 / Game.TICK_DT));
     });
 
@@ -215,7 +225,7 @@ const UI = {
     // gate. Turns still flow through the normal path, so nothing to desync;
     // singleplayer only. Backpressure caps it at what the client can drain.
     document.getElementById('debugSpeed').addEventListener('click', () => {
-      if (!Transport.isLocal) return;
+      if (!this.debugAllowed()) return;
       const steps = [1, 2, 4, 8, 16];
       LocalServer.speed = steps[(steps.indexOf(LocalServer.speed) + 1) % steps.length];
     });
@@ -265,7 +275,7 @@ const UI = {
   // pump when paused, which freezes the sim since it advances on turn arrival.
   togglePause() {
     if (Replay.active) { Replay.setPaused(Replay.ended() ? false : !Replay.paused); return; }
-    if (!Transport.isLocal || !Game.players[Game.me] || Game.winnerId !== null) return;
+    if (!this.debugAllowed() || !Game.players[Game.me] || Game.winnerId !== null) return;
     // A tutorial holds the match itself while the player reads; it keeps the
     // player's own pause apart from that (js/tutorial.js).
     if (Tutorial.active) { Tutorial.togglePause(); return; }
@@ -549,7 +559,7 @@ const UI = {
     // Arms DEBUG BYPASS #2 (see onTap's 'debugnuke' branch) — singleplayer
     // only, for the same reason as the gold buttons: Game.debugNuke has no
     // intent behind it and never will.
-    if (!Transport.isLocal) return;
+    if (!this.debugAllowed()) return;
     if (this.placing === 'debugnuke' && this.debugNukeType === type) {
       this.placing = null;
       this.debugNukeType = null;
@@ -571,7 +581,7 @@ const UI = {
   // Gives up the player's land and eliminates them on the spot, which brings
   // up the defeat screen without playing a match out. The bots carry on.
   debugForfeit() {
-    if (!Transport.isLocal || !Game.running) return;
+    if (!this.debugAllowed() || !Game.running) return;
     const me = Game.players[Game.me];
     if (!me || !me.alive) return;
     for (const tile of [...me.tiles]) Game.setOwner(tile, NEUTRAL);
@@ -582,7 +592,7 @@ const UI = {
   armDebugPeace() {
     if (!Game.running) return;
     // DEBUG BYPASS #3 — singleplayer only, same reasoning as armDebugNuke.
-    if (!Transport.isLocal) return;
+    if (!this.debugAllowed()) return;
     if (this.placing === 'debugpeace') { this.placing = null; return; }
     this.placing = 'debugpeace';
     this.placeHover = -1;
@@ -942,7 +952,7 @@ const UI = {
       // is a dev tool for looking at blast/fallout behaviour rather than a
       // move a player can make. Singleplayer only — armDebugNuke refuses to
       // arm it when the transport is not local, and update() hides the panel.
-      if (!Transport.isLocal) return;
+      if (!this.debugAllowed()) return;
       Game.debugNuke(this.debugNukeType, this.debugNukeSrc, tile);
       this.placing = null;
       this.debugNukeType = null;
@@ -957,7 +967,7 @@ const UI = {
     // as you. Singleplayer only (armDebugPeace refuses otherwise). Stays armed so
     // several nations can be tapped in a row; Esc or the button disarms it.
     if (this.placing === 'debugpeace') {
-      if (!Transport.isLocal) return;
+      if (!this.debugAllowed()) return;
       const tile = Render.screenToTile(sx, sy);
       const owner = tile < 0 ? -1 : GameMap.owner[tile];
       if (owner < 0 || owner === Game.me) { this.flash('Tap another nation'); return; }
@@ -1311,12 +1321,12 @@ const UI = {
     // BYPASS notes in setup()) and would desync a networked match.
     // The panel itself additionally stays closed until the toggle opens it.
     const debugToggle = document.getElementById('debugToggle');
-    debugToggle.classList.toggle('hidden', !Transport.isLocal);
+    debugToggle.classList.toggle('hidden', !this.debugAllowed());
     debugToggle.textContent = this.debugOpen ? 'Debug ▾' : 'Debug ▸';
-    document.getElementById('debugPanel').classList.toggle('hidden', !Transport.isLocal || !this.debugOpen);
+    document.getElementById('debugPanel').classList.toggle('hidden', !this.debugAllowed() || !this.debugOpen);
 
     const pauseBtn = document.getElementById('pauseBtn');
-    pauseBtn.classList.toggle('hidden', !Transport.isLocal || Game.winnerId !== null);
+    pauseBtn.classList.toggle('hidden', !this.debugAllowed() || Game.winnerId !== null);
     // The tutorial's own hold is not the player's pause, and the button only
     // speaks for the player's.
     const paused = Tutorial.active ? Tutorial.userPaused : LocalServer.paused;
