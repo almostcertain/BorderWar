@@ -2,8 +2,9 @@
 
 How to run the live server (borderwar.io) on a rented Linux machine instead of
 the owner's PC. Nothing about the game or the server changes: it is the same
-`node server/index.js` behind the same Cloudflare Tunnel, on a machine that
-stays on.
+`node server/index.js` behind a Cloudflare Tunnel, on a machine that stays on.
+
+The live site has run this way since 2026-10-05, on a DigitalOcean Droplet.
 
 ## Quick reference
 
@@ -12,7 +13,7 @@ stays on.
 | Code | `/opt/borderwar` (a git checkout of `main`, owned by user `borderwar`) |
 | Data (accounts database, backups, admin token, chart history) | `/opt/borderwar/server/data` |
 | Server service | `borderwar` (`tools/cloud/borderwar.service`) |
-| Tunnel service | `cloudflared`, config in `/etc/cloudflared/` |
+| Tunnel service | `cloudflared`, config in `/etc/cloudflared/`; the tunnel is named `borderwar-cloud` |
 | Update to latest `main` | `bash /opt/borderwar/tools/cloud/update.sh` |
 | Server log | `journalctl -u borderwar -f` |
 | Stop now (players are told) | `systemctl stop borderwar` |
@@ -24,11 +25,12 @@ stays on.
 - **A plain always-on box.** Matches live in the server's memory and accounts
   live in a SQLite file, so the host must not sleep when idle and must keep its
   disk. That rules out the free "scale to zero" platforms.
-- **The tunnel stays.** Cloudflare Tunnel dials out from the box, so no inbound
-  port is open except SSH, HTTPS is handled by Cloudflare, and the server's
-  rate limiting keeps seeing real player addresses (`CF-Connecting-IP`, trusted
-  only from loopback; see `docs/accounts-auth.md`). The tunnel is the same one
-  the PC used, so DNS does not change and the move is instant.
+- **Still behind a tunnel.** Cloudflare Tunnel dials out from the box, so no
+  inbound port is open except SSH, HTTPS is handled by Cloudflare, and the
+  server's rate limiting keeps seeing real player addresses
+  (`CF-Connecting-IP`, trusted only from loopback; see `docs/accounts-auth.md`).
+  The box has its own tunnel (`borderwar-cloud`), so no other machine holds
+  credentials that can serve the site.
 - **A git checkout, not a build.** The server reads its build ID from git
   (`tools/build-info.js`), and clients must match it. Never edit files on the
   box: a modified checkout marks the build as dirty.
@@ -56,63 +58,87 @@ bash setup.sh
 This installs Node 22 and cloudflared, clones the repo, installs the service
 and turns on the firewall (SSH only). It does not start anything yet.
 
-### 3. Move the data and the tunnel (the cutover)
+### 3. Move the data (optional)
 
-From here until step 4 finishes, borderwar.io is down. It takes a few minutes.
-
-**On the PC:** stop the live server and its tunnel (close both windows, or run
-`node tools/drain-server.js` first to let matches finish). Then, from the repo
-folder in PowerShell, replacing `BOX` with the box's IP address:
+Skip this to start with an empty accounts database. To keep existing accounts,
+stop the old host first (`node tools/drain-server.js` lets matches finish),
+then copy its `server/data` folder from that machine, replacing `BOX` with the
+box's public IP address:
 
 ```
 scp -r server/data root@BOX:/root/bw-data
-scp "$env:USERPROFILE\.cloudflared\c365c7e6-faf3-4bed-a7dd-3e2873cb0519.json" root@BOX:/root/
 ```
 
-The first copies the accounts database, its backups, the admin token and the
-chart history. The second is the tunnel's credentials file. Both are secrets:
-do not paste them anywhere else.
-
-**On the box:**
+It holds the accounts database, its backups, the admin token and the chart
+history, so treat it as secret. Then on the box:
 
 ```
 cp -a /root/bw-data/. /opt/borderwar/server/data/
 chown -R borderwar:borderwar /opt/borderwar/server/data
 chmod 700 /opt/borderwar/server/data
 rm -rf /root/bw-data
-
-mkdir -p /etc/cloudflared
-mv /root/c365c7e6-faf3-4bed-a7dd-3e2873cb0519.json /etc/cloudflared/
-chmod 600 /etc/cloudflared/c365c7e6-faf3-4bed-a7dd-3e2873cb0519.json
-cat > /etc/cloudflared/config.yml <<'EOF'
-tunnel: c365c7e6-faf3-4bed-a7dd-3e2873cb0519
-credentials-file: /etc/cloudflared/c365c7e6-faf3-4bed-a7dd-3e2873cb0519.json
-ingress:
-  - hostname: borderwar.io
-    service: http://localhost:8124
-  - service: http_status:404
-EOF
 ```
 
-### 4. Start it
+### 4. Start the server and connect the tunnel
+
+On the box:
 
 ```
 systemctl start borderwar
 curl http://localhost:8124/buildinfo.json
+```
+
+The box uses its own tunnel rather than one shared with another machine. On a
+computer already signed in to Cloudflare (`cloudflared tunnel login`), create
+it and copy its credentials file to the box:
+
+```
+cloudflared tunnel create borderwar-cloud
+scp ~/.cloudflared/<tunnel-id>.json root@BOX:/etc/cloudflared/
+```
+
+`create` prints the tunnel ID and where it wrote the file. On the box, write
+`/etc/cloudflared/config.yml` with that ID in both lines:
+
+```yaml
+tunnel: <tunnel-id>
+credentials-file: /etc/cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: borderwar.io
+    service: http://localhost:8124
+  - service: http_status:404
+```
+
+Then:
+
+```
+chmod 600 /etc/cloudflared/<tunnel-id>.json
 cloudflared service install
 systemctl status cloudflared --no-pager
 ```
 
-Then check from any browser: `https://borderwar.io` loads, an existing account
-can sign in, and `https://borderwar.io/admin` accepts the same admin token as
-before. Both services start on their own after a reboot.
+Last, point the domain at the tunnel. In the Cloudflare dashboard, open
+borderwar.io, then DNS, then Records, and set the `borderwar.io` CNAME's target
+to `<tunnel-id>.cfargotunnel.com`, proxied.
 
-### 5. Retire the PC as a host
+Use the dashboard for this, not `cloudflared tunnel route dns`. On a machine
+whose `~/.cloudflared/config.yml` names another tunnel, that command routed the
+domain to the config's tunnel instead of the one given, and `--overwrite-dns`
+then refused to replace the record.
 
-Do not run `tools/live server deploy.bat` (or `tools/live-mac.command`) again
-while the box is live: two machines on one tunnel split visitors between them,
-and each would have its own copy of the accounts. `win-server.bat` (a temporary
-trycloudflare link) and the local dev servers are unaffected.
+Then check from any browser: `https://borderwar.io` loads, sign-in works, and
+`https://borderwar.io/admin` accepts the token in
+`/opt/borderwar/server/data/admin-token.txt`. Both services start on their own
+after a reboot. Cloudflare error 1033 means the tunnel is not connected: look
+at `journalctl -u cloudflared -n 30`.
+
+### 5. Retire the other hosts
+
+Do not run `tools/live server deploy.bat` or `tools/live-mac.command` to serve
+borderwar.io while the box is live: each machine would have its own copy of the
+accounts. They use the older `borderwar` tunnel, which the domain no longer
+points at. `win-server.bat` (a temporary trycloudflare link) and the local dev
+servers are unaffected.
 
 ## Updating the live game
 
@@ -127,11 +153,12 @@ It blocks new games, waits up to 30 minutes for matches in progress to finish
 starts the new build and prints its build ID. If the box is already on the
 latest commit it does nothing.
 
-## Going back to the PC
+## Going back to a home machine
 
 Stop both services on the box (`systemctl stop cloudflared borderwar`), copy
-`/opt/borderwar/server/data` back over the PC's `server/data` if accounts were
-created in the meantime, and run `tools/live server deploy.bat`.
+`/opt/borderwar/server/data` over that machine's `server/data` to keep the
+accounts, point the `borderwar.io` CNAME at that machine's tunnel in the
+Cloudflare dashboard, and run its live script.
 
 ## Notes
 
