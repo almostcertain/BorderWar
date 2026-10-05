@@ -1160,9 +1160,9 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 #endOverlay.minimized #endText,
 #endOverlay.minimized #restartBtn { display: none; }
 
-/* --- Main menu redesign: the open rotating lobby (#12) is the primary call
-   to action — a hero card above everything else — with Singleplayer/Host/
-   join-by-code demoted to a small secondary tab row underneath. ---------- */
+/* --- Main menu: the open rotating lobby (#12) is the primary call to
+   action — a hero card above everything else — with the other ways to play
+   as a list of rows underneath, each opening its own screen. ------------- */
 
 #quickJoin {
   display: flex;
@@ -1205,29 +1205,59 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 
 /* --- MP-2.3: lobby UI — mode tabs, host/join panels, roster ---------------- */
 
+/* The home screen's list of other ways to play: one card, a row each. */
 #modeTabs {
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 16, 30, 0.55);
+  overflow: hidden;
 }
 
-.modeTab {
-  flex: 1;
-  padding: 6px 6px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.panel button.menuRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 0;
   background: transparent;
   color: #fff;
-  opacity: 0.75;
-  cursor: pointer;
+  font-weight: 400;
+  text-align: left;
 }
+.panel button.menuRow + .menuRow { border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.panel button.menuRow:hover { background: rgba(255, 255, 255, 0.06); }
+.panel button.menuRow:active { background: rgba(255, 255, 255, 0.1); }
+.menuRowText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.menuRowText b { font-size: 15px; font-weight: 600; }
+.menuRowText small { font-size: 12px; opacity: 0.6; }
+.menuRowGo { font-size: 20px; line-height: 1; opacity: 0.45; }
 
-.modeTab.active {
-  opacity: 1;
-  background: #1c2740;
-  border-color: rgba(61, 125, 255, 0.6);
+/* A grouped block on a mode's screen (Play with friends). */
+.menuCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 16, 30, 0.55);
 }
+#joinMode > div, #hostMode > div { display: flex; flex-direction: column; gap: 10px; }
+.menuCardTitle { font-size: 15px; font-weight: 600; text-align: left; }
+.menuCardNote { font-size: 12px; opacity: 0.6; text-align: left; margin-top: -6px; }
+.joinRow { display: flex; gap: 8px; }
+.joinRow input { flex: 1; min-width: 0; text-transform: uppercase; }
+.panel .joinRow button { padding: 8px 18px; font-size: 14px; }
+#friendsMode { gap: 12px; }
+#publicLobbyBrowser .lobbyLabel { display: flex; justify-content: space-between; align-items: center; }
+#publicLobbyBrowser .linkBtn { margin: 0; padding: 0; background: transparent; font-size: 12px; font-weight: 400; color: #a9cdff; }
+/* In a lobby, only that lobby's card shows; its create/join form goes too. */
+#friendsMode:has(#hostLobby:not(.hidden)) > :not(#hostMode),
+#friendsMode:has(#joinLobby:not(.hidden)) > :not(#joinMode),
+#hostMode:has(#hostLobby:not(.hidden)) #hostCreate,
+#joinMode:has(#joinLobby:not(.hidden)) #joinForm { display: none; }
 
 .modeBody {
   display: flex;
@@ -1505,19 +1535,42 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 .brand { display: flex; align-items: center; justify-content: center; gap: 0.3em; }
 .brand .brandMark { height: 1.5em; width: auto; flex: 0 0 auto; }
 #overlay .orDivider { display: none; }
-#overlay .modeTab { min-width: 0; padding: 12px 6px; font-size: 14px; }
 
-/* A mode is open: its form replaces the open-game card. Back sits above the title,
-   left-aligned with the column, and goes when the tabs do (in a lobby). */
-#overlay.modeOpen #quickJoin { display: none !important; }
+/* A mode is open: its screen replaces the home screen (brand, pitch, open-game
+   card, mode rows), under a header of Back and the screen's title. Back goes
+   when the rows do (in a lobby); the title stays. */
+#overlay.modeOpen #quickJoin,
+#overlay.modeOpen #modeTabs { display: none !important; }
+#overlay.modeOpen .brand,
+#overlay.modeOpen #menuPitch,
+#overlay.modeOpen #installBtn,
+#overlay.modeOpen #menuFoot,
+#overlay[data-mode="replay"] #nameRow,
+.menuPanel:has(#modeTabs.hidden) #menuFoot { display: none; }
 .menuPanel:has(#modeTabs.hidden) #modeBack { display: none; }
-#modeBack {
-  align-self: flex-start;
-  width: auto;
-  margin: 0;
-  padding: 6px 14px;
+#modeHead { display: none; align-items: center; gap: 10px; min-height: 34px; }
+#overlay.modeOpen #modeHead { display: flex; }
+#modeTitle { font-size: 20px; font-weight: 700; }
+.panel button#modeBack {
+  width: 34px;
+  height: 34px;
+  padding: 0 0 3px;
+  font-size: 22px;
+  line-height: 1;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.panel button#modeBack:hover { background: rgba(255, 255, 255, 0.18); }
+
+/* Replays: a utility, not a way to play, so a quiet link under the menu. */
+#menuFoot { text-align: center; }
+.panel button#replaysLink {
+  padding: 4px 8px;
+  background: transparent;
+  color: #a9cdff;
   font-size: 13px;
-  color: #fff;
+  font-weight: 400;
+  text-decoration: underline;
 }
 
 /* --- Options (js/options.js) ------------------------------------------------ */
@@ -1686,20 +1739,7 @@ body.noHint #hint:not(.warn) { display: none; }
 
 /* --- Tutorial (js/tutorial.js) --------------------------------------------- */
 
-/* Small on purpose: an offer for a newcomer, not a fifth way to play. */
-#tutorialBtn {
-  align-self: center;
-  padding: 5px 14px;
-  border: 1px solid rgba(109, 180, 255, 0.45);
-  border-radius: 999px;
-  background: rgba(109, 180, 255, 0.1);
-  color: #a9cdff;
-  font-size: 13px;
-  cursor: pointer;
-}
-#tutorialBtn:hover { background: rgba(109, 180, 255, 0.2); }
-/* A mode's form is open, or a lobby: the offer has been passed over. */
-#overlay.modeOpen #tutorialBtn { display: none; }
+/* #tutorialBtn is a row in the main menu's mode list (.menuRow). */
 
 /* The coach panel, first thing in the HUD so it sits right above the controls
    it talks about, on a phone as on a desktop. */

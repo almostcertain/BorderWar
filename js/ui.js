@@ -2229,31 +2229,34 @@ const UI = {
   // main.js what the host/join forms currently say.
   //
   // #spMode (map/bots/tribes/#startBtn) is the pre-existing singleplayer
-  // panel, untouched — this section only adds the tab chrome around it and
-  // the two new panels beside it.
+  // panel, untouched — this section only adds the menu rows around it and
+  // the screens beside it. Host and join share one screen (#friendsMode).
 
   setupLobby() {
     const tabs = Array.prototype.slice.call(document.querySelectorAll('.modeTab'));
     const bodies = {
       sp: document.getElementById('spMode'),
-      host: document.getElementById('hostMode'),
-      join: document.getElementById('joinMode'),
+      friends: document.getElementById('friendsMode'),
       replay: document.getElementById('replayMode')
     };
-    // Picking a mode swaps the open-game card out for that mode's form; Back
-    // (#modeBack) undoes it. A class on #overlay rather than `hidden` on the
-    // card, because hideLobby() owns the card's `hidden` for the lobby screens.
+    // Picking a mode swaps the home screen (brand, open-game card, mode rows)
+    // out for that mode's screen; Back (#modeBack) undoes it. A class on
+    // #overlay rather than `hidden` on the card, because hideLobby() owns the
+    // card's `hidden` for the lobby screens.
     const overlay = document.getElementById('overlay');
     const back = document.getElementById('modeBack');
+    const title = document.getElementById('modeTitle');
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         tabs.forEach((t) => t.classList.toggle('active', t === tab));
         for (const key in bodies) bodies[key].classList.toggle('hidden', key !== tab.dataset.mode);
         overlay.classList.add('modeOpen');
+        overlay.dataset.mode = tab.dataset.mode;
+        title.textContent = tab.dataset.title || '';
         back.classList.remove('hidden');
         this.setLobbyError('');
         // The preview skips drawing while its panel is hidden.
-        this.refreshMapPreview(tab.dataset.mode === 'host' ? 'host' : '');
+        if (tab.dataset.mode === 'sp') this.refreshMapPreview('');
         if (tab.dataset.mode === 'replay') this.refreshReplayList();
       });
     });
@@ -2261,6 +2264,7 @@ const UI = {
       tabs.forEach((t) => t.classList.remove('active'));
       for (const key in bodies) bodies[key].classList.add('hidden');
       overlay.classList.remove('modeOpen');
+      delete overlay.dataset.mode;
       back.classList.add('hidden');
       this.setLobbyError('');
     });
@@ -2863,15 +2867,15 @@ const UI = {
   // lobby exists (should not happen in practice — GameManager always keeps
   // one — but a server that's down or between restarts is exactly the case
   // this falls back for, per Transport.fetchLobbyList's own "resolves to []
-  // on any network failure" contract). Disables the button rather than
-  // leaving it clickable with nothing to join.
+  // on any network failure" contract). The button stays live either way:
+  // with nothing to join it starts a match against bots (main.js).
   renderQuickJoin(entry) {
     const info = document.getElementById('quickJoinInfo');
     const btn = document.getElementById('quickJoinBtn');
     if (!entry) {
       this._quickJoinEntry = null;
-      info.textContent = 'No open game right now — check back shortly.';
-      btn.disabled = true;
+      info.textContent = 'No open game right now. Play now starts a match against bots.';
+      btn.disabled = false;
       this.renderQuickJoinMap(null);
       return;
     }
@@ -2981,8 +2985,8 @@ const UI = {
     this._hidePreLobbyChrome();
   },
 
-  // Join Open Game: the menu's hero card is hidden once connected, so carry
-  // its already-painted map into the lobby panel.
+  // Play now, into the open game: the menu's hero card is hidden once
+  // connected, so carry its already-painted map into the lobby panel.
   showJoinLobbyMap() {
     const src = document.getElementById('quickJoinMapCanvas');
     const dst = document.getElementById('joinLobbyMapCanvas');
@@ -2998,8 +3002,8 @@ const UI = {
   },
 
   // Once connected to a lobby (host or join), the other ways to start a
-  // match no longer make sense to show — clicking the hero "Join Open Game"
-  // button or another mode tab wouldn't leave this lobby, just show a
+  // match no longer make sense to show — clicking the hero "Play now"
+  // button or another mode row wouldn't leave this lobby, just show a
   // confusingly unconnected panel next to a still-live one. Hidden rather
   // than disabled so the lobby screen (roster, code/status, leave button)
   // is the only thing on screen while connected.

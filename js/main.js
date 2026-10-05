@@ -317,19 +317,21 @@
 
   document.getElementById('lobbyListRefreshBtn').addEventListener('click', refreshLobbyList);
 
-  // The hero card's own button — joins whichever lobby the last poll found
-  // flagged `isAuto` (GameManager always keeps exactly one). Disabled by
-  // UI.renderQuickJoin whenever there isn't one yet, so this only ever fires
-  // with a real gameID in hand.
+  // The hero card's own button ("Play now") — joins whichever lobby the last
+  // poll found flagged `isAuto` (GameManager always keeps exactly one). With
+  // none to join (server down, or between restarts) it starts a singleplayer
+  // match instead, on whatever the Solo vs bots form currently says, so the
+  // menu's loudest button always leads to a game.
   document.getElementById('quickJoinBtn').addEventListener('click', () => {
+    if (debugLobby) return;
     const entry = lastLobbyList.find((e) => e.isAuto);
-    if (!entry || debugLobby) return;
-    // joinLobby()'s in-progress UI lives inside #joinMode's body (#joinLobby),
-    // which is only visible while the "Join custom lobby" tab is the active one
-    // (UI.setupLobby's click handler toggles each mode body's `hidden`
-    // class) — switch to it first so a hero-button join from the Host or
-    // Singleplayer tab doesn't connect into a panel nobody can see.
-    document.querySelector('.modeTab[data-mode="join"]').click();
+    if (!entry) { start(); return; }
+    // joinLobby()'s in-progress UI lives inside #joinMode (#joinLobby), which
+    // is only visible while the Play with friends screen is open (UI.setupLobby's
+    // click handler toggles each mode body's `hidden` class) — open it first
+    // so the join doesn't connect into a panel nobody can see.
+    document.querySelector('.modeTab[data-mode="friends"]').click();
+    document.getElementById('modeTitle').textContent = 'Open game';
     joinLobby(entry.gameID);
     fromQuickJoin = true;
     UI.showJoinLobbyMap();
@@ -362,7 +364,7 @@
   const inviteMatch = /[?&]join=([A-Za-z0-9_-]{1,32})/.exec(location.search);
   if (inviteMatch) {
     history.replaceState(null, '', location.pathname);
-    document.querySelector('.modeTab[data-mode="join"]').click();
+    document.querySelector('.modeTab[data-mode="friends"]').click();
     joinLobby(inviteMatch[1].toUpperCase());
   }
 
