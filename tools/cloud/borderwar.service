@@ -1,0 +1,38 @@
+# systemd unit for the BorderWar server on a cloud box (docs/cloud-hosting.md).
+# Installed to /etc/systemd/system/ by tools/cloud/setup.sh.
+
+[Unit]
+Description=BorderWar game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=borderwar
+Group=borderwar
+WorkingDirectory=/opt/borderwar/server
+Environment=NODE_ENV=production
+Environment=PORT=8124
+ExecStart=/usr/bin/node index.js
+
+# A crash restarts the server. A drain (tools/cloud/update.sh) exits cleanly
+# and stays stopped until the update starts it again.
+Restart=on-failure
+RestartSec=3
+
+# The server treats the first SIGTERM as "drain" (wait for matches to finish)
+# and the second as "stop now, after telling the players". `systemctl stop` and
+# a reboot mean stop now, so send both: ExecStop sends the first, systemd's own
+# SIGTERM is the second.
+ExecStop=/bin/sh -c 'kill -TERM $MAINPID; sleep 1'
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# The server only ever writes to its data folder.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/borderwar/server/data
+
+[Install]
+WantedBy=multi-user.target

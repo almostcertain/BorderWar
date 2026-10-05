@@ -14,6 +14,9 @@ reach it.
 | **2** | Same house / LAN | Add a Windows Defender Firewall inbound rule for the port on *private* networks, then `http://<lan-ip>:8124` from another device | Local playtesting |
 | **3** | Over the internet | Cloudflare Tunnel (`cloudflared`) in front of the local port; connect over `wss://` | Friends elsewhere |
 
+To run the live server on a rented Linux box instead of this machine (same
+server, same tunnel), see `docs/cloud-hosting.md`.
+
 Starting the server from cold is four commands:
 
 ```
