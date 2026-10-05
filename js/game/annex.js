@@ -7,6 +7,7 @@
 // are only ever compared, so their values never leak into results.
 let annexStamp = null, annexRun = 0;
 let pieceStamp = null, pieceRun = 0;   // largestLandPiece's visited marks
+let openStamp = null, openRun = 0;     // openGroundSealed's visited marks
 
 // One annexation sweep's memory of which enemy components have already been
 // walked. Whether a same-owner component is enclosed depends only on the
@@ -27,7 +28,7 @@ function AnnexSweep() {
 AnnexSweep.prototype.reset = function (changedIds) {
   if (annexRun > 0x7ffffff0) { annexStamp.fill(0); annexRun = 0; }
   this.base = annexRun;          // stamps <= base are stale
-  this.accepted = new Map();     // run -> { wallCounts, size } of an enclosed component
+  this.accepted = new Map();     // run -> { wallCounts, size, open } of an enclosed component
   if (changedIds) for (const id of changedIds) this.largest.delete(id);
 };
 // Verdict for the component containing `tile`: the run id it was stamped
@@ -37,7 +38,7 @@ AnnexSweep.prototype.componentOf = function (tile) {
   if (s > this.base) return s;
   const run = ++annexRun;
   const found = Game.enclosedRegion(tile, null, run, annexStamp, this.base);
-  if (found) this.accepted.set(run, { wallCounts: found.wallCounts, size: found.tiles.length });
+  if (found) this.accepted.set(run, { wallCounts: found.wallCounts, size: found.tiles.length, open: found.open });
   return run;
 };
 
@@ -69,24 +70,21 @@ Object.assign(Game, {
   },
 
   // Flood-fills the connected component of same-owner tiles containing
-  // `startTile` and tests whether it is fully enclosed by OTHER players'
-  // territory: walking outward from it can only ever land on more of the
-  // same owner (interior) or on any other live player's land (a wall) —
-  // reaching open water, unclaimed land, or the map edge means there's a gap
-  // and it's not enclosed. Ported against OpenFront's actual
-  // PlayerExecution.isSurrounded/isEnclosed source (github.com/openfrontio/
-  // OpenFrontIO), collapsed from their two-stage cheap-filter-then-confirm
-  // design into one walk since this runs on demand (a click, a bot's
-  // decision, the periodic sweep below) rather than continuously across
-  // every player every tick. Unclaimed land disqualifies too, not just
-  // water — that looks stricter than OpenFront's isEnclosed alone, but
-  // matches what actually happens in real matches: their cheap prefilter
-  // already rejects any unowned neighbour before the lenient flood-fill ever
-  // gets a chance to run. Returns {tiles, wallCounts} (annexable) or null
-  // (not enclosed).
+  // `startTile` and tests whether it is enclosed by OTHER players' territory.
+  // Ported against OpenFront's PlayerExecution (isSurrounded, isEnclosed,
+  // surroundedBySamePlayer; github.com/openfrontio/OpenFrontIO), re-read
+  // 2026-10-05 for #39. Water or the map edge next to the piece is always a
+  // gap. Unclaimed land is not: it is a hole rather than a way out (a nuke
+  // crater, say), so the piece still counts as enclosed as long as that open
+  // ground is itself sealed in — see openGroundSealed. The earlier port
+  // rejected any unclaimed neighbour outright, which is OpenFront's rule for
+  // a nation's mainland only, and left the survivors of a nuke standing in
+  // their own fallout. Returns {tiles, wallCounts, open} or null (not
+  // enclosed); `open` says the piece touches unclaimed land, which the
+  // mainland rule (mainlandHolds) still cares about.
   //
   // The wall no longer has to be a single owner (2026-09-09 fix, see
-  // dominantWaller below) — the original version took a `byPlayerId` and
+  // capturingPlayer below) — the original version took a `byPlayerId` and
   // rejected the whole walk the instant it touched any OTHER real player,
   // which matched real OpenFront for a besieger who walls a pocket alone but
   // silently refused every pocket ringed by a MIX of nations (a tribe or a
@@ -117,8 +115,13 @@ Object.assign(Game, {
     const stack = [startTile];
     const wallCounts = new Map();
     const nb = this.abuf;
+    const total = this.players[target].tiles.size;
+    let open = null;   // unclaimed tiles the piece touches
 
     while (stack.length) {
+      // More than half the nation is its mainland, and a mainland touching
+      // unclaimed land never falls (mainlandHolds), so stop walking it.
+      if (open && region.length * 2 > total) return null;
       const tile = stack.pop();
       const n = GameMap.neighbors(tile, nb);
       if (n < 4) return null; // touches the map edge
@@ -141,25 +144,109 @@ Object.assign(Game, {
           stack.push(j);
           continue;
         }
-        if (o < 0) return null; // water or unclaimed land: a gap
+        if (o === WATER) return null; // a gap
+        if (o === NEUTRAL) { if (open) open.push(j); else open = [j]; continue; }
         wallCounts.set(o, (wallCounts.get(o) || 0) + 1);
       }
     }
-    return { tiles: region, wallCounts };
+    if (open && !this.openGroundSealed(region, open, target)) return null;
+    return { tiles: region, wallCounts, open: open !== null };
   },
 
-  // Whichever bordering owner contributes the most wall-tile contact to an
-  // enclosed pocket, tie-broken by lowest player id so every client agrees
-  // regardless of Map insertion order. This is real OpenFront's own
-  // resolution for a pocket ringed by a mix of more than one nation ("owns
-  // the most of its border"); see enclosedRegion above for why a mixed wall
-  // is now tallied instead of rejected outright.
-  dominantWaller(wallCounts) {
-    let best = -1, bestCount = -1;
+  // enclosedRegion's second stage, for a piece that touches unclaimed land.
+  // Both of OpenFront's tests for that case: the other players' tiles around
+  // the piece must reach at least as far as it does in all four directions
+  // (isSurrounded's bounding-box test, which is what stops a tip poking out
+  // into open ground from falling), and walking on from the unclaimed land,
+  // through more of it and through any more of the same nation's land, must
+  // never reach water or the map edge (isEnclosed).
+  openGroundSealed(region, open, target) {
+    const size = GameMap.owner.length, w = GameMap.width, owner = GameMap.owner, nb = this.abuf;
+    if (!openStamp || openStamp.length !== size) { openStamp = new Int32Array(size); openRun = 0; }
+    if (openRun > 0x7ffffff0) { openStamp.fill(0); openRun = 0; }
+    const run = ++openRun, seen = openStamp;
+
+    let minX = w, minY = size, maxX = -1, maxY = -1;       // the piece
+    let wMinX = w, wMinY = size, wMaxX = -1, wMaxY = -1;   // its wall
+    for (const t of region) {
+      seen[t] = run;   // already known clear of water and the edge
+      const x = t % w, y = (t - x) / w;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      const n = GameMap.neighbors(t, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k], o = owner[j];
+        if (o < 0 || o === target) continue;
+        const jx = j % w, jy = (j - jx) / w;
+        if (jx < wMinX) wMinX = jx;
+        if (jx > wMaxX) wMaxX = jx;
+        if (jy < wMinY) wMinY = jy;
+        if (jy > wMaxY) wMaxY = jy;
+      }
+    }
+    if (wMinX > minX || wMinY > minY || wMaxX < maxX || wMaxY < maxY) return false;
+
+    const stack = [];
+    for (const t of open) if (seen[t] !== run) { seen[t] = run; stack.push(t); }
+    while (stack.length) {
+      const t = stack.pop();
+      const n = GameMap.neighbors(t, nb);
+      if (n < 4) return false;
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (seen[j] === run) continue;
+        const o = owner[j];
+        if (o === WATER) return false;
+        if (o !== NEUTRAL && o !== target) continue;   // someone else's land: wall
+        seen[j] = run;
+        stack.push(j);
+      }
+    }
+    return true;
+  },
+
+  // Which bordering nation an enclosed pocket of `targetId` falls to when
+  // nobody tapped it: OpenFront's getCapturingPlayer. Only nations that are
+  // not friendly to the owner can take it. Among those, whoever has the
+  // largest attack running against the owner; with no attack, whoever
+  // contributes the most wall-tile contact, tie-broken by lowest player id so
+  // every client agrees regardless of Map insertion order. Returns -1 when
+  // every nation on the wall is the owner's friend.
+  //
+  // Before 2026-10-05 this was the biggest wall and nothing else, friends
+  // included, so a pocket walled mostly by the owner's own ally went to
+  // nobody at all (the ally never annexes, and nobody else was "dominant"),
+  // and a pocket you were attacking could go to a bystander with more border.
+  capturingPlayer(wallCounts, targetId) {
+    const friends = this.players[targetId].allies;
+    let best = -1, bestTroops = 0;
+    for (const at of this.attacks) {
+      if (at.target !== targetId || at.retreating || at.troops <= bestTroops) continue;
+      if (!wallCounts.has(at.attacker) || friends.has(at.attacker)) continue;
+      best = at.attacker;
+      bestTroops = at.troops;
+    }
+    if (best >= 0) return best;
+    let bestCount = -1;
     for (const [owner, count] of wallCounts) {
+      if (friends.has(owner)) continue;
       if (count > bestCount || (count === bestCount && owner < best)) { best = owner; bestCount = count; }
     }
     return best;
+  },
+
+  // True when an enclosed piece is its nation's mainland (its largest piece)
+  // and may not be annexed. A cut-off fragment falls to any wall, but the
+  // mainland only falls the way OpenFront's surroundedBySamePlayer allows:
+  // ringed by exactly one other nation, with no unclaimed land (or water, or
+  // map edge — enclosedRegion has already ruled those out) anywhere along
+  // its border. So one nation that fully engulfs another takes it whole,
+  // and a nation merely hemmed in by several neighbours is left to be fought.
+  // `pocket` is anything carrying enclosedRegion's wallCounts and open.
+  mainlandHolds(pocket, size, biggest) {
+    return size >= biggest && (pocket.open || pocket.wallCounts.size !== 1);
   },
 
   // Every pocket of `targetId` that `byPlayerId`'s land touches the wall of,
@@ -190,16 +277,16 @@ Object.assign(Game, {
   // large empire. Uses nbuf so the abuf enclosedRegion walks on can't
   // clobber it mid-scan.
   //
-  // Mainland vs cut-off piece (2026-09-27 fix, see #39). A fragment falls to
-  // any wall, mixed or single-owner, but a nation's entire mainland (its
-  // largest connected piece) never falls to a bare geometric ring alone,
-  // regardless of how many players contribute to that ring — annexation is a
-  // "your remaining scrap is swallowed" rule, not a way to end a fully alive
-  // nation with zero combat. Earlier this only guarded a MIXED wall
-  // (`wallCounts.size > 1`), so a single neighbour whose land happened to
-  // fully encircle another nation's mainland could take the whole thing
-  // instantly — no invasion, no troop loss, just geometry. The guard now
-  // applies unconditionally so both wall shapes agree.
+  // Mainland vs cut-off piece (#39): see mainlandHolds. This has swung both
+  // ways. First a mixed ring could take a whole living nation; then
+  // (2026-09-27) no ring at all could, which also stopped a tribe one player
+  // had fully engulfed from falling. It now follows OpenFront: one nation
+  // alone, all the way round.
+  //
+  // Friends never annex each other, whichever caller asks: an alliance (or a
+  // shared team, which game/teams.js records as one) is checked here rather
+  // than left to the callers, since with the mainland rule above a tap on an
+  // ally you happen to surround would otherwise swallow them whole.
   //
   // `sweep` (checkAnnexations only) is an AnnexSweep shared across every
   // player's scan in one sweep: components are judged from its cache, and
@@ -209,6 +296,7 @@ Object.assign(Game, {
   enclosedPocketsOf(targetId, byPlayerId, requireDominant, sweep) {
     const me = this.players[byPlayerId];
     if (targetId < 0 || targetId === byPlayerId || !me) return [];
+    if (this.areAllied(targetId, byPlayerId)) return [];
     if (sweep) return this.sweepPocketsOf(targetId, me, requireDominant, sweep);
     const seen = new Map(), nb = this.nbuf, regions = [];
     let run = 0, biggest = -1;
@@ -219,11 +307,10 @@ Object.assign(Game, {
         if (GameMap.owner[j] !== targetId || seen.has(j)) continue;
         const found = this.enclosedRegion(j, seen, ++run);
         if (!found) continue;
-        // Fine for a fragment, never for the mainland. Only pay for the
-        // largest-piece scan once a pocket has actually passed.
+        if (requireDominant && this.capturingPlayer(found.wallCounts, targetId) !== byPlayerId) continue;
+        // Only pay for the largest-piece scan once a pocket has actually passed.
         if (biggest < 0) biggest = this.largestLandPiece(targetId);
-        if (found.tiles.length >= biggest) continue;
-        if (requireDominant && this.dominantWaller(found.wallCounts) !== byPlayerId) continue;
+        if (this.mainlandHolds(found, found.tiles.length, biggest)) continue;
         regions.push(found.tiles);
       }
     }
@@ -243,10 +330,10 @@ Object.assign(Game, {
         judged.add(comp);
         const verdict = sweep.accepted.get(comp);
         if (!verdict) continue;
-        if (requireDominant && this.dominantWaller(verdict.wallCounts) !== me.id) continue;
+        if (requireDominant && this.capturingPlayer(verdict.wallCounts, targetId) !== me.id) continue;
         let biggest = sweep.largest.get(targetId);
         if (biggest === undefined) { biggest = this.largestLandPiece(targetId); sweep.largest.set(targetId, biggest); }
-        if (verdict.size >= biggest) continue;
+        if (this.mainlandHolds(verdict, verdict.size, biggest)) continue;
         regions.push(this.enclosedRegion(j, new Map(), 1).tiles);
       }
     }

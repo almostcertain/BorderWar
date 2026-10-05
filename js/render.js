@@ -325,16 +325,16 @@ const Render = {
     // dominant one).
     //
     // It also has to agree with enclosedPocketsOf on the mainland-vs-fragment
-    // rule (game/annex.js's 2026-09-27 fix, #39): no wall, mixed or
-    // single-owner, ever takes a nation's largest piece, only a fragment.
+    // rule (Game.mainlandHolds, #39): a nation's largest piece only falls to
+    // one nation ringing it alone, and never to a friend.
     // Skipping that check here used to make this walk see a mainland as
     // annexable while enclosedPocketsOf (correctly) refused it — for a
     // tribe wedged between neighbours, that meant hovering it took the
     // gold-pocket branch below, enclosedPocketsOf came back empty, and
     // nothing got painted at all instead of falling back to the plain wash.
     const found = id !== Game.me ? Game.enclosedRegion(UI.hoverTile, new Map(), 1) : null;
-    const isMainland = found && found.tiles.length >= Game.largestLandPiece(id);
-    const region = found && !isMainland && found.wallCounts.has(Game.me) ? found : null;
+    const isMainland = found && Game.mainlandHolds(found, found.tiles.length, Game.largestLandPiece(id));
+    const region = found && !isMainland && found.wallCounts.has(Game.me) && !Game.areAllied(id, Game.me) ? found : null;
     if (region) {
       const c = this.packed(255, 215, 60, 130);
       for (const r of Game.enclosedPocketsOf(id, Game.me)) this.paintHoverTiles(r, c);
