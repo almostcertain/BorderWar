@@ -324,15 +324,11 @@ Object.assign(Game, {
   // later click on this same island folds into the beachhead (same
   // consolidation rule as launchAttack) instead of always opening a
   // parallel front beside it.
-  // `airdrop` (planes only) stamps the attack with the tile it was dropped
-  // on, which keeps its pocket from being annexed while it fights — see
-  // Game.airdropHolds. Boat attacks never carry the field.
-  openBeachhead(attackerId, targetId, tile, troops, airdrop) {
+  openBeachhead(attackerId, targetId, tile, troops) {
     const attacker = this.players[attackerId];
     const a = { id: this.nextAttackId++, attacker: attackerId, target: targetId, troops,
                 heapTile: [], heapPrio: [], border: new Set(), landmassId: GameMap.landmassId[tile],
                 frontSeed: ((this.rng() * 0x7fffffff) | 0) || 1 };
-    if (airdrop) a.dropTile = tile;
     const nb = this.nbuf;
     const n = GameMap.neighbors(tile, nb);
     for (let k = 0; k < n; k++) {

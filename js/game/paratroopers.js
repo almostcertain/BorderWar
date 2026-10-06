@@ -75,6 +75,11 @@ Object.assign(Game, {
   aaReadyAt: new Map(),
   // Tracers, cosmetic (Game.COSMETIC_STATE): { fx, fy, x, y, hit, born }.
   aaFlashes: [],
+  // Drop tile -> the player who landed there, for every drop whose tile that
+  // player still holds. A pocket holding one is never annexed (airdropHolds).
+  // Entries whose tile has changed hands are dropped each tick in stepPlanes,
+  // so the map only ever holds live drop zones. Insertion order, lookups only.
+  dropZones: new Map(),
 
   initPlanes() {
     this.planes = [];
@@ -82,6 +87,7 @@ Object.assign(Game, {
     this.paraReadyAt = new Map();
     this.aaReadyAt = new Map();
     this.aaFlashes = [];
+    this.dropZones = new Map();
   },
 
   planeById(id) {
@@ -229,6 +235,10 @@ Object.assign(Game, {
   // resolves the ones that have arrived.
   stepPlanes() {
     const now = this.elapsed;
+    // A drop zone lasts exactly as long as its lander holds the tile.
+    for (const [tile, ownerId] of this.dropZones) {
+      if (GameMap.owner[tile] !== ownerId) this.dropZones.delete(tile);
+    }
     for (let i = this.planes.length - 1; i >= 0; i--) {
       const pl = this.planes[i];
       if (pl.hp <= 0 || !this.players[pl.owner].alive) { this.planes.splice(i, 1); continue; }
@@ -278,21 +288,21 @@ Object.assign(Game, {
     this.provokeByAttack(owner, this.players[targetId]);
     this.noteFreshFront(owner, this.players[targetId]);
     Fx.planeEvent('landed', pl.owner, targetId, tile, pl.troops);
-    this.openBeachhead(pl.owner, targetId, tile, pl.troops, true);
+    this.dropZones.set(tile, pl.owner);
+    this.openBeachhead(pl.owner, targetId, tile, pl.troops);
   },
 
   // A drop lands as a one-tile island inside enemy land, which the
-  // annexation rule (annex.js) would hand straight back to the enemy on its
-  // next sweep, ending the attack before it starts. So a pocket of
-  // `ownerId`'s that holds the drop tile of one of its own airdrop attacks
-  // still fighting is not annexable. Once that attack ends — out of troops or
-  // retreated — the pocket is ordinary land again, and falls if it is still
-  // surrounded. Costs one scan of the attack list, and nothing at all for an
-  // attack without a dropTile.
+  // annexation rule (annex.js) would hand to whoever surrounds it — straight
+  // back to the defender on the next sweep, or to a third nation that
+  // conquers the land around it — with no fight at all. So a pocket of
+  // `ownerId`'s holding a drop tile they still own is never annexable: to
+  // take it, someone has to attack it across the border like any other land.
+  // Once the drop tile itself is lost in combat the protection goes with it.
   airdropHolds(ownerId, tiles) {
-    for (const a of this.attacks) {
-      if (a.dropTile === undefined || a.attacker !== ownerId || a.retreating || a.troops < 1) continue;
-      if (GameMap.owner[a.dropTile] === ownerId && tiles.includes(a.dropTile)) return true;
+    if (!this.dropZones.size) return false;
+    for (const [tile, owner] of this.dropZones) {
+      if (owner === ownerId && GameMap.owner[tile] === ownerId && tiles.includes(tile)) return true;
     }
     return false;
   },
