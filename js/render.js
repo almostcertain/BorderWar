@@ -2610,7 +2610,7 @@ const Render = {
     if (!Game.warships.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, mw = GameMap.width;
-    const r = Math.max(7 * this.dpr, Math.min(18 * this.dpr, s * 1.0));
+    const r = Math.max(9 * this.dpr, Math.min(24 * this.dpr, s * 1.35));
     // Fog: culled on position like everything else, the viewer's own
     // included. By design a warship reveals the water around it as it sails
     // (docs/fog-of-war.md), which is what keeps one's own fleet in view.
