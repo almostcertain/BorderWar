@@ -116,9 +116,9 @@
         WorldMapLoader.ensure().catch(() => {});
       }
     });
-    // World is selected by default in index.html, so without this the fields
-    // would sit at their static HTML values (9/16) instead of World's actual
-    // defaults until the player touches the dropdown themselves.
+    // Without this the fields would sit at their static HTML values (9/16)
+    // instead of the selected map's actual defaults until the player touches
+    // the dropdown themselves.
     applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes, prefix);
     // Browsers can restore the select's last value on reload or back/forward
     // after this runs, without a change event; re-sync once the page shows.
@@ -128,11 +128,15 @@
   bindMapType(document.getElementById('hostMapType'), document.getElementById('hostMapSizeRow'),
     document.getElementById('hostMapSize'), document.getElementById('hostBotCount'), document.getElementById('hostTribeCount'), 'host');
 
-  // World is the default selection in both panels (index.html) — start
-  // fetching it immediately rather than waiting for a change event that may
-  // never fire because the player never touches the dropdown. Failure is
+  // Procedural is the default selection in both panels (index.html), but a
+  // browser can restore World on reload or back/forward without a change
+  // event — start fetching it then rather than waiting for Start. Failure is
   // surfaced later, when Start is actually pressed.
-  WorldMapLoader.ensure().catch(() => {});
+  window.addEventListener('pageshow', () => {
+    if (mapTypeSelect.value === 'world' || document.getElementById('hostMapType').value === 'world') {
+      WorldMapLoader.ensure().catch(() => {});
+    }
+  });
 
   // --- Multiplayer lobby (MP-2.3) --------------------------------------------
   //
