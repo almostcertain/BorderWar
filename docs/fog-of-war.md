@@ -447,8 +447,10 @@ notes are under "Vision state".
   destination are both discovered.
 - Blasts and SAM flashes are culled on their centre. The incoming-nuke target
   ring is always drawn. "Own" missiles means the viewer's, not teammates'.
-- **Spectators and replays do not exist in the game today.** A client that is
-  not on the roster is treated as player 0 and gets that player's fog.
+- **There is no spectator mode.** A client that is not on the roster is
+  treated as player 0 and gets that player's fog. Replays were added later
+  (`docs/replays.md`): a replay shows the whole map unless the viewer asks
+  for one player's fog (`Replay.revealAll`).
 
 ### UI (tasks 6 and 8)
 
