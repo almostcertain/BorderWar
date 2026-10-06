@@ -1094,6 +1094,7 @@ const Render = {
     this.drawNukes();
     this.drawNukeBlasts();
     this.drawSamFlashes();
+    this.drawRadioScans();
     if (fog) {
       // Everything above is the world, and the fog goes over all of it:
       // whatever runs out past the discovered area (a range ring, a boat's
@@ -3181,6 +3182,54 @@ const Render = {
         ctx.arc(px, py, b.inner * s, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(255, 240, 200, ${flashAlpha})`;
         ctx.fill();
+      }
+    }
+  },
+
+  // A Radio Tower finishing (fog matches) — see Fx.radioScan. The sim drops
+  // the tower the tick it is built, so this stands in for it: the icon it
+  // would have had, shrinking away, while two rings sweep from it out to the edge
+  // of the disc it uncovered (the same disc the placement ghost shows). A
+  // world effect, drawn under the fog; one the viewer has not discovered the
+  // centre of is left out.
+  drawRadioScans() {
+    const now = Game.renderElapsed;
+    Fx.pruneRadioScans(now);
+    if (!Fx.radioScans.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
+    const C = Game.VISION_CELL, life = Fx.RADIO_SCAN_LIFETIME;
+    const maxR = (Game.VISION_SIGHT_RADIO + 0.5) * C * s;
+    const fog = this.fogged;
+
+    for (const f of Fx.radioScans) {
+      const x = f.tile % w, y = (f.tile / w) | 0;
+      if (fog && this.fogHidesAt(x, y)) continue;
+      // Clamped at both ends for the reason drawSamFlashes gives.
+      const t = Math.max(0, Math.min(1, (now - f.born) / life));
+      const px = (x + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (y + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -maxR || py < -maxR || px > cw + maxR || py > ch + maxR) continue;
+
+      // The rings start from the vision cell's centre, like the disc itself.
+      const cx = ((((x / C) | 0) + 0.5) * C - this.cam.x) * s + cw / 2;
+      const cy = ((((y / C) | 0) + 0.5) * C - this.cam.y) * s + ch / 2;
+      for (let k = 0; k < 2; k++) {
+        const rt = (t - k * 0.25) / 0.75;
+        if (rt <= 0 || rt >= 1) continue;
+        const ease = 1 - (1 - rt) * (1 - rt);
+        ctx.beginPath();
+        ctx.arc(cx, cy, maxR * ease, 0, Math.PI * 2);
+        ctx.lineWidth = Math.max(1.5, this.dpr * 2.5 * (1 - rt));
+        ctx.strokeStyle = `rgba(111, 211, 224, ${0.75 * (1 - rt)})`;
+        ctx.stroke();
+      }
+
+      // The icon holds, then shrinks away (paintStructureIcon sets its own
+      // alpha, so it cannot simply be faded).
+      const shrink = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
+      if (this.structureIconsShown() && shrink > 0.05) {
+        this.paintStructureIcon(ctx, 'radio', f.ownerId, true, px, py, this.structureRadius() * this.dpr * shrink);
       }
     }
   },

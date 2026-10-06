@@ -107,7 +107,7 @@ const UI = {
     scout: () => 'An unarmed ship that uncovers the map as it sails. Launched from your nearest Port; send it anywhere, even into the dark.',
     drill: () => 'Starts the endgame. After a ' + Game.DRILL_COUNTDOWN_S + 's warning the world closes in on this spot over ' +
       Math.round(Game.DRILL_SHRINK_S / 60) + ' minutes, and the last nation standing wins. One per match, and it cannot be stopped.',
-    radio: () => 'Uncovers the map in a wide circle around it once built. A way to see past your border without a Port.'
+    radio: () => 'Uncovers the map in a wide circle around it once built, then is gone. A way to see past your border without a Port.'
   },
 
   // Puts the attack ratio back to its default and moves the slider handle and

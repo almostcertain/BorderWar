@@ -162,8 +162,8 @@ Object.assign(Game, {
     // the map (VISION_SIGHT_RADIO) once, the moment it finishes — see
     // updateConstruction. It is how a landlocked nation, which can launch no
     // Scout, looks past its border. Discovery is permanent, so the tower has
-    // done all it ever will by then; it stands on as an ordinary capturable
-    // structure and what it showed survives its loss. LINEAR like Fort
+    // done all it ever will by then, and it is removed on the spot (see
+    // updateConstruction); what it showed stays shown. LINEAR like Fort
     // (50k, 100k ... capped at 250k), so carpeting a border with them is a
     // real spend. Placed through the ordinary buildBlockReason/build path —
     // no `action` flag — but `fogOnly` like the Scout: refused with fog off,
@@ -454,7 +454,10 @@ Object.assign(Game, {
         b.built = true;
         b.level = 1;
         const owner = GameMap.owner[b.tile];
-        if (owner < 0) continue;
+        if (owner < 0) {
+          if (b.type === 'radio') this.buildings.delete(b.tile);
+          continue;
+        }
         const p = this.players[owner];
         p.unitsPending[b.type] = Math.max(0, this.unitsPending(p, b.type) - 1);
         p.units[b.type] = this.unitsOwned(p, b.type) + 1;
@@ -464,8 +467,16 @@ Object.assign(Game, {
         this.onStructureCompleted(b);
         // Fog of war's Radio Tower: its one reveal, to whoever holds the
         // tile now — a tower overrun mid-build finishes, and reveals, under
-        // its new owner. A finished tower captured later reveals nothing.
-        if (b.type === 'radio') this.revealAround(owner, b.tile, this.VISION_SIGHT_RADIO);
+        // its new owner. That is all it ever does, so it does not stand on:
+        // the record goes the moment it finishes, the tile is free to build
+        // on again, and Fx plays the scan in its place. units.radio keeps the
+        // += 1 above for good — with no building left to lose, it is a count
+        // of towers used, which is what keeps the linear price climbing.
+        if (b.type === 'radio') {
+          this.revealAround(owner, b.tile, this.VISION_SIGHT_RADIO);
+          Fx.radioScan(b.tile, owner);
+          this.buildings.delete(b.tile);
+        }
       } else if (b.upgrading) {
         b.progress += this.TICK_DT;
         if (b.progress < b.buildTime) continue;
