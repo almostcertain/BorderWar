@@ -3510,6 +3510,38 @@ const Render = {
     this.labelSprites.delete(id);
   },
 
+  // Crowns for this frame as flat (x, y, font) triples, filled by drawLabels.
+  crowns: [],
+
+  // A gold crown centred over a nation's name line. (px, py) is the label
+  // anchor and `font` its size, so the crown scales with the name.
+  drawCrown(px, py, font) {
+    const ctx = this.ctx;
+    const w = Math.max(14 * this.dpr, font * 1.5), h = w * 0.7;
+    const x = px - w / 2, bottom = py - font * 1.25, top = bottom - h;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x, bottom);
+    ctx.lineTo(x - w * 0.04, top + h * 0.1);
+    ctx.lineTo(x + w * 0.27, top + h * 0.5);
+    ctx.lineTo(x + w * 0.5, top);
+    ctx.lineTo(x + w * 0.73, top + h * 0.5);
+    ctx.lineTo(x + w * 1.04, top + h * 0.1);
+    ctx.lineTo(x + w, bottom);
+    ctx.closePath();
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(1.5, w * 0.09);
+    ctx.strokeStyle = 'rgba(60,35,0,0.85)';
+    ctx.stroke();
+    ctx.fillStyle = '#ffcf3a';
+    ctx.fill();
+    ctx.fillStyle = '#ff5a4a';
+    ctx.beginPath();
+    ctx.arc(px, bottom - h * 0.3, w * 0.06, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  },
+
   drawLabels() {
     this.stepLabels();
     const frame = ++this.labelFrame;
@@ -3524,9 +3556,22 @@ const Render = {
     const meP = Game.players[Game.me];
     const marked = meP ? Game.transitiveTargets(meP) : null;
     const fog = this.fogged;
+    // Top player: the nation holding the most land, wearing a crown over its
+    // name. Tribes aren't contenders, and nobody is crowned during the spawn
+    // phase, when everyone holds a handful of tiles.
+    let topId = -1;
+    if (!Game.spawning) {
+      let topTiles = 0;
+      for (const L of this.labels) {
+        const p = Game.players[L.id];
+        if (p && !p.isTribe && p.tiles.size > topTiles) { topTiles = p.tiles.size; topId = p.id; }
+      }
+    }
+    this.crowns.length = 0;
     for (const L of this.labels) {
       const p = Game.players[L.id];
       L.font = 0;                        // 0 = no name drawn; drawDiploBadges reads it
+      L.crown = false;                   // drawDiploBadges reads it too
       if (!p || p.tiles.size === 0) continue;
 
       const px = (L.x + 0.5 - this.cam.x) * s + cw / 2;
@@ -3589,6 +3634,7 @@ const Render = {
       sp.py = py;
       sp.usedAt = frame;
       draws.push(sp);
+      if (p.id === topId) { L.crown = true; this.crowns.push(px, py, font); }
       // A size or troop change can wait for the refresh interval: in the
       // meantime the old sprite is stamped scaled to the new size, which is all
       // a nation growing a pixel needs. Growing past LABEL_UPSCALE_MAX (zooming
@@ -3630,6 +3676,8 @@ const Render = {
         ctx.drawImage(sp.canvas, 0, 0, sp.w, sp.h, sp.px - sp.ox * k, sp.py - sp.oy * k, sp.w * k, sp.h * k);
       }
     }
+
+    for (let i = 0; i < this.crowns.length; i += 3) this.drawCrown(this.crowns[i], this.crowns[i + 1], this.crowns[i + 2]);
 
     // Drop sprites for nations that haven't been on screen for a while (dead,
     // or panned away), so the cache tracks what is actually being looked at.
@@ -3686,7 +3734,9 @@ const Render = {
       if (this.fogged && this.fogHides(L.y * GameMap.width + L.x)) continue;
 
       const r = 18 * dpr;
-      const cy = py - (L.font ? L.font * 1.25 : 0) - r - 4 * dpr;
+      // A crowned nation's crown takes the spot just over the name; sit above it.
+      const crownH = L.crown ? Math.max(14 * dpr, L.font * 1.5) * 0.7 + 4 * dpr : 0;
+      const cy = py - (L.font ? L.font * 1.25 : 0) - crownH - r - 4 * dpr;
       const left = Math.max(0, Math.min(1, b.left));
       const pulse = 0.5 + 0.5 * Math.sin(Game.renderElapsed * 6);
 
