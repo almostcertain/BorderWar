@@ -1,12 +1,16 @@
 # Battle Royale — The Drill
 
-Status: spec, not started. Branch: `feature/battle-royale`.
+Status: **built and on `main`.** Tasks BR-1 to BR-10 are done. The timings
+were shortened on 2026-10-03 to a 20 s warning and a 300 s shrink (they were
+90 s and 600 s). The task notes below are a record of the build: run lengths
+and timings quoted in BR-3, BR-4, BR-8 and BR-10 were measured with the old
+90 s + 600 s schedule.
 
 ## Purpose
 
 A late-game ender for stalemates, and a win route for small, turtled nations
 with a strong economy. One player builds **The Drill**; a circle centred on it
-closes in over ~10 minutes, and everything outside it is permanently destroyed.
+closes in over 5 minutes, and everything outside it is permanently destroyed.
 Last nation standing wins.
 
 ## Decisions (agreed 2026-10-02)
@@ -18,15 +22,16 @@ Last nation standing wins.
 | Win rule | **Last nation standing** (last team in team games). The land-share win is switched off the moment a Drill is placed. |
 | Unlock | **Cost is the only gate.** No match timer, no tech prerequisite. |
 | Circle size | Starts just large enough to cover the farthest land tile from the Drill (nothing dies on frame one); closes continuously to zero — no safe zone, no pause. |
-| Duration | ~10 minutes of shrinking, continuous all the way to zero. |
+| Duration | 5 minutes of shrinking, continuous all the way to zero. |
 | Warning | Global banner + target circle shown on placement, then a countdown before shrinking starts. |
 | Bots | Bots can build the Drill. |
 
-## Proposed defaults (not yet confirmed — see Open questions)
+## Values as built
 
-- **Cost:** 20M flat (confirmed). Tunable constant.
-- **Countdown:** 90 s from placement to first shrink.
-- **Shrink:** radius falls linearly from start radius to zero over 600 s, without stopping.
+- **Cost:** 20M flat (`DRILL_COST`). Tunable constant.
+- **Countdown:** 20 s from placement to first shrink (`DRILL_COUNTDOWN_S`).
+- **Shrink:** radius falls linearly from start radius to zero over 300 s
+  (`DRILL_SHRINK_S`), without stopping.
 - **Drill structure:** permanent and indestructible; nukes don't remove it,
   capture doesn't remove it. It's a marker, not a target (the circle is
   unstoppable anyway). The tile under it is capturable like any other.
@@ -67,11 +72,12 @@ recapturable; this isn't).
 - **Circle fully closed:** if more than one nation is still alive when the last
   land tile dies, the nation that held the most land on the previous tick wins
   (ties: more troops, then lower player id — deterministic). Teams: the team
-  with the most combined land wins. The match always ends by the 10-minute mark.
+  with the most combined land wins. The match always ends within 320 s of
+  placement (20 s warning + 300 s shrink).
 
 ### Fog of war
-The fog branch isn't merged. When it is, the circle, the dead zone and the
-Drill's location are visible to everyone regardless of fog.
+The circle and the Drill's marker are drawn over the fog (`Render.drawDrill`),
+so everyone sees them whatever they have discovered.
 
 ## Presentation (client only, non-sim)
 - Build bar entry (icon, hotkey, cost, disabled after the match's Drill exists, with a reason).
@@ -387,5 +393,6 @@ within a phase run in parallel and touch disjoint files.
 Follow-ups: none open.
 
 ## Open questions
-1. **Countdown:** 90 s OK? (building with 90 s)
-2. **Indestructible Drill:** confirm it's just a marker (since the circle can't be stopped). (building as a marker)
+
+None. The countdown was settled at 20 s (2026-10-03), and the Drill was built
+as a marker: nothing removes it and the circle cannot be stopped.

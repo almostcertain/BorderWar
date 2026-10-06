@@ -1,4 +1,5 @@
 // Admin stats: a view of what this server is doing right now, plus the drain switch.
+// Singleplayer matches run in the browser; their count comes from server/presence.js.
 //
 //   GET /admin        the page (server/admin.html); public, holds no data
 //   GET /admin/stats  JSON snapshot; needs `Authorization: Bearer <token>`
@@ -26,7 +27,10 @@ const PAGE_FILE = path.join(__dirname, 'admin.html');
 const HISTORY_FILE = path.join(__dirname, 'data', 'stats-history.jsonl');
 
 // One sample row is these fields, in this order (the page indexes into it).
-const HISTORY_FIELDS = ['t', 'players', 'spectators', 'activeGames', 'lobbies', 'sockets', 'rssMB'];
+// New fields go on the end: a saved row from before a field existed is shorter,
+// and is read back with 0 there.
+const HISTORY_FIELDS = ['t', 'players', 'spectators', 'activeGames', 'lobbies', 'sockets', 'rssMB', 'solo'];
+const HISTORY_MIN_FIELDS = 7;
 const SAMPLE_INTERVAL_MS = 60 * 1000;
 const HISTORY_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
 // Appends between rewrites of the file, which is what drops expired rows from it.
@@ -47,8 +51,9 @@ function loadHistory(file) {
     if (!line) continue;
     let row;
     try { row = JSON.parse(line); } catch (e) { continue; }
-    if (!Array.isArray(row) || row.length !== HISTORY_FIELDS.length) continue;
+    if (!Array.isArray(row) || row.length < HISTORY_MIN_FIELDS || row.length > HISTORY_FIELDS.length) continue;
     if (!row.every(Number.isFinite) || row[0] < cutoff) continue;
+    while (row.length < HISTORY_FIELDS.length) row.push(0);
     rows.push(row);
   }
   rows.sort((a, b) => a[0] - b[0]);
@@ -73,7 +78,7 @@ function loadToken(log) {
 }
 
 function create(opts) {
-  const { gameManager, wss, log, build } = opts;
+  const { gameManager, wss, presence, log, build } = opts;
   const tokenHash = crypto.createHash('sha256').update(loadToken(log)).digest();
   const startedAt = Date.now();
   const historyFile = process.env.BORDERWAR_STATS_FILE || (opts.persistHistory ? HISTORY_FILE : null);
@@ -149,6 +154,8 @@ function create(opts) {
         sockets: wss.clients.size,
         players: players,
         spectators: spectators,
+        // Pages in a singleplayer match right now (server/presence.js).
+        solo: presence ? presence.count() : 0,
         lobbies: lobbies,
         activeGames: active,
         totalConnections: totalConnections,
@@ -169,7 +176,7 @@ function create(opts) {
   function sample() {
     const s = snapshot();
     const row = [s.now, s.totals.players, s.totals.spectators, s.totals.activeGames,
-      s.totals.lobbies, s.totals.sockets, Math.round(s.server.rss / 1048576)];
+      s.totals.lobbies, s.totals.sockets, Math.round(s.server.rss / 1048576), s.totals.solo];
     history.push(row);
     const cutoff = s.now - HISTORY_KEEP_MS;
     let expired = 0;

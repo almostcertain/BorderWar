@@ -148,12 +148,14 @@ const Radial = {
         // the other action that only makes sense against one.
         out[1] = {
           icon: 'traitor', label: 'Betray', cls: 'danger',
+          tip: 'Break the alliance so you can attack. You are marked a traitor for a while, and a traitor\'s land is cheaper and quicker for everyone to take.',
           act: () => Transport.sendIntent(Protocol.intent.breakAlliance(t))
         };
         if (Game.extendWindowOpen(al)) {
           const waiting = Game.agreedToExtend(al, me);
           out[2] = {
             icon: 'expiring', label: waiting ? 'Sent' : 'Renew', cls: 'good',
+            tip: 'Ask to extend the alliance before it runs out. It only carries on if both sides agree.',
             note: waiting ? 'Awaiting reply' : Math.ceil(al.expiresAt - Game.elapsed) + 's left',
             disabled: waiting,
             act: () => Transport.sendIntent(Protocol.intent.allianceExtension(t))
@@ -163,6 +165,7 @@ const Radial = {
         const reason = Game.allianceBlockReason(me, t);
         out[2] = {
           icon: 'ally', label: 'Peace', cls: 'good',
+          tip: 'Offer an alliance. Allies cannot attack each other. It runs out after a while unless both sides renew it.',
           note: reason, disabled: !!reason,
           act: () => Transport.sendIntent(Protocol.intent.allianceRequest(t))
         };
@@ -176,6 +179,7 @@ const Radial = {
       const marked = Game.activeTargets(Game.players[me]).includes(t);
       out[3] = {
         icon: 'target', label: marked ? 'Marked' : 'Target', cls: 'danger',
+        tip: 'Mark this nation so your allies know to attack it.',
         note: marked ? null : reason, disabled: marked || !!reason,
         act: () => Transport.sendIntent(Protocol.intent.targetPlayer(t))
       };
@@ -194,6 +198,7 @@ const Radial = {
       const reason = Game.navalInvasionBlockReason(me, this.tile, troops);
       out[1] = {
         icon: 'boat', label: 'Boat', cls: 'good',
+        tip: 'Send troops by sea to land on this spot. How many is set by the attack ratio slider.',
         note: reason, disabled: !!reason,
         act: () => Transport.sendIntent(Protocol.intent.boat(this.tile, troops))
       };
@@ -212,10 +217,12 @@ const Radial = {
     const gold = Math.floor(p.gold * UI.ratio);
     return [null, {
       icon: 'gold', label: 'Gold', cls: 'good',
+      tip: 'Give this ally gold.How much is set by the attack ratio slider.',
       note: reason || formatCount(gold), disabled: !!reason || gold < 1,
       act: () => Transport.sendIntent(Protocol.intent.donateGold(t, gold))
     }, null, {
       icon: 'troops', label: 'Troops', cls: 'good',
+      tip: 'Give this ally troops.How many is set by the attack ratio slider.',
       note: reason || formatCount(troops), disabled: !!reason || troops < 1,
       act: () => Transport.sendIntent(Protocol.intent.donateTroops(t, troops))
     }];
@@ -228,12 +235,14 @@ const Radial = {
       const left = Game.TEMPORARY_EMBARGO_DURATION - (Game.elapsed - mine.createdAt);
       return {
         icon: 'trade', label: 'Trade', cls: 'good',
+        tip: 'Lift your embargo and trade with this nation again.',
         note: theirs ? 'They refuse too' : mine.temporary ? 'Auto · ' + Math.ceil(left) + 's' : 'Embargoed',
         act: () => Transport.sendIntent(Protocol.intent.embargo(t, 'stop'))
       };
     }
     return {
       icon: 'embargo', label: 'Stop trade', cls: 'danger',
+      tip: 'Embargo this nation: no trade between you, so neither side earns gold from the other.',
       note: theirs ? 'They refuse you' : null,
       act: () => Transport.sendIntent(Protocol.intent.embargo(t, 'start'))
     };
@@ -299,7 +308,10 @@ const Radial = {
       const s = slots[i];
       const cls = s ? (s.disabled ? 'disabled' : s.cls) : 'empty';
       const slotAttr = s && !s.disabled ? ` data-slot="${i}"` : '';
-      paths += `<path class="rSlot ${cls}"${slotAttr} d="` +
+      // Hover description (UI.setupTips). On disabled wedges too: that is
+      // when a player most wants to know what the wedge is for.
+      const tipAttr = s && s.tip ? ` data-tip-title="${s.label}" data-tip="${escapeHtml(s.tip)}"` : '';
+      paths += `<path class="rSlot ${cls}"${slotAttr}${tipAttr} d="` +
         this.wedge(c, this.INNER, this.OUTER, a - Math.PI / 4 + this.GAP,
                    a + Math.PI / 4 - this.GAP) + `"></path>`;
       if (!s) continue;
@@ -319,12 +331,12 @@ const Radial = {
     const label = p ? `${escapeHtml(p.name)}${traitor} · ${formatCount(p.troops)}`
                      : (this.targetId === NEUTRAL ? 'Unclaimed land' : 'Open water');
     // Back and Donate are icons; Close stays a plain ✕ glyph (not an emoji).
-    const centre = this.mode === 'donate' ? { attr: 'data-back', icon: 'back' }
-                 : this.canOpenDonate() ? { attr: 'data-donate', icon: 'gift' }
-                 : { attr: 'data-close', text: '✕' };
+    const centre = this.mode === 'donate' ? { attr: 'data-back', icon: 'back', tip: 'Back' }
+                 : this.canOpenDonate() ? { attr: 'data-donate', icon: 'gift', tip: 'Give this ally gold or troops' }
+                 : { attr: 'data-close', text: '✕', tip: 'Close' };
     return `<svg viewBox="0 0 ${span} ${span}" width="${span}" height="${span}">` +
       paths +
-      `<circle class="rCentre" ${centre.attr}="1" cx="${c}" cy="${c}" r="${this.CENTER}" fill="${colour}"></circle>` +
+      `<circle class="rCentre" ${centre.attr}="1" data-tip="${centre.tip}" cx="${c}" cy="${c}" r="${this.CENTER}" fill="${colour}"></circle>` +
       (centre.icon
         ? `<image class="rCentreIcon" href="assets/icons/${centre.icon}.svg" x="${c - 10}" y="${c - 10}" width="20" height="20"></image>`
         : `<text class="rCentreIcon" x="${c}" y="${c}">${centre.text}</text>`) +

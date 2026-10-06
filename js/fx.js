@@ -60,6 +60,16 @@ const Fx = {
   // append-in-order/prune-from-front contract as the popup lists.
   donationToasts: [],
 
+  // Seconds a finished Radio Tower's scan plays (fog matches). The tower's
+  // record is gone from the sim the tick it finishes, so this is all that is
+  // ever seen of a built one: its icon fading while rings sweep the disc it
+  // uncovered (Render.drawRadioScans).
+  RADIO_SCAN_LIFETIME: 2,
+
+  // { tile, ownerId, born } — same append-in-order/prune-from-front contract
+  // as the popup lists. Rare, so it needs no cap.
+  radioScans: [],
+
   // Called from Game.init. Effects are per-match, same as everything they
   // decorate; carrying a previous match's popups into a new map would draw
   // them over unrelated tiles.
@@ -67,6 +77,23 @@ const Fx = {
     this.goldPopups.length = 0;
     this.killPopups.length = 0;
     this.donationToasts.length = 0;
+    this.radioScans.length = 0;
+  },
+
+  // Record a Radio Tower finishing on `tile` for `ownerId`. Called
+  // unconditionally by Game.updateConstruction; the renderer leaves out the
+  // ones the fog hides from the viewer.
+  radioScan(tile, ownerId) {
+    const born = Game.elapsed;
+    this.pruneRadioScans(born);
+    this.radioScans.push({ tile, ownerId, born });
+  },
+
+  pruneRadioScans(now) {
+    const list = this.radioScans, life = this.RADIO_SCAN_LIFETIME;
+    let i = 0;
+    while (i < list.length && now - list[i].born >= life) i++;
+    if (i > 0) list.splice(0, i);
   },
 
   // Record the spoils of eliminating a nation/tribe/player over `tile`. Called

@@ -528,6 +528,7 @@ const Render = {
   repaintAll() {
     this.buildTiles();
     this.qHead = this.qTail = 0;   // everything queued is painted from the live owner now
+    if (this.jCount) this.jCount.fill(0);
   },
 
   // Fixed-ratio blend toward FALLOUT_TINT, done in unpacked RGB space and
@@ -546,9 +547,21 @@ const Render = {
     );
   },
 
+  // The owner of each tile as currently drawn. Tiles are painted from this,
+  // never from GameMap.owner directly: while a paced reveal (below) is part
+  // way through a turn the canvas shows a mix of old and new owners, and a
+  // border tone worked out from the sim's owners would leave the visible edge
+  // without its border wherever the sim has already moved past it. Every
+  // change to a tile here repaints its four neighbours too, so the canvas is
+  // always exactly paintTile() of this array and the border never breaks.
+  shownOwner: null,
+
   buildTiles() {
     const w = GameMap.width, h = GameMap.height;
-    const owner = GameMap.owner, px = this.pixels;
+    const live = GameMap.owner, px = this.pixels;
+    if (!this.shownOwner || this.shownOwner.length !== live.length) this.shownOwner = new live.constructor(live.length);
+    const owner = this.shownOwner;
+    owner.set(live);
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         this.paintTile(y * w + x, x, y, w, h, owner, px);
@@ -568,14 +581,25 @@ const Render = {
   // never worse than buildTiles()'s own unconditional full blit.
   buildTilesIncremental(dirtyTiles) {
     const w = GameMap.width, h = GameMap.height;
-    const owner = GameMap.owner, px = this.pixels;
+    const owner = GameMap.owner, shown = this.shownOwner, px = this.pixels;
     const layer = this.tileLayer;
-    for (const i of dirtyTiles) {
-      const x = i % w, y = (i / w) | 0;
-      this.paintTile(i, x, y, w, h, owner, px);
-      this.markLayerTile(layer, x, y);
-    }
+    for (const i of dirtyTiles) this.showTile(i, w, h, owner, shown, px, layer);
     this.flushLayerPuts(layer, this.tileCtx, this.image);
+  },
+
+  // Brings one tile's drawn owner up to date and repaints it, plus its four
+  // neighbours when the owner moved, since their border tone depends on it.
+  showTile(i, w, h, owner, shown, px, layer) {
+    const x = i % w, y = (i / w) | 0;
+    const moved = shown[i] !== owner[i];
+    shown[i] = owner[i];
+    this.paintTile(i, x, y, w, h, shown, px);
+    this.markLayerTile(layer, x, y);
+    if (!moved) return;
+    if (x > 0) { this.paintTile(i - 1, x - 1, y, w, h, shown, px); this.markLayerTile(layer, x - 1, y); }
+    if (x < w - 1) { this.paintTile(i + 1, x + 1, y, w, h, shown, px); this.markLayerTile(layer, x + 1, y); }
+    if (y > 0) { this.paintTile(i - w, x, y - 1, w, h, shown, px); this.markLayerTile(layer, x, y - 1); }
+    if (y < h - 1) { this.paintTile(i + w, x, y + 1, w, h, shown, px); this.markLayerTile(layer, x, y + 1); }
   },
 
   // --- Paced territory reveal ------------------------------------------------
@@ -587,8 +611,8 @@ const Render = {
   // insertion-ordered), so the edge sweeps forward rather than jumping.
   //
   // Pure presentation: the sim, the wire and the state hash never see it.
-  // The canvas trails GameMap.owner by at most REVEAL_MS, and every tile is
-  // painted from the *current* owner when its slot comes up, so it always
+  // The canvas trails GameMap.owner by at most REVEAL_MS, and every tile
+  // takes the *current* owner when its slot comes up (showTile), so it always
   // converges to exactly what buildTiles() would draw. Set smoothTerritory
   // false to fall back to the old paint-on-arrival behaviour.
   smoothTerritory: true,
@@ -598,12 +622,49 @@ const Render = {
   qHead: 0,
   qTail: 0,
 
+  // 'jitter' scatters each turn's tiles instead of sweeping them in conquest
+  // order: a tile is hashed to one of JITTER_BUCKETS buckets and one bucket is
+  // painted every JITTER_MS / JITTER_BUCKETS. Batches are not flushed when the
+  // next turn lands, so with JITTER_MS above the turn length consecutive turns
+  // overlap and the front dissolves forward with no 10Hz pulse. The canvas
+  // trails GameMap.owner by at most JITTER_MS however fast turns arrive.
+  // 'ordered' is the conquest-order sweep described above.
+  revealMode: 'jitter',
+  JITTER_MS: 150,
+  JITTER_BUCKETS: 9,
+  JITTER_MAX_STEPS: 3,
+  jTiles: [],
+  jCount: null,
+  jSlot: 0,
+  jBucket: 0,
+
+  enqueueJitter(dirty) {
+    const N = this.JITTER_BUCKETS;
+    if (!this.jCount || this.jCount.length !== N) {
+      this.jCount = new Int32Array(N);
+      this.jTiles = [];
+      for (let b = 0; b < N; b++) this.jTiles.push(new Int32Array(1 << 12));
+    }
+    const B = this.jTiles, C = this.jCount;
+    for (const i of dirty) {
+      const b = (Math.imul(i, 2654435761) >>> 0) % N;
+      let arr = B[b];
+      if (C[b] === arr.length) {
+        arr = new Int32Array(arr.length * 2);
+        arr.set(B[b]);
+        B[b] = arr;
+      }
+      arr[C[b]++] = i;
+    }
+  },
+
   // Moves this frame's dirty tiles into the reveal queue, timestamped across
   // [now, now + REVEAL_MS]. Anything still queued from the previous turn is
   // flushed first: turns arriving faster than REVEAL_MS (debug burst, catch-up,
   // a sped-up local game) degrade gracefully to paint-on-arrival instead of
   // building up lag.
   enqueueDirty(dirty, now) {
+    if (this.revealMode === 'jitter') { this.enqueueJitter(dirty); return; }
     const n = dirty.size;
     if (this.qHead < this.qTail) this.releaseTiles(Infinity);
     if (this.qTile.length < n) {
@@ -620,21 +681,32 @@ const Render = {
   },
 
   // Paints every queued tile whose slot has come up (all of them for
-  // Infinity), then blits just the chunks they fell in.
+  // Infinity), then blits just the chunks they fell in. Both queues are
+  // drained whatever revealMode is, so switching mode mid-game strands nothing.
   releaseTiles(now) {
     const T = this.qTile, TM = this.qTime, tail = this.qTail;
     let head = this.qHead;
-    if (head >= tail) return;
+    const C = this.jCount;
+    if (head >= tail && !C) return;
     const w = GameMap.width, h = GameMap.height;
-    const owner = GameMap.owner, px = this.pixels;
+    const owner = GameMap.owner, shown = this.shownOwner, px = this.pixels;
     const layer = this.tileLayer;
-    while (head < tail && TM[head] <= now) {
-      const i = T[head++];
-      const x = i % w, y = (i / w) | 0;
-      this.paintTile(i, x, y, w, h, owner, px);
-      this.markLayerTile(layer, x, y);
-    }
+    while (head < tail && TM[head] <= now) this.showTile(T[head++], w, h, owner, shown, px, layer);
     this.qHead = head;
+    if (C) {
+      const N = C.length;
+      const slot = now === Infinity ? this.jSlot + N : Math.floor(now / (this.JITTER_MS / N));
+      // A frame held up by a slow turn drains at most JITTER_MAX_STEPS buckets,
+      // or the tiles that turn just queued would all land at once.
+      let steps = Math.min(now === Infinity ? N : this.JITTER_MAX_STEPS, slot - this.jSlot);
+      this.jSlot = now === Infinity ? this.jSlot : slot;
+      while (steps-- > 0) {
+        const b = this.jBucket = ((this.jBucket | 0) + 1) % N;
+        const arr = this.jTiles[b], n = C[b];
+        for (let k = 0; k < n; k++) this.showTile(arr[k], w, h, owner, shown, px, layer);
+        C[b] = 0;
+      }
+    }
     this.flushLayerPuts(layer, this.tileCtx, this.image);
   },
 
@@ -743,6 +815,7 @@ const Render = {
   FOG_COLOR: [6, 10, 20],        // the backdrop draw() clears to, so the fog and the void past the map's edge are one
   FOG_BITMAP_SETTLE: 30,
   FOG_SUB: 8,                    // layer pixels per vision cell each way
+  FOG_PAD: 4,                    // border of repeated edge pixels, half a cell: drawFog()'s overrun past the map stays inside the image
   FOG_EDGE_LO: 0.8,              // blended corner opacity at or below which a pixel is clear
   FOG_EDGE_HI: 0.95,             // ... and at or above which it is solid; the gap is the edge's width
   fogCorners: null,              // Uint8Array per vision-grid corner: 1 while any cell touching it is undiscovered
@@ -768,11 +841,11 @@ const Render = {
     const cw = Game.visionCellsW, ch = Game.visionCellsH;
     if (!this.fogCanvas || this.fogW !== cw || this.fogH !== ch) {
       this.fogCanvas = document.createElement('canvas');
-      const S = this.FOG_SUB;
-      this.fogCanvas.width = cw * S + 1;
-      this.fogCanvas.height = ch * S + 1;
+      const S = this.FOG_SUB, P = this.FOG_PAD;
+      this.fogCanvas.width = cw * S + 1 + 2 * P;
+      this.fogCanvas.height = ch * S + 1 + 2 * P;
       this.fogCtx = this.fogCanvas.getContext('2d');
-      this.fogImage = this.fogCtx.createImageData(cw * S + 1, ch * S + 1);
+      this.fogImage = this.fogCtx.createImageData(cw * S + 1 + 2 * P, ch * S + 1 + 2 * P);
       this.fogPixels = new Uint32Array(this.fogImage.data.buffer);
       this.fogSeen = new Uint8Array(cw * ch);
       this.fogCorners = new Uint8Array((cw + 1) * (ch + 1));
@@ -822,21 +895,25 @@ const Render = {
   // cell wide instead of the whole cell a plain stretch would give. The ramp
   // starts well inside the discovered cell (t = 0.95 is nearly at the
   // undiscovered boundary), so undiscovered ground stays fully covered.
+  // A range that reaches the grid's edge runs on through the FOG_PAD border,
+  // which repeats the edge pixel.
   fogPaint(i0, j0, i1, j1) {
-    const cw = this.fogW, ch = this.fogH, S = this.FOG_SUB, stride = cw * S + 1;
+    const cw = this.fogW, ch = this.fogH, S = this.FOG_SUB, P = this.FOG_PAD, stride = cw * S + 1 + 2 * P;
     const corners = this.fogCorners, cs = cw + 1, px = this.fogPixels, c = this.FOG_COLOR;
     const lo = this.FOG_EDGE_LO, hi = this.FOG_EDGE_HI, rgb = this.packed(c[0], c[1], c[2], 0);
-    const pxMin = Math.max(0, (i0 - 1) * S), pxMax = Math.min(cw * S, (i1 + 1) * S);
-    const pyMin = Math.max(0, (j0 - 1) * S), pyMax = Math.min(ch * S, (j1 + 1) * S);
-    for (let py = pyMin; py <= pyMax; py++) {
+    const pxMin = i0 > 1 ? (i0 - 1) * S : -P, pxMax = i1 + 1 < cw ? (i1 + 1) * S : cw * S + P;
+    const pyMin = j0 > 1 ? (j0 - 1) * S : -P, pyMax = j1 + 1 < ch ? (j1 + 1) * S : ch * S + P;
+    for (let qy = pyMin; qy <= pyMax; qy++) {
+      const py = qy < 0 ? 0 : qy > ch * S ? ch * S : qy;
       const j = Math.min((py / S) | 0, ch), j1c = Math.min(j + 1, ch), fy = py / S - j;
-      for (let p = pxMin; p <= pxMax; p++) {
+      for (let q = pxMin; q <= pxMax; q++) {
+        const p = q < 0 ? 0 : q > cw * S ? cw * S : q;
         const i = Math.min((p / S) | 0, cw), i1c = Math.min(i + 1, cw), fx = p / S - i;
         const top = corners[j * cs + i] * (1 - fx) + corners[j * cs + i1c] * fx;
         const bot = corners[j1c * cs + i] * (1 - fx) + corners[j1c * cs + i1c] * fx;
         let t = (top * (1 - fy) + bot * fy - lo) / (hi - lo);
         t = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
-        px[py * stride + p] = rgb | ((t * 255 + 0.5) << 24);
+        px[(qy + P) * stride + q + P] = rgb | ((t * 255 + 0.5) << 24);
       }
     }
   },
@@ -874,11 +951,13 @@ const Render = {
     }
     this.fogSeenCount = count;
     if (maxX < 0) return;
-    const S = this.FOG_SUB;
+    const S = this.FOG_SUB, P = this.FOG_PAD;
     this.fogPaint(minX, minY, maxX + 1, maxY + 1);
-    const dx = Math.max(0, (minX - 1) * S), dy = Math.max(0, (minY - 1) * S);
-    this.fogCtx.putImageData(this.fogImage, 0, 0, dx, dy,
-      Math.min(this.fogW * S, (maxX + 2) * S) - dx + 1, Math.min(this.fogH * S, (maxY + 2) * S) - dy + 1);
+    // The rectangle fogPaint just wrote, in image pixels (border included).
+    const dx = minX > 1 ? (minX - 1) * S + P : 0, dy = minY > 1 ? (minY - 1) * S + P : 0;
+    const ex = maxX + 2 < this.fogW ? (maxX + 2) * S + P : this.fogW * S + 2 * P;
+    const ey = maxY + 2 < this.fogH ? (maxY + 2) * S + P : this.fogH * S + 2 * P;
+    this.fogCtx.putImageData(this.fogImage, 0, 0, dx, dy, ex - dx + 1, ey - dy + 1);
     this.fogChanged();
   },
 
@@ -931,6 +1010,9 @@ const Render = {
     // stopping exactly on the map's edge leaves that edge antialiased against
     // the tiles underneath, a faint outline of the map through the fog. Past
     // the edge there is only the backdrop, which is the fog's own colour.
+    // The layer carries that half cell as a real border (FOG_PAD), because a
+    // source rectangle reaching outside the image is not drawn at all by some
+    // mobile browsers: the fog vanished whenever the view took in a map edge.
     const x0 = Math.max(-0.5, Math.floor((this.cam.x - halfW) / C) - 1);
     const y0 = Math.max(-0.5, Math.floor((this.cam.y - halfH) / C) - 1);
     const x1 = Math.min(Math.min(GameMap.width / C, this.fogW) + 0.5, Math.ceil((this.cam.x + halfW) / C) + 1);
@@ -942,8 +1024,8 @@ const Render = {
     ctx.setTransform(s, 0, 0, s, cw / 2 - this.cam.x * s, ch / 2 - this.cam.y * s);
     // Corner i is pixel i, whose centre is at i + 0.5 in the image: the half
     // pixel of offset lines the pixel centres up with the cell corners.
-    const S = this.FOG_SUB;
-    ctx.drawImage(this.fogBmp || this.fogCanvas, x0 * S + 0.5, y0 * S + 0.5, (x1 - x0) * S, (y1 - y0) * S,
+    const S = this.FOG_SUB, P = this.FOG_PAD;
+    ctx.drawImage(this.fogBmp || this.fogCanvas, x0 * S + 0.5 + P, y0 * S + 0.5 + P, (x1 - x0) * S, (y1 - y0) * S,
                   x0 * C, y0 * C, (x1 - x0) * C, (y1 - y0) * C);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = smooth;
@@ -958,11 +1040,12 @@ const Render = {
     // overlay knows whether ownership moved this frame too.
     const territoryChanged = Game.dirty || Game.dirtyTiles.size > 0;
     if (this.altView) this.updateAltRelations(false);
-    if (Game.dirty) {
+    if (Game.dirty || !this.shownOwner || this.shownOwner.length !== GameMap.owner.length) {
       this.buildTiles();
       Game.dirty = false;
       Game.dirtyTiles.clear();
       this.qHead = this.qTail = 0;   // the full rebuild already painted everything queued
+      if (this.jCount) this.jCount.fill(0);
     } else if (this.smoothTerritory) {
       const now = performance.now();
       if (Game.dirtyTiles.size) {
@@ -1011,6 +1094,7 @@ const Render = {
     this.drawNukes();
     this.drawNukeBlasts();
     this.drawSamFlashes();
+    this.drawRadioScans();
     if (fog) {
       // Everything above is the world, and the fog goes over all of it:
       // whatever runs out past the discovered area (a range ring, a boat's
@@ -1550,7 +1634,7 @@ const Render = {
       if (!b.built || b.upgrading) {
         const barW = r * 1.7, barH = Math.max(2 * this.dpr, r * 0.24);
         const bx = px - barW / 2, by = py + r + barH * 1.3;
-        const pct = Math.max(0, Math.min(1, b.progress / b.buildTime));
+        const pct = b.buildTime > 0 ? Math.max(0, Math.min(1, b.progress / b.buildTime)) : 1;
         ctx.fillStyle = 'rgba(8, 14, 26, 0.85)';
         ctx.fillRect(bx, by, barW, barH);
         ctx.fillStyle = b.upgrading ? 'rgba(255, 205, 110, 0.95)' : 'rgba(130, 215, 255, 0.95)';
@@ -3102,6 +3186,54 @@ const Render = {
     }
   },
 
+  // A Radio Tower finishing (fog matches) — see Fx.radioScan. The sim drops
+  // the tower the tick it is built, so this stands in for it: the icon it
+  // would have had, shrinking away, while two rings sweep from it out to the edge
+  // of the disc it uncovered (the same disc the placement ghost shows). A
+  // world effect, drawn under the fog; one the viewer has not discovered the
+  // centre of is left out.
+  drawRadioScans() {
+    const now = Game.renderElapsed;
+    Fx.pruneRadioScans(now);
+    if (!Fx.radioScans.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
+    const C = Game.VISION_CELL, life = Fx.RADIO_SCAN_LIFETIME;
+    const maxR = (Game.VISION_SIGHT_RADIO + 0.5) * C * s;
+    const fog = this.fogged;
+
+    for (const f of Fx.radioScans) {
+      const x = f.tile % w, y = (f.tile / w) | 0;
+      if (fog && this.fogHidesAt(x, y)) continue;
+      // Clamped at both ends for the reason drawSamFlashes gives.
+      const t = Math.max(0, Math.min(1, (now - f.born) / life));
+      const px = (x + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (y + 0.5 - this.cam.y) * s + ch / 2;
+      if (px < -maxR || py < -maxR || px > cw + maxR || py > ch + maxR) continue;
+
+      // The rings start from the vision cell's centre, like the disc itself.
+      const cx = ((((x / C) | 0) + 0.5) * C - this.cam.x) * s + cw / 2;
+      const cy = ((((y / C) | 0) + 0.5) * C - this.cam.y) * s + ch / 2;
+      for (let k = 0; k < 2; k++) {
+        const rt = (t - k * 0.25) / 0.75;
+        if (rt <= 0 || rt >= 1) continue;
+        const ease = 1 - (1 - rt) * (1 - rt);
+        ctx.beginPath();
+        ctx.arc(cx, cy, maxR * ease, 0, Math.PI * 2);
+        ctx.lineWidth = Math.max(1.5, this.dpr * 2.5 * (1 - rt));
+        ctx.strokeStyle = `rgba(111, 211, 224, ${0.75 * (1 - rt)})`;
+        ctx.stroke();
+      }
+
+      // The icon holds, then shrinks away (paintStructureIcon sets its own
+      // alpha, so it cannot simply be faded).
+      const shrink = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
+      if (this.structureIconsShown() && shrink > 0.05) {
+        this.paintStructureIcon(ctx, 'radio', f.ownerId, true, px, py, this.structureRadius() * this.dpr * shrink);
+      }
+    }
+  },
+
   // An intercept kill — see Game.stepSAMs' push to samFlashes and its own
   // aging/pruning. A quick expanding ring, deliberately smaller and much
   // faster than drawNukeBlasts' own shockwave — this is confirming a nuke
@@ -3287,14 +3419,18 @@ const Render = {
     const seen = this.seenBuf, queue = this.queueBuf;
     const nb = this.labelNb || (this.labelNb = new Int32Array(4));
     const labels = this.labelsPending;
+    // Fog: only the land the viewer has discovered is walked, so a nation
+    // seen in part is anchored and sized by the part that shows, and nothing
+    // about the label says how much more of it lies in the black.
+    const fog = this.fogged;
 
     {
       const p = Game.players[playerId];
       if (!p || !p.alive || p.tiles.size === 0) return;
-      let best = null;
+      let best = null, shown = 0;
 
       for (const start of p.tiles) {
-        if (seen[start]) continue;
+        if (seen[start] || (fog && this.fogHides(start))) continue;
         let head = 0, tail = 0, sx = 0, sy = 0;
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
         queue[tail++] = start; seen[start] = 1;
@@ -3309,9 +3445,10 @@ const Render = {
           const n = GameMap.neighbors(i, nb);
           for (let k = 0; k < n; k++) {
             const j = nb[k];
-            if (owner[j] === p.id && !seen[j]) { seen[j] = 1; queue[tail++] = j; }
+            if (owner[j] === p.id && !seen[j] && !(fog && this.fogHides(j))) { seen[j] = 1; queue[tail++] = j; }
           }
         }
+        shown += tail;
         if (!best || tail > best.count) {
           best = { count: tail, cx: sx / tail, cy: sy / tail,
                    bw: maxX - minX + 1, bh: maxY - minY + 1 };
@@ -3324,15 +3461,17 @@ const Render = {
       // actually owns. Re-running the fill keeps `queue` holding that component.
       let ax = Math.round(best.cx), ay = Math.round(best.cy);
       const centreIdx = GameMap.idx(Math.max(0, Math.min(w - 1, ax)), Math.max(0, Math.min(GameMap.height - 1, ay)));
-      if (owner[centreIdx] !== p.id) {
+      if (owner[centreIdx] !== p.id || (fog && this.fogHides(centreIdx))) {
         let bestD = Infinity;
         for (const i of p.tiles) {
+          if (fog && this.fogHides(i)) continue;
           const x = i % w, y = (i / w) | 0;
           const d = (x - best.cx) * (x - best.cx) + (y - best.cy) * (y - best.cy);
           if (d < bestD) { bestD = d; ax = x; ay = y; }
         }
       }
-      labels.push({ id: p.id, x: ax, y: ay, count: best.count, bw: best.bw, bh: best.bh });
+      labels.push({ id: p.id, x: ax, y: ay, count: best.count, bw: best.bw, bh: best.bh,
+                    clipped: fog && shown < p.tiles.size });
     }
   },
 
@@ -3380,6 +3519,7 @@ const Render = {
   LABEL_REDRAW_MAX: 8,
   LABEL_REFRESH_MS: 500,
   LABEL_UPSCALE_MAX: 1.1,     // stretch an old sprite at most this much before redrawing it
+  FOG_LABEL_MIN_SPAN: 15,     // CSS px: sqrt of the on-screen area a part-seen nation needs to be named (drawLabels)
   LABEL_ICON_BITS: [['target', 1], ['teammate', 2], ['ally', 4], ['traitor', 8], ['embargo', 16]],
   labelSprites: new Map(),    // player id -> sprite (see labelSprite)
   labelFrame: 0,
@@ -3577,10 +3717,9 @@ const Render = {
       const px = (L.x + 0.5 - this.cam.x) * s + cw / 2;
       const py = (L.y + 0.5 - this.cam.y) * s + ch / 2;
       if (px < -80 || py < -80 || px > cw + 80 || py > ch + 80) continue;
-      // Fog: a nation is named only where its label sits, the middle of its
-      // largest landmass. Land of it seen at the edge of the fog goes unnamed
-      // until that is discovered; moving the label to the visible part would
-      // put a size-scaled name on a sliver.
+      // Fog: the sweep anchored the label inside the discovered part of the
+      // nation (computeLabelSlice); this only covers a label left over from
+      // before the fog was reset.
       if (fog && this.fogHides(L.y * GameMap.width + L.x)) continue;
 
       // Size against the blob's real on-screen box and the measured text, not
@@ -3589,8 +3728,17 @@ const Render = {
       const boxW = L.bw * s, boxH = L.bh * s;
       const areaSpan = Math.sqrt(L.count) * s;
       const minFont = 9 * this.dpr;
+      // Fog: a neighbour mostly in the black shows as a strip along the
+      // border, too thin to letter by the rule above, and with no hover on a
+      // phone its name and troops could not be read at all. Such a strip is
+      // named at the smallest size instead, once it is big enough on screen
+      // to tell whose name it is; the overflow lands mostly on the fog.
+      const floorFont = L.clipped && areaSpan >= this.FOG_LABEL_MIN_SPAN * this.dpr;
       let font = Math.min(22 * this.dpr, areaSpan * 0.24, boxH * 0.30);
-      if (font < minFont) continue;
+      if (font < minFont) {
+        if (!floorFont) continue;
+        font = minFont;
+      }
 
       // Troops at home — the same figure the bar shows, and the one that
       // actually defends, so a nation that has emptied itself reads as soft.
@@ -3621,7 +3769,10 @@ const Render = {
       const widest = Math.max(nameW, sp.troopsEm * font);
       if (widest > boxW * 0.92) {
         font *= boxW * 0.92 / widest;         // shrink to fit rather than overflow
-        if (font < minFont) continue;
+        if (font < minFont) {
+          if (!floorFont) continue;
+          font = minFont;
+        }
       }
       // Whole device pixels, so a settled sprite is stamped 1:1 and stays crisp.
       font = Math.round(font);

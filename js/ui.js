@@ -51,6 +51,16 @@ const UI = {
   // Whether the debug panel is expanded; closed by default, toggled by #debugToggle.
   debugOpen: false,
 
+  // The debug button and panel, and Pause, are for development, so they exist only where
+  // the page is served from a developer's own machine or home network, never
+  // from the live site. Decided once from the address; nothing a player can
+  // type into the URL turns it on.
+  DEBUG_HOST: /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|.*\.localhost|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/
+    .test(location.hostname),
+  // Singleplayer as well: every debug action writes around the intent
+  // pipeline (see the BYPASS notes in setup()).
+  debugAllowed() { return this.DEBUG_HOST && Transport.isLocal; },
+
   // The player's own warships currently selected via Input's shift-drag box
   // (or a shift-click on a single one) — see selectWarshipsInBox/
   // selectWarshipAt below. Holds direct object references straight into
@@ -73,6 +83,32 @@ const UI = {
   // is sim data and was left alone). 'e' for explore; the digits, P and the
   // WASD pan keys are taken.
   EXTRA_HOTKEYS: { scout: 'e', drill: 'k', radio: 'r' },
+
+  // What each build-bar entry is for, shown when the mouse rests on its
+  // button (setupTips). Kept here rather than in Game.UNITS: that table is sim
+  // data and the goldens hash it. Numbers are read from the sim's constants so
+  // a balance change cannot leave a tip behind.
+  UNIT_TIPS: {
+    city: () => 'Raises your maximum population. Tap one you own to upgrade it. Each City or upgrade costs more than the last.',
+    factory: () => 'Lays rail to nearby Cities and runs trains between them. Every train pays gold, and a train to another nation pays both of you.',
+    port: () => 'Built on the coast. Sends trade ships to other nations\' Ports, paying both sides gold; longer routes pay more. Needed to launch ships.',
+    fort: () => 'Defends your land within ' + Game.FORT_RANGE + ' tiles: it costs attackers ' + Game.FORT_DEF_MULT +
+      'x the troops to take and they advance ' + Game.FORT_SPEED_MULT + 'x slower.',
+    warship: () => 'Patrols the water where you send it. Sinks enemy boats and warships and captures unfriendly trade ships. Needs a Port. Shift-drag to select, then tap water to move.',
+    silo: () => 'Launches your Atom Bombs, Hydrogen Bombs and MIRVs. Reloads for ' + Game.SILO_COOLDOWN +
+      's after each launch. Each upgrade adds another missile slot.',
+    atombomb: () => 'A nuclear strike launched from your nearest ready Missile Silo. Its blast reaches ' +
+      Game.NUKE_MAGNITUDES.atombomb.outer + ' tiles from where it lands. Enemy SAM Launchers can shoot it down.',
+    hydrogenbomb: () => 'A far larger nuclear strike: its blast reaches ' + Game.NUKE_MAGNITUDES.hydrogenbomb.outer +
+      ' tiles, against the Atom Bomb\'s ' + Game.NUKE_MAGNITUDES.atombomb.outer + '. Needs a Missile Silo.',
+    sam: () => 'Shoots down enemy nukes that fly within its range. Reloads for ' + Game.SAM_COOLDOWN +
+      's after each shot. Upgrades widen the range and add charges.',
+    mirv: () => 'Splits into ' + Game.MIRV_WARHEAD_COUNT + ' warheads that rain down across a huge area. Needs a Missile Silo. The price rises every time anyone launches one.',
+    scout: () => 'An unarmed ship that uncovers the map as it sails. Launched from your nearest Port; send it anywhere, even into the dark.',
+    drill: () => 'Starts the endgame. After a ' + Game.DRILL_COUNTDOWN_S + 's warning the world closes in on this spot over ' +
+      Math.round(Game.DRILL_SHRINK_S / 60) + ' minutes, and the last nation standing wins. One per match, and it cannot be stopped.',
+    radio: () => 'Uncovers the map in a wide circle around it once built, then is gone. A way to see past your border without a Port.'
+  },
 
   // Puts the attack ratio back to its default and moves the slider handle and
   // label to match. The browser restores a range input's last value on refresh
@@ -137,6 +173,7 @@ const UI = {
     });
 
     this.setupBuildBar();
+    this.setupTips();
     this.setupLobby();
     this.setupAccount();
     this.setupReplays();
@@ -157,7 +194,7 @@ const UI = {
     // can't be pressed against an empty player list.
     for (const btn of document.querySelectorAll('#debugPanel button[data-gold]')) {
       btn.addEventListener('click', () => {
-        if (!Transport.isLocal) return;
+        if (!this.debugAllowed()) return;
         const me = Game.players[Game.me];
         if (me) me.gold += +btn.dataset.gold;
       });
@@ -180,7 +217,7 @@ const UI = {
     // singleplayer-only in effect — a real server would ignore the request —
     // but there is nothing here for it to desync.
     document.getElementById('debugFastForward').addEventListener('click', () => {
-      if (!Transport.isLocal) return;
+      if (!this.debugAllowed()) return;
       LocalServer.burst(Math.round(300 / Game.TICK_DT));
     });
 
@@ -188,7 +225,7 @@ const UI = {
     // gate. Turns still flow through the normal path, so nothing to desync;
     // singleplayer only. Backpressure caps it at what the client can drain.
     document.getElementById('debugSpeed').addEventListener('click', () => {
-      if (!Transport.isLocal) return;
+      if (!this.debugAllowed()) return;
       const steps = [1, 2, 4, 8, 16];
       LocalServer.speed = steps[(steps.indexOf(LocalServer.speed) + 1) % steps.length];
     });
@@ -238,7 +275,10 @@ const UI = {
   // pump when paused, which freezes the sim since it advances on turn arrival.
   togglePause() {
     if (Replay.active) { Replay.setPaused(Replay.ended() ? false : !Replay.paused); return; }
-    if (!Transport.isLocal || !Game.players[Game.me] || Game.winnerId !== null) return;
+    if (!this.debugAllowed() || !Game.players[Game.me] || Game.winnerId !== null) return;
+    // A tutorial holds the match itself while the player reads; it keeps the
+    // player's own pause apart from that (js/tutorial.js).
+    if (Tutorial.active) { Tutorial.togglePause(); return; }
     LocalServer.setPaused(!LocalServer.paused);
   },
 
@@ -308,19 +348,30 @@ const UI = {
   // any match has said whether it has fog, so syncBuildBar redoes it when the
   // answer changes from one match to the next. A fog-off bar comes out exactly
   // as it always was.
+  //
+  // The bar follows Game.UNITS' order, except that The Drill and the Scout
+  // trade places, so the two fog entries sit together at the end. Done here
+  // rather than in the table: that is sim data and the goldens hash it.
   rebuildBuildBar() {
     const bar = document.getElementById('buildBar');
     const fog = this._barFog = !!Game.fog;
-    bar.innerHTML = Game.UNITS.filter(u => !u.fogOnly || fog).map(u =>
-      `<button class="buildBtn" data-type="${u.type}">
-         <span class="bbKey">${u.hotkey || this.EXTRA_HOTKEYS[u.type] || ''}</span>
+    const units = Game.UNITS.filter(u => !u.fogOnly || fog);
+    const si = units.findIndex(u => u.type === 'scout'), di = units.findIndex(u => u.type === 'drill');
+    if (si >= 0 && di >= 0) [units[si], units[di]] = [units[di], units[si]];
+    bar.innerHTML = units.map(u => {
+      const key = u.hotkey || this.EXTRA_HOTKEYS[u.type] || '';
+      const tip = this.UNIT_TIPS[u.type];
+      const tipAttr = tip ? ` data-tip-title="${u.name}" data-tip-key="${key}" data-tip="${escapeHtml(tip())}"` : '';
+      return `<button class="buildBtn" data-type="${u.type}"${tipAttr}>
+         <span class="bbKey">${key}</span>
          <span class="bbIcon">${iconHtml(this.UNIT_ICONS[u.type] || u.type)}</span>
          <span class="bbBody">
            <span class="bbName">${u.name}</span>
            <span class="bbCost"></span>
          </span>
          <span class="bbCount"></span>
-       </button>`).join('');
+       </button>`;
+    }).join('');
 
     this.buildEls = new Map();
     for (const btn of bar.querySelectorAll('.buildBtn')) {
@@ -337,6 +388,61 @@ const UI = {
       });
     }
     if (this._updateBarFade) this._updateBarFade();
+  },
+
+  // Hover descriptions. Any element carrying data-tip gets one, with optional
+  // data-tip-title and data-tip-key (a hotkey) for a heading; the build bar and
+  // the radial menu write theirs as they render, the fixed HUD has them in
+  // index.html. One delegated pointerover does the lot, because both of those
+  // rewrite their elements and a removed element sends no pointerout: every
+  // move onto a new element lands here, and either finds a tip or clears it.
+  //
+  // Mouse only. Touch has no hover, and a tip that appeared on press would sit
+  // under the finger and over the drag-to-place ghost.
+  TIP_DELAY_MS: 350,
+
+  setupTips() {
+    const el = document.getElementById('tip');
+    let shownFor = null, timer = 0;
+    const hide = () => {
+      clearTimeout(timer);
+      shownFor = null;
+      el.classList.add('hidden');
+    };
+    const show = target => {
+      shownFor = target;
+      const d = target.dataset;
+      el.innerHTML =
+        (d.tipTitle ? `<div class="tipTitle">${escapeHtml(d.tipTitle)}` +
+          (d.tipKey ? `<span class="tipKey">${escapeHtml(d.tipKey.toUpperCase())}</span>` : '') + '</div>' : '') +
+        `<div class="tipBody">${escapeHtml(d.tip)}</div>`;
+      el.classList.remove('hidden');
+      // Above the element, centred on it; below instead when there is no room
+      // (the buttons along the top edge), and never off either side.
+      const r = target.getBoundingClientRect(), m = 6;
+      const w = el.offsetWidth, h = el.offsetHeight;
+      const x = Math.max(m, Math.min(window.innerWidth - w - m, r.left + r.width / 2 - w / 2));
+      const y = r.top - h - m >= m ? r.top - h - m : Math.min(window.innerHeight - h - m, r.bottom + m);
+      el.style.left = Math.round(x) + 'px';
+      el.style.top = Math.round(y) + 'px';
+    };
+    document.addEventListener('pointerover', e => {
+      if (e.pointerType === 'touch') return;
+      const target = e.target.closest ? e.target.closest('[data-tip]') : null;
+      if (target && target === shownFor) return;
+      // Already reading one: the next appears at once, as a row of buttons
+      // swept across should. From nothing, wait, so tips do not flicker up
+      // every time the cursor crosses the HUD on its way somewhere else.
+      const wasShown = !el.classList.contains('hidden');
+      hide();
+      if (!target) return;
+      if (wasShown) show(target);
+      else timer = setTimeout(() => { if (target.isConnected) show(target); }, this.TIP_DELAY_MS);
+    });
+    // A press is the player acting on the thing, not asking about it.
+    document.addEventListener('pointerdown', hide, true);
+    document.documentElement.addEventListener('pointerleave', hide);
+    window.addEventListener('blur', hide);
   },
 
   // Cheap enough for every frame; a no-op unless the match's fog setting
@@ -460,7 +566,7 @@ const UI = {
     // Arms DEBUG BYPASS #2 (see onTap's 'debugnuke' branch) — singleplayer
     // only, for the same reason as the gold buttons: Game.debugNuke has no
     // intent behind it and never will.
-    if (!Transport.isLocal) return;
+    if (!this.debugAllowed()) return;
     if (this.placing === 'debugnuke' && this.debugNukeType === type) {
       this.placing = null;
       this.debugNukeType = null;
@@ -482,7 +588,7 @@ const UI = {
   // Gives up the player's land and eliminates them on the spot, which brings
   // up the defeat screen without playing a match out. The bots carry on.
   debugForfeit() {
-    if (!Transport.isLocal || !Game.running) return;
+    if (!this.debugAllowed() || !Game.running) return;
     const me = Game.players[Game.me];
     if (!me || !me.alive) return;
     for (const tile of [...me.tiles]) Game.setOwner(tile, NEUTRAL);
@@ -493,7 +599,7 @@ const UI = {
   armDebugPeace() {
     if (!Game.running) return;
     // DEBUG BYPASS #3 — singleplayer only, same reasoning as armDebugNuke.
-    if (!Transport.isLocal) return;
+    if (!this.debugAllowed()) return;
     if (this.placing === 'debugpeace') { this.placing = null; return; }
     this.placing = 'debugpeace';
     this.placeHover = -1;
@@ -728,7 +834,8 @@ const UI = {
     // the phase's own turn counter (Game.ticks stays frozen at 0 throughout
     // the whole spawn phase by design, so it can't drive this).
     const remaining = Math.max(0, Math.ceil((Game.SPAWN_PHASE_TURNS - Game.spawnPhaseTicks) * Game.TICK_DT));
-    const hint = Game.fog ? this.SPAWN_FOG_HINT : (this.spawnSent ? this.SPAWN_SENT_HINT : this.SPAWN_HINT);
+    const hint = Game.fog ? this.SPAWN_FOG_HINT : this.spawnSent ? this.SPAWN_SENT_HINT
+      : Tutorial.active ? Tutorial.SPAWN_HINT : this.SPAWN_HINT;
     // Solo matches start on the tap, so there is no deadline worth showing.
     el.textContent = Game.humanCount > 1 || Game.fog ? hint + ' · ' + remaining + 's' : hint;
   },
@@ -852,7 +959,7 @@ const UI = {
       // is a dev tool for looking at blast/fallout behaviour rather than a
       // move a player can make. Singleplayer only — armDebugNuke refuses to
       // arm it when the transport is not local, and update() hides the panel.
-      if (!Transport.isLocal) return;
+      if (!this.debugAllowed()) return;
       Game.debugNuke(this.debugNukeType, this.debugNukeSrc, tile);
       this.placing = null;
       this.debugNukeType = null;
@@ -867,7 +974,7 @@ const UI = {
     // as you. Singleplayer only (armDebugPeace refuses otherwise). Stays armed so
     // several nations can be tapped in a row; Esc or the button disarms it.
     if (this.placing === 'debugpeace') {
-      if (!Transport.isLocal) return;
+      if (!this.debugAllowed()) return;
       const tile = Render.screenToTile(sx, sy);
       const owner = tile < 0 ? -1 : GameMap.owner[tile];
       if (owner < 0 || owner === Game.me) { this.flash('Tap another nation'); return; }
@@ -1221,18 +1328,21 @@ const UI = {
     // BYPASS notes in setup()) and would desync a networked match.
     // The panel itself additionally stays closed until the toggle opens it.
     const debugToggle = document.getElementById('debugToggle');
-    debugToggle.classList.toggle('hidden', !Transport.isLocal);
+    debugToggle.classList.toggle('hidden', !this.debugAllowed());
     debugToggle.textContent = this.debugOpen ? 'Debug ▾' : 'Debug ▸';
-    document.getElementById('debugPanel').classList.toggle('hidden', !Transport.isLocal || !this.debugOpen);
+    document.getElementById('debugPanel').classList.toggle('hidden', !this.debugAllowed() || !this.debugOpen);
 
     const pauseBtn = document.getElementById('pauseBtn');
-    pauseBtn.classList.toggle('hidden', !Transport.isLocal || Game.winnerId !== null);
-    pauseBtn.classList.toggle('paused', LocalServer.paused);
+    pauseBtn.classList.toggle('hidden', !this.debugAllowed() || Game.winnerId !== null);
+    // The tutorial's own hold is not the player's pause, and the button only
+    // speaks for the player's.
+    const paused = Tutorial.active ? Tutorial.userPaused : LocalServer.paused;
+    pauseBtn.classList.toggle('paused', paused);
     // Only rewritten on a change: this runs every frame, and replacing the
     // button's contents at 60Hz would reload its icon and break :active.
-    if (pauseBtn._paused !== LocalServer.paused) {
-      pauseBtn._paused = LocalServer.paused;
-      pauseBtn.innerHTML = LocalServer.paused ? iconHtml('play') + ' Resume' : iconHtml('pause') + ' Pause';
+    if (pauseBtn._paused !== paused) {
+      pauseBtn._paused = paused;
+      pauseBtn.innerHTML = paused ? iconHtml('play') + ' Resume' : iconHtml('pause') + ' Pause';
     }
 
     const musicBtn = document.getElementById('musicBtn');
@@ -1566,7 +1676,7 @@ const UI = {
       if (hoverB && hoverB.type === this.placing && hoverB.built) {
         hintEl.textContent = 'Tap to upgrade this ' + def.name + ' to level ' + (hoverB.level + 1) +
           ' · ' + formatGold(Game.unitCost(me, this.placing)) + ' gold' +
-          ' · ' + def.buildTime + 's · Esc to cancel';
+          (Game.UPGRADE_TIME ? ' · ' + Game.UPGRADE_TIME + 's' : '') + ' · Esc to cancel';
       } else {
         hintEl.textContent = 'Tap your own land to place a ' + def.name +
           ' · ' + formatGold(Game.unitCost(me, this.placing)) + ' gold' +
@@ -2126,31 +2236,34 @@ const UI = {
   // main.js what the host/join forms currently say.
   //
   // #spMode (map/bots/tribes/#startBtn) is the pre-existing singleplayer
-  // panel, untouched — this section only adds the tab chrome around it and
-  // the two new panels beside it.
+  // panel, untouched — this section only adds the menu rows around it and
+  // the screens beside it. Host and join share one screen (#friendsMode).
 
   setupLobby() {
     const tabs = Array.prototype.slice.call(document.querySelectorAll('.modeTab'));
     const bodies = {
       sp: document.getElementById('spMode'),
-      host: document.getElementById('hostMode'),
-      join: document.getElementById('joinMode'),
+      friends: document.getElementById('friendsMode'),
       replay: document.getElementById('replayMode')
     };
-    // Picking a mode swaps the open-game card out for that mode's form; Back
-    // (#modeBack) undoes it. A class on #overlay rather than `hidden` on the
-    // card, because hideLobby() owns the card's `hidden` for the lobby screens.
+    // Picking a mode swaps the home screen (brand, open-game card, mode rows)
+    // out for that mode's screen; Back (#modeBack) undoes it. A class on
+    // #overlay rather than `hidden` on the card, because hideLobby() owns the
+    // card's `hidden` for the lobby screens.
     const overlay = document.getElementById('overlay');
     const back = document.getElementById('modeBack');
+    const title = document.getElementById('modeTitle');
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         tabs.forEach((t) => t.classList.toggle('active', t === tab));
         for (const key in bodies) bodies[key].classList.toggle('hidden', key !== tab.dataset.mode);
         overlay.classList.add('modeOpen');
+        overlay.dataset.mode = tab.dataset.mode;
+        title.textContent = tab.dataset.title || '';
         back.classList.remove('hidden');
         this.setLobbyError('');
         // The preview skips drawing while its panel is hidden.
-        this.refreshMapPreview(tab.dataset.mode === 'host' ? 'host' : '');
+        if (tab.dataset.mode === 'sp') this.refreshMapPreview('');
         if (tab.dataset.mode === 'replay') this.refreshReplayList();
       });
     });
@@ -2158,6 +2271,7 @@ const UI = {
       tabs.forEach((t) => t.classList.remove('active'));
       for (const key in bodies) bodies[key].classList.add('hidden');
       overlay.classList.remove('modeOpen');
+      delete overlay.dataset.mode;
       back.classList.add('hidden');
       this.setLobbyError('');
     });
@@ -2760,15 +2874,15 @@ const UI = {
   // lobby exists (should not happen in practice — GameManager always keeps
   // one — but a server that's down or between restarts is exactly the case
   // this falls back for, per Transport.fetchLobbyList's own "resolves to []
-  // on any network failure" contract). Disables the button rather than
-  // leaving it clickable with nothing to join.
+  // on any network failure" contract). The button stays live either way:
+  // with nothing to join it starts a match against bots (main.js).
   renderQuickJoin(entry) {
     const info = document.getElementById('quickJoinInfo');
     const btn = document.getElementById('quickJoinBtn');
     if (!entry) {
       this._quickJoinEntry = null;
-      info.textContent = 'No open game right now — check back shortly.';
-      btn.disabled = true;
+      info.textContent = 'No open game right now. Play now starts a match against bots.';
+      btn.disabled = false;
       this.renderQuickJoinMap(null);
       return;
     }
@@ -2878,8 +2992,8 @@ const UI = {
     this._hidePreLobbyChrome();
   },
 
-  // Join Open Game: the menu's hero card is hidden once connected, so carry
-  // its already-painted map into the lobby panel.
+  // Play now, into the open game: the menu's hero card is hidden once
+  // connected, so carry its already-painted map into the lobby panel.
   showJoinLobbyMap() {
     const src = document.getElementById('quickJoinMapCanvas');
     const dst = document.getElementById('joinLobbyMapCanvas');
@@ -2895,8 +3009,8 @@ const UI = {
   },
 
   // Once connected to a lobby (host or join), the other ways to start a
-  // match no longer make sense to show — clicking the hero "Join Open Game"
-  // button or another mode tab wouldn't leave this lobby, just show a
+  // match no longer make sense to show — clicking the hero "Play now"
+  // button or another mode row wouldn't leave this lobby, just show a
   // confusingly unconnected panel next to a still-live one. Hidden rather
   // than disabled so the lobby screen (roster, code/status, leave button)
   // is the only thing on screen while connected.

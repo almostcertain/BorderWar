@@ -1649,6 +1649,9 @@ function fogRadio() {
   expect(Game.visionHiddenAround(0, site, R) === 0, 'the finished tower left part of its disc undiscovered');
   expect(count() - before >= hidden, `the tower uncovered ${count() - before} cells, fewer than the ${hidden} that were hidden`);
   expect(Game.unitsOwned(human, 'radio') === 1 && Game.unitsPending(human, 'radio') === 0, 'the tower is not counted as built');
+  // It does not stand on: the record is gone, the tile is free again, and the next one still costs more.
+  expect(!Game.buildings.has(site) && !Game.structureTooClose(site), 'the finished tower is still on the map');
+  expect(Game.unitCost(human, 'radio') === 100000, 'the price fell back once the tower was gone');
 
   // Nothing left to show from here, so a second one is refused and costs nothing.
   let spare = -1;

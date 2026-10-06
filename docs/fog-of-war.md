@@ -19,7 +19,7 @@ off, the game plays exactly as it does today.
 | Spawning | Random and fixed when fog is on. Nobody picks a spawn. The countdown is 5 seconds. |
 | Nukes | Can be fired into undiscovered areas. The blast reveals nothing. |
 | Bots | Bound by the same fog as humans. |
-| Radio Tower | A cheap building that reveals a wide area around it once, when it finishes. Mainly for landlocked nations, which cannot launch Scouts. 50k for the first, 50k more for each one after, capped at 250k. |
+| Radio Tower | A cheap building that reveals a wide area around it once, when it finishes, and then disappears. Mainly for landlocked nations, which cannot launch Scouts. 50k for the first, 50k more for each one after, capped at 250k. |
 | Shared vision | Teammates always share. Allies share while allied and keep what they learned. |
 | Contact | One-sided. Meeting a nation does not make it meet you. Allies share the map but not their contacts. |
 | Trade | Ports only trade between two nations that have both met each other. Rail income inside your own network is unaffected. |
@@ -366,7 +366,8 @@ Much of the bot logic is already border-based (`borderTargets`, `think`,
 
 `UNITS` entry `radio`, placed on owned land through the ordinary `build` path.
 Cheap, not upgradable, only in fog matches. On completion it stamps one large
-disc. Discovery survives the tower being captured or destroyed.
+disc, plays a short scan animation and is removed from the map. Discovery is
+permanent.
 
 ## As built
 
@@ -434,15 +435,23 @@ notes are under "Vision state".
 - The fog colour is the canvas backdrop (`FOG_COLOR`, `#060a14`), so the map
   edge does not show as an outline.
 - In fog matches labels, badges, front numbers and popups are drawn over the
-  fog and culled by their anchor tile. A nation is named on the map only once
-  its label anchor (the centre of its largest landmass) is discovered.
+  fog and culled by their anchor tile. A nation's label (name and troops) is
+  anchored and sized by its largest *discovered* stretch of land, so a
+  neighbour mostly in the black is still named on the strip that shows
+  (changed 2026-10-05: it used to wait for the centre of the whole nation to
+  be discovered, which left a phone, with no hover, unable to read a
+  neighbour's troops). A strip too thin for the normal sizing rule is
+  lettered at the minimum size once it is big enough on screen
+  (`FOG_LABEL_MIN_SPAN`); the label gives no hint of the hidden land's size.
 - The placement ghost is drawn over the fog, since nukes and scouts aim
   blind. A warship ghost is refused unless the hovered tile and its
   destination are both discovered.
 - Blasts and SAM flashes are culled on their centre. The incoming-nuke target
   ring is always drawn. "Own" missiles means the viewer's, not teammates'.
-- **Spectators and replays do not exist in the game today.** A client that is
-  not on the roster is treated as player 0 and gets that player's fog.
+- **There is no spectator mode.** A client that is not on the roster is
+  treated as player 0 and gets that player's fog. Replays were added later
+  (`docs/replays.md`): a replay shows the whole map unless the viewer asks
+  for one player's fog (`Replay.revealAll`).
 
 ### UI (tasks 6 and 8)
 
@@ -583,7 +592,15 @@ the dual run, 111 launches a run).
   nothing shown until built, the whole disc on completion, the refusal, bots
   only when landlocked, refused with fog off), and each scenario reports how
   many towers bots built. `neutral` still passes.
-- Not done: a tower has no use once built, and there is no way to remove one.
+- **Gone once built.** A tower has no use after its reveal, so
+  `updateConstruction` deletes it from `Game.buildings` the tick it finishes
+  and the tile is free to build on again. `units.radio` is not decremented,
+  so it counts towers used and the linear price keeps climbing. In its place
+  the client plays a 2-second scan (`Fx.radioScan`, `Render.drawRadioScans`):
+  the tower's icon shrinking away while two rings sweep out to the edge of
+  the disc. Because of this, the paragraph above about a finished tower being
+  captured no longer applies; only a tower still under construction can
+  change hands.
   It keeps its tile and can be captured.
 
 ## Tasks

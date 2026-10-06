@@ -6,7 +6,8 @@ const Options = (function() {
   const KEY = 'borderwar_options';
   // Battery saver starts on for phones and tablets, off where there is a mouse.
   const touchDevice = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
-  const DEFAULTS = { lowGfx: false, saveBattery: touchDevice, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false, musicOn: true, musicVol: 0.7 };
+  // Music starts off on a developer's own machine, on for players on the live site.
+  const DEFAULTS = { lowGfx: false, saveBattery: touchDevice, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false, musicOn: !UI.DEBUG_HOST, musicVol: 0.7 };
   const values = Object.assign({}, DEFAULTS);
 
   try {

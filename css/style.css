@@ -383,7 +383,7 @@ html, body {
 
 /* --- Pause button (singleplayer) ------------------------------------------ */
 
-#pauseBtn, #musicBtn {
+#pauseBtn, #musicBtn, #exitBtn {
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 700;
@@ -397,7 +397,12 @@ html, body {
 
 #musicBtn { padding: 6px 8px; }
 
-:is(#pauseBtn, #musicBtn):active { filter: brightness(0.85); }
+:is(#pauseBtn, #musicBtn, #exitBtn):active { filter: brightness(0.85); }
+
+/* Clicked once mid-match, waiting for the confirming click (main.js). */
+#exitBtn.armed {
+  background: rgba(215, 60, 60, 0.95);
+}
 
 #pauseBtn.paused {
   background: rgba(255, 190, 70, 0.95);
@@ -457,7 +462,7 @@ html, body {
 #replayRevealRow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 
 body.replaying #hud { bottom: calc(env(safe-area-inset-bottom) + 54px); background: none; }
-body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pauseBtn, #debugToggle, #debugPanel) { display: none !important; }
+body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pauseBtn, #exitBtn, #debugToggle, #debugPanel) { display: none !important; }
 
 @media (max-width: 700px) {
   #replayBar { flex-wrap: wrap; justify-content: center; }
@@ -600,6 +605,38 @@ body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pau
 #diploBarFill { height: 100%; width: 100%; background: #6db4ff; border-radius: 1px; }
 
 /* --- Radial menu ---------------------------------------------------------- */
+
+/* --- Hover descriptions (UI.setupTips) ------------------------------------ */
+
+/* Above everything in a match, the options button included, and never in the
+   way of a click: it sits over the thing it describes. */
+#tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 30;
+  max-width: 250px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(8, 14, 26, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.tipTitle { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; margin-bottom: 3px; }
+.tipKey {
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+.tipBody { opacity: 0.85; }
 
 /* --- Hover panel: quick stats for the nation under the cursor -------------- */
 
@@ -1128,9 +1165,9 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 #endOverlay.minimized #endText,
 #endOverlay.minimized #restartBtn { display: none; }
 
-/* --- Main menu redesign: the open rotating lobby (#12) is the primary call
-   to action — a hero card above everything else — with Singleplayer/Host/
-   join-by-code demoted to a small secondary tab row underneath. ---------- */
+/* --- Main menu: the open rotating lobby (#12) is the primary call to
+   action — a hero card above everything else — with the other ways to play
+   as a list of rows underneath, each opening its own screen. ------------- */
 
 #quickJoin {
   display: flex;
@@ -1173,29 +1210,59 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 
 /* --- MP-2.3: lobby UI — mode tabs, host/join panels, roster ---------------- */
 
+/* The home screen's list of other ways to play: one card, a row each. */
 #modeTabs {
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 16, 30, 0.55);
+  overflow: hidden;
 }
 
-.modeTab {
-  flex: 1;
-  padding: 6px 6px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.panel button.menuRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 0;
   background: transparent;
   color: #fff;
-  opacity: 0.75;
-  cursor: pointer;
+  font-weight: 400;
+  text-align: left;
 }
+.panel button.menuRow + .menuRow { border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.panel button.menuRow:hover { background: rgba(255, 255, 255, 0.06); }
+.panel button.menuRow:active { background: rgba(255, 255, 255, 0.1); }
+.menuRowText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.menuRowText b { font-size: 15px; font-weight: 600; }
+.menuRowText small { font-size: 12px; opacity: 0.6; }
+.menuRowGo { font-size: 20px; line-height: 1; opacity: 0.45; }
 
-.modeTab.active {
-  opacity: 1;
-  background: #1c2740;
-  border-color: rgba(61, 125, 255, 0.6);
+/* A grouped block on a mode's screen (Play with friends). */
+.menuCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 16, 30, 0.55);
 }
+#joinMode > div, #hostMode > div { display: flex; flex-direction: column; gap: 10px; }
+.menuCardTitle { font-size: 15px; font-weight: 600; text-align: left; }
+.menuCardNote { font-size: 12px; opacity: 0.6; text-align: left; margin-top: -6px; }
+.joinRow { display: flex; gap: 8px; }
+.joinRow input { flex: 1; min-width: 0; text-transform: uppercase; }
+.panel .joinRow button { padding: 8px 18px; font-size: 14px; }
+#friendsMode { gap: 12px; }
+#publicLobbyBrowser .lobbyLabel { display: flex; justify-content: space-between; align-items: center; }
+#publicLobbyBrowser .linkBtn { margin: 0; padding: 0; background: transparent; font-size: 12px; font-weight: 400; color: #a9cdff; }
+/* In a lobby, only that lobby's card shows; its create/join form goes too. */
+#friendsMode:has(#hostLobby:not(.hidden)) > :not(#hostMode),
+#friendsMode:has(#joinLobby:not(.hidden)) > :not(#joinMode),
+#hostMode:has(#hostLobby:not(.hidden)) #hostCreate,
+#joinMode:has(#joinLobby:not(.hidden)) #joinForm { display: none; }
 
 .modeBody {
   display: flex;
@@ -1473,19 +1540,42 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 .brand { display: flex; align-items: center; justify-content: center; gap: 0.3em; }
 .brand .brandMark { height: 1.5em; width: auto; flex: 0 0 auto; }
 #overlay .orDivider { display: none; }
-#overlay .modeTab { min-width: 0; padding: 12px 6px; font-size: 14px; }
 
-/* A mode is open: its form replaces the open-game card. Back sits above the title,
-   left-aligned with the column, and goes when the tabs do (in a lobby). */
-#overlay.modeOpen #quickJoin { display: none !important; }
+/* A mode is open: its screen replaces the home screen (brand, pitch, open-game
+   card, mode rows), under a header of Back and the screen's title. Back goes
+   when the rows do (in a lobby); the title stays. */
+#overlay.modeOpen #quickJoin,
+#overlay.modeOpen #modeTabs { display: none !important; }
+#overlay.modeOpen .brand,
+#overlay.modeOpen #menuPitch,
+#overlay.modeOpen #installBtn,
+#overlay.modeOpen #menuFoot,
+#overlay[data-mode="replay"] #nameRow,
+.menuPanel:has(#modeTabs.hidden) #menuFoot { display: none; }
 .menuPanel:has(#modeTabs.hidden) #modeBack { display: none; }
-#modeBack {
-  align-self: flex-start;
-  width: auto;
-  margin: 0;
-  padding: 6px 14px;
+#modeHead { display: none; align-items: center; gap: 10px; min-height: 34px; }
+#overlay.modeOpen #modeHead { display: flex; }
+#modeTitle { font-size: 20px; font-weight: 700; }
+.panel button#modeBack {
+  width: 34px;
+  height: 34px;
+  padding: 0 0 3px;
+  font-size: 22px;
+  line-height: 1;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.panel button#modeBack:hover { background: rgba(255, 255, 255, 0.18); }
+
+/* Replays: a utility, not a way to play, so a quiet link under the menu. */
+#menuFoot { text-align: center; }
+.panel button#replaysLink {
+  padding: 4px 8px;
+  background: transparent;
+  color: #a9cdff;
   font-size: 13px;
-  color: #fff;
+  font-weight: 400;
+  text-decoration: underline;
 }
 
 /* --- Options (js/options.js) ------------------------------------------------ */
@@ -1651,5 +1741,52 @@ body.noHint #hint:not(.warn) { display: none; }
   cursor: pointer;
 }
 #installBtn .ic { width: 16px; height: 16px; }
+
+/* --- Tutorial (js/tutorial.js) --------------------------------------------- */
+
+/* #tutorialBtn is a row in the main menu's mode list (.menuRow). */
+
+/* The coach panel, first thing in the HUD so it sits right above the controls
+   it talks about, on a phone as on a desktop. */
+#tutorial {
+  padding: 7px 10px 8px;
+  border-radius: 10px;
+  background: rgba(30, 62, 112, 0.92);
+  border: 1px solid rgba(109, 180, 255, 0.6);
+  font-size: 13px;
+  line-height: 1.35;
+}
+#tutorial.tutNew { animation: tutIn 0.35s ease-out; }
+@keyframes tutIn { from { transform: translateY(6px); opacity: 0.3; } }
+#tutHead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+#tutStep { font-size: 11px; opacity: 0.65; font-variant-numeric: tabular-nums; }
+#tutStep:empty { display: none; }
+#tutTitle { flex: 1 1 auto; font-weight: 700; font-size: 14px; }
+#tutorial .linkBtn { flex: 0 0 auto; margin: 0; padding: 2px 0 2px 6px; color: #a9cdff; }
+/* Keeps its line when not showing, so the HUD does not jump each time the
+   match is held and released. */
+#tutPaused { margin-top: 3px; font-size: 11px; font-weight: 600; color: #ffd27a; }
+#tutPaused.off { visibility: hidden; }
+#tutBtns { display: flex; gap: 8px; margin-top: 7px; }
+#tutBtns button {
+  flex: 1 1 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+#tutBtns #tutKeep { background: #2f6fe0; border-color: #2f6fe0; }
+
+/* The control the current step is about. Inset, because the build bar clips
+   anything drawn outside its buttons. */
+.tutGlow { animation: tutGlow 1.1s ease-in-out infinite; border-radius: 8px; }
+@keyframes tutGlow {
+  0%, 100% { box-shadow: inset 0 0 0 2px rgba(109, 180, 255, 0.95); }
+  50% { box-shadow: inset 0 0 0 2px rgba(109, 180, 255, 0.15); }
+}
 #installGuide p { margin: 4px 0 0; font-size: 14px; opacity: 0.85; }
 #installSteps { margin: 0; padding-left: 22px; font-size: 14px; line-height: 1.6; }
