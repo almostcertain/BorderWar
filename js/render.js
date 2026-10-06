@@ -818,7 +818,10 @@ const Render = {
   FOG_PAD: 4,                    // border of repeated edge pixels, half a cell: drawFog()'s overrun past the map stays inside the image
   FOG_EDGE_LO: 0.8,              // blended corner opacity at or below which a pixel is clear
   FOG_EDGE_HI: 0.95,             // ... and at or above which it is solid; the gap is the edge's width
-  fogCorners: null,              // Uint8Array per vision-grid corner: 1 while any cell touching it is undiscovered
+  FOG_FADE_MS: 700,              // how long a corner takes to go from opaque to clear once its cells are discovered
+  fogCorners: null,              // Float32Array per vision-grid corner: 1 while any cell touching it is undiscovered, easing to 0 over FOG_FADE_MS after
+  fogFadeIdx: [],                // corners currently easing out (indices into fogCorners)
+  fogFadeStart: [],              // performance.now() at which each of those began
   fogged: false,                 // fogActive(), sampled once per draw()
   fogCanvas: null,
   fogCtx: null,
@@ -835,6 +838,8 @@ const Render = {
   fogNoBitmap: false,
   fogGen: 0,
   fogSteady: 0,
+  fogNow: 0,                     // performance.now() sampled by updateFog() for this frame's fades
+  fogInstant: false,             // set while corners should clear at once instead of easing
 
   // Starts the layer again from fully fogged: a new match, or a new viewer.
   resetFog(g) {
@@ -848,13 +853,15 @@ const Render = {
       this.fogImage = this.fogCtx.createImageData(cw * S + 1 + 2 * P, ch * S + 1 + 2 * P);
       this.fogPixels = new Uint32Array(this.fogImage.data.buffer);
       this.fogSeen = new Uint8Array(cw * ch);
-      this.fogCorners = new Uint8Array((cw + 1) * (ch + 1));
+      this.fogCorners = new Float32Array((cw + 1) * (ch + 1));
       this.fogW = cw;
       this.fogH = ch;
     }
     const c = this.FOG_COLOR;
     this.fogSeen.fill(0);
     this.fogCorners.fill(1);
+    this.fogFadeIdx.length = 0;
+    this.fogFadeStart.length = 0;
     this.fogSeenCount = 0;
     this.fogPixels.fill(this.packed(c[0], c[1], c[2]));
     this.fogCtx.putImageData(this.fogImage, 0, 0);
@@ -886,7 +893,13 @@ const Render = {
       const row = j * cw + i;
       clear = (!left || seen[row - 1] !== 0) && (!right || seen[row] !== 0);
     }
-    if (clear) this.fogCorners[j * (cw + 1) + i] = 0;
+    if (!clear) return;
+    const idx = j * (cw + 1) + i;
+    if (this.fogCorners[idx] !== 1) return;     // already easing out, or clear
+    if (this.fogInstant) { this.fogCorners[idx] = 0; return; }
+    this.fogFadeIdx.push(idx);
+    this.fogFadeStart.push(this.fogNow);
+    this.fogCorners[idx] = 0.999;               // marks it as fading; the tick sets the real value
   },
 
   // Repaints the layer's pixels for corners i0..i1, j0..j1 (inclusive) and the
@@ -909,10 +922,22 @@ const Render = {
       for (let q = pxMin; q <= pxMax; q++) {
         const p = q < 0 ? 0 : q > cw * S ? cw * S : q;
         const i = Math.min((p / S) | 0, cw), i1c = Math.min(i + 1, cw), fx = p / S - i;
-        const top = corners[j * cs + i] * (1 - fx) + corners[j * cs + i1c] * fx;
-        const bot = corners[j1c * cs + i] * (1 - fx) + corners[j1c * cs + i1c] * fx;
-        let t = (top * (1 - fy) + bot * fy - lo) / (hi - lo);
-        t = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+        // The pixel's final look (fading corners clear) and its starting look
+        // (fading corners still opaque), mixed by how far the fading corners
+        // around it have got.
+        const a = corners[j * cs + i], b = corners[j * cs + i1c], c2 = corners[j1c * cs + i], d = corners[j1c * cs + i1c];
+        const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+        const cur = a * w00 + b * w10 + c2 * w01 + d * w11;
+        const fin = (a >= 1 ? w00 : 0) + (b >= 1 ? w10 : 0) + (c2 >= 1 ? w01 : 0) + (d >= 1 ? w11 : 0);
+        const ini = (a > 0 ? w00 : 0) + (b > 0 ? w10 : 0) + (c2 > 0 ? w01 : 0) + (d > 0 ? w11 : 0);
+        let tF = (fin - lo) / (hi - lo);
+        tF = tF <= 0 ? 0 : tF >= 1 ? 1 : tF * tF * (3 - 2 * tF);
+        let t = tF;
+        if (ini > fin) {
+          let tI = (ini - lo) / (hi - lo);
+          tI = tI <= 0 ? 0 : tI >= 1 ? 1 : tI * tI * (3 - 2 * tI);
+          t = tF + (tI - tF) * ((cur - fin) / (ini - fin));
+        }
         px[(qy + P) * stride + q + P] = rgb | ((t * 255 + 0.5) << 24);
       }
     }
@@ -920,15 +945,21 @@ const Render = {
 
   updateFog() {
     const g = Game.visionGroup(Game.me);
-    if (this.fogSource !== Game.visionCells || this.fogGroup !== g) this.resetFog(g);
+    let fresh = false;
+    if (this.fogSource !== Game.visionCells || this.fogGroup !== g) { this.resetFog(g); fresh = true; }
     const count = Game.visionCount[g];
     let need = count - this.fogSeenCount;
+    this.fogNow = performance.now();
+    // A layer just rebuilt for a new match or viewer shows what is already
+    // known straight away; only discoveries made while watching ease in.
+    this.fogInstant = fresh;
     if (need === 0) {
+      if (this.tickFogFade()) return;
       if (!this.fogBmp && !this.fogBmpPending && ++this.fogSteady >= this.FOG_BITMAP_SETTLE) this.snapshotFog();
       return;
     }
     // Discovery is permanent, so a count that fell belongs to a different grid.
-    if (need < 0) { this.resetFog(g); need = count; }
+    if (need < 0) { this.resetFog(g); need = count; this.fogInstant = true; }
 
     const cw = this.fogW, seen = this.fogSeen;
     const cells = Game.visionCells, W = Game.visionWords, bit = 1 << (g & 31);
@@ -951,14 +982,55 @@ const Render = {
     }
     this.fogSeenCount = count;
     if (maxX < 0) return;
+    this.fogInstant = false;
+    this.fogBlit(minX, minY, maxX + 1, maxY + 1);
+    this.tickFogFade();
+  },
+
+  // Repaints corners i0..i1, j0..j1 and blits just that rectangle.
+  fogBlit(i0, j0, i1, j1) {
     const S = this.FOG_SUB, P = this.FOG_PAD;
-    this.fogPaint(minX, minY, maxX + 1, maxY + 1);
+    this.fogPaint(i0, j0, i1, j1);
     // The rectangle fogPaint just wrote, in image pixels (border included).
+    const minX = i0, minY = j0, maxX = i1 - 1, maxY = j1 - 1;
     const dx = minX > 1 ? (minX - 1) * S + P : 0, dy = minY > 1 ? (minY - 1) * S + P : 0;
     const ex = maxX + 2 < this.fogW ? (maxX + 2) * S + P : this.fogW * S + 2 * P;
     const ey = maxY + 2 < this.fogH ? (maxY + 2) * S + P : this.fogH * S + 2 * P;
     this.fogCtx.putImageData(this.fogImage, 0, 0, dx, dy, ex - dx + 1, ey - dy + 1);
     this.fogChanged();
+  },
+
+  // Advances every easing corner and repaints the rectangle they span.
+  // Returns whether anything was fading.
+  tickFogFade() {
+    const idx = this.fogFadeIdx, start = this.fogFadeStart, n = idx.length;
+    if (n === 0) return false;
+    const cs = this.fogW + 1, now = this.fogNow, corners = this.fogCorners, dur = this.FOG_FADE_MS;
+    let i0 = cs, j0 = this.fogH + 1, i1 = -1, j1 = -1, keep = 0;
+    for (let k = 0; k < n; k++) {
+      const ci = idx[k];
+      let p = (now - start[k]) / dur;
+      let v = 0;
+      if (p < 1) {
+        p = p <= 0 ? 0 : p;
+        v = 1 - p * p * (3 - 2 * p);
+        if (v > 0.999) v = 0.999;               // stays below 1 so the paint knows it is fading
+        if (v < 0.001) v = 0.001;
+        idx[keep] = ci;
+        start[keep] = start[k];
+        keep++;
+      }
+      corners[ci] = v;
+      const x = ci % cs, y = (ci / cs) | 0;
+      if (x < i0) i0 = x;
+      if (x > i1) i1 = x;
+      if (y < j0) j0 = y;
+      if (y > j1) j1 = y;
+    }
+    idx.length = keep;
+    start.length = keep;
+    this.fogBlit(i0, j0, i1, j1);
+    return true;
   },
 
   snapshotFog() {
