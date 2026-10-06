@@ -349,15 +349,15 @@ const UI = {
   // answer changes from one match to the next. A fog-off bar comes out exactly
   // as it always was.
   //
-  // The bar follows Game.UNITS' order, except that the Radio Tower and the
-  // Scout trade places. Done here rather than in the table: that is sim data
-  // and the goldens hash it.
+  // The bar follows Game.UNITS' order, except that The Drill and the Scout
+  // trade places, so the two fog entries sit together at the end. Done here
+  // rather than in the table: that is sim data and the goldens hash it.
   rebuildBuildBar() {
     const bar = document.getElementById('buildBar');
     const fog = this._barFog = !!Game.fog;
     const units = Game.UNITS.filter(u => !u.fogOnly || fog);
-    const si = units.findIndex(u => u.type === 'scout'), ri = units.findIndex(u => u.type === 'radio');
-    if (si >= 0 && ri >= 0) [units[si], units[ri]] = [units[ri], units[si]];
+    const si = units.findIndex(u => u.type === 'scout'), di = units.findIndex(u => u.type === 'drill');
+    if (si >= 0 && di >= 0) [units[si], units[di]] = [units[di], units[si]];
     bar.innerHTML = units.map(u => {
       const key = u.hotkey || this.EXTRA_HOTKEYS[u.type] || '';
       const tip = this.UNIT_TIPS[u.type];
