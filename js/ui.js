@@ -231,6 +231,7 @@ const UI = {
     });
 
     document.getElementById('pauseBtn').addEventListener('click', () => this.togglePause());
+    this.initGameMenu();
     document.getElementById('musicBtn').addEventListener('click', () => this.toggleMusic());
 
     document.getElementById('debugToggle').addEventListener('click', () => {
@@ -249,8 +250,13 @@ const UI = {
       const tag = e.target && e.target.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (e.key === 'Escape') {
-        this.cancelPlacing();
+        // The capture-phase handler in initGameMenu already used this press.
+        if (e._menuHandled) return;
+        const armed = this.cancelPlacing();
+        const selected = this.selectedWarships.size + this.selectedScouts.size > 0;
         this.clearShipSelection();
+        // Nothing to put away: Escape opens the menu.
+        if (!armed && !selected) this.openGameMenu();
         return;
       }
       if (e.key === 'p' || e.key === 'P') { this.togglePause(); return; }
@@ -269,6 +275,46 @@ const UI = {
         this.togglePlacing('drill');
       }
     });
+  },
+
+  // In-game menu: Escape, or the corner button on touch. Pause is
+  // singleplayer-only, so its row shows only where the Pause button would.
+  initGameMenu() {
+    const menu = document.getElementById('gameMenu');
+    const optionsOpen = () => !document.getElementById('optionsOverlay').classList.contains('hidden');
+    const pauseRow = document.getElementById('gmPause');
+    this.gameMenuEl = menu;
+    document.getElementById('menuBtn').addEventListener('click', () => this.openGameMenu());
+    document.getElementById('gmResume').addEventListener('click', () => this.closeGameMenu());
+    document.getElementById('gmOptions').addEventListener('click', () => Options.open());
+    pauseRow.addEventListener('click', () => {
+      this.togglePause();
+      this.closeGameMenu();
+    });
+    menu.addEventListener('click', e => { if (e.target === menu) this.closeGameMenu(); });
+    // Capture phase, so it runs before Options closes itself on the same press.
+    window.addEventListener('keydown', e => {
+      if (e.key !== 'Escape' || menu.classList.contains('hidden')) return;
+      e._menuHandled = true;
+      if (!optionsOpen()) this.closeGameMenu();
+    }, true);
+  },
+
+  openGameMenu() {
+    if (Replay.active || !Game.running || !Game.players[Game.me]) return;
+    if (!document.getElementById('overlay').classList.contains('hidden')) return;
+    const showPause = this.debugAllowed() && Game.winnerId === null;
+    const pauseRow = document.getElementById('gmPause');
+    pauseRow.classList.toggle('hidden', !showPause);
+    pauseRow.textContent = (Tutorial.active ? Tutorial.userPaused : LocalServer.paused) ? 'Resume game' : 'Pause game';
+    this.cancelPlacing();
+    Radial.hide();
+    this.gameMenuEl.classList.remove('hidden');
+  },
+
+  closeGameMenu() {
+    this.gameMenuEl.classList.add('hidden');
+    document.getElementById('gmExit').dispatchEvent(new Event('disarm'));
   },
 
   // Singleplayer only, and only while a match is live: LocalServer stops its

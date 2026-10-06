@@ -722,11 +722,31 @@
       exitArmTimer = setTimeout(disarmExit, EXIT_ARM_MS);
       return;
     }
+    leaveMatch();
+  });
+
+  function leaveMatch() {
     disarmExit();
+    document.getElementById('gameMenu').classList.add('hidden');
     Tutorial.stop();
     Transport.disconnect();
     Runner.reset();
     backToMenu();
+  }
+
+  // The in-game menu's Exit takes the same second click as the corner button.
+  const gmExit = document.getElementById('gmExit');
+  gmExit.addEventListener('disarm', () => {
+    gmExit.classList.remove('armed');
+    gmExit.textContent = 'Exit match';
+  });
+  gmExit.addEventListener('click', () => {
+    if (Game.winnerId === null && !gmExit.classList.contains('armed')) {
+      gmExit.classList.add('armed');
+      gmExit.textContent = 'Exit match?';
+      return;
+    }
+    leaveMatch();
   });
 
   // From a finished match, or out of a replay, to the main menu.

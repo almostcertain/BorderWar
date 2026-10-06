@@ -395,7 +395,22 @@ html, body {
   white-space: nowrap;
 }
 
-#musicBtn { padding: 6px 8px; }
+#musicBtn, #menuBtn { padding: 6px 8px; }
+
+/* Phones: the whole button row folds into one small menu button. Everywhere
+   else the menu is Escape. */
+#menuBtn {
+  display: none;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(11, 18, 32, 0.75);
+  cursor: pointer;
+}
+@media (pointer: coarse) {
+  #menuBtn { display: block; }
+  #pauseBtn, #musicBtn, #exitBtn { display: none !important; }
+}
+body.replaying #menuBtn { display: none !important; }
 
 :is(#pauseBtn, #musicBtn, #exitBtn):active { filter: brightness(0.85); }
 
@@ -1596,7 +1611,7 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 #optionsBtn:hover { opacity: 0.8; }
 body:has(#overlay.hidden) #optionsBtn { display: none; }
 
-#optionsOverlay, #accountOverlay, #manageOverlay, #installGuide {
+#gameMenu, #optionsOverlay, #accountOverlay, #manageOverlay, #installGuide {
   position: fixed;
   inset: 0;
   z-index: 12;
@@ -1834,3 +1849,9 @@ body.noHint #hint:not(.warn) { display: none; }
   .settingsGrid > :is(#startBtn, #hostStartBtn) { position: sticky; bottom: 0; z-index: 2; box-shadow: 0 0 0 8px rgba(56, 80, 104, 1); }
 }
 @media (max-width: 599px) { #overlay.modeOpen #modeHead { padding-right: 40px; } }
+
+/* --- In-game menu (Escape, or the corner button on phones) ------------------ */
+#gameMenu .optionsPanel { display: flex; flex-direction: column; gap: 10px; min-width: 240px; }
+#gameMenu .gmBtn { padding: 12px; font-size: 15px; font-weight: 700; border: 0; border-radius: 10px; background: rgba(255, 255, 255, 0.12); color: #fff; cursor: pointer; }
+#gameMenu .gmBtn:hover { background: rgba(255, 255, 255, 0.2); }
+#gameMenu .gmDanger.armed { background: rgba(215, 60, 60, 0.95); }

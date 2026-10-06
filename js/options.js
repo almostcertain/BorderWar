@@ -97,5 +97,5 @@ const Options = (function() {
   });
 
   apply();
-  return { get: key => values[key], set, perfFrame };
+  return { get: key => values[key], set, perfFrame, open: () => overlayEl.classList.remove('hidden') };
 })();
