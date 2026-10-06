@@ -224,6 +224,7 @@ Object.assign(Game, {
         if (biggest < 0) biggest = this.largestLandPiece(targetId);
         if (found.tiles.length >= biggest) continue;
         if (requireDominant && this.dominantWaller(found.wallCounts) !== byPlayerId) continue;
+        if (this.airdropHolds(targetId, found.tiles) || this.capitalHolds(targetId, found.tiles)) continue;
         regions.push(found.tiles);
       }
     }
@@ -247,10 +248,23 @@ Object.assign(Game, {
         let biggest = sweep.largest.get(targetId);
         if (biggest === undefined) { biggest = this.largestLandPiece(targetId); sweep.largest.set(targetId, biggest); }
         if (verdict.size >= biggest) continue;
-        regions.push(this.enclosedRegion(j, new Map(), 1).tiles);
+        const tiles = this.enclosedRegion(j, new Map(), 1).tiles;
+        if (this.airdropHolds(targetId, tiles) || this.capitalHolds(targetId, tiles)) continue;
+        regions.push(tiles);
       }
     }
     return regions;
+  },
+
+  // A nation's capital piece never falls to annexation, whatever its size.
+  // The mainland guard above protects only the LARGEST piece, so a nation
+  // whose paratroopers (or a beachhead) grew bigger than its homeland would
+  // otherwise lose a surrounded homeland outright (docs/paratroopers-spec.md
+  // Q15). Holds only while the owner still has the capital tile itself; once
+  // it is taken, the piece is judged like any other.
+  capitalHolds(ownerId, tiles) {
+    const cap = this.players[ownerId].capital;
+    return cap >= 0 && GameMap.owner[cap] === ownerId && tiles.includes(cap);
   },
 
   // Size of the largest 4-connected piece of `playerId`'s land — its mainland.

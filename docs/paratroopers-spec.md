@@ -1,6 +1,6 @@
 # Paratroopers — feature spec
 
-Status: **draft**. Q1, Q2, Q7 decided (2026-10-05); one plane with three roles decided (2026-10-05); allies targetable, checked at arrival (2026-10-05); pilot cost, 0% slider stop and ally-despawn refund decided (2026-10-05). The rest of §9 still uses proposed defaults.
+Status: **built** on `paratrooper` (2026-10-05); §8 notes what the build changed. Q15 decided: capitals are protected. Q1, Q2, Q7 decided (2026-10-05); one plane with three roles decided (2026-10-05); allies targetable, checked at arrival (2026-10-05); pilot cost, 0% slider stop and ally-despawn refund decided (2026-10-05). The rest of §9 still uses proposed defaults.
 Branch: `paratrooper`.
 
 ## 1. Summary
@@ -63,6 +63,7 @@ anywhere inland, not only on a coast.
 | # | Rule |
 |---|------|
 | R16 | A loaded plane that reaches **hostile-owned land** takes the drop tile for free, the same way a boat takes its landing tile. A normal attack against that nation then opens from the drop tile and behaves exactly like any border push: same combat, same terrain costs, can be retreated, can merge with other fronts. |
+| R16a | **A drop pocket isn't swallowed while it fights.** A drop lands as a one-tile island inside enemy land, which the "surrounded land falls for free" rule (`annex.js`) would otherwise hand straight back. While the drop's attack still has troops and isn't retreating, the pocket holding the drop tile can't be annexed. Once that attack ends, the pocket is ordinary land and falls if it's still surrounded. |
 | R17 | Planes are **one-way.** On arrival the plane is gone, whether it dropped troops, flew empty or couldn't drop. |
 
 ## 3. Flight
@@ -132,18 +133,20 @@ decoys arrive first and use up those guns' reloads.
 
 - **City button:** a small round plane icon that floats above each of the player's own level 2+ cities. On cooldown it shows a radial timer until the next plane is ready.
   - The button stays at least 40 px (CSS) across at every zoom level.
-  - It's hidden below a zoom threshold so it doesn't clutter the map. At that zoom the city's radial menu gets a Plane wedge instead (`radial.js`).
+  - It shows whenever structure icons do (`Render.structureIconsShown`), and is hidden when zoomed far out, where icons turn into dots. To launch, zoom in. (The draft's radial-menu fallback wasn't built: the radial menu only opens on other nations, not your own city.)
 - **Slider:** the existing attack-ratio slider, with a new 0% stop (it currently starts at 5%). At 0%, land attacks and boats are refused with the existing "Not enough troops" reason, and planes fly empty. The readout next to the slider shows "(empty)" at 0%.
 - **Targeting mode** (`input.js`): a crosshair cursor, plus a hover tint. Discovered hostile land is green, and discovered own/teammate land is red with the reason. Allied land is amber with "Allied: drop only happens if the alliance is broken before arrival". Undiscovered tiles get a neutral tint, because the cursor mustn't reveal anything. The banner shows the load, with a Cancel button so touch players have a way out without Esc.
 - **The plane** (`render.js`): one sprite for every plane. The owner sees a small troop count under it and a dashed line to the destination. Everyone else sees the bare sprite only. A health bar shows for everyone once it has taken damage.
-- **Anti-air range** (`render.js`): shown as a faint ring around one's own level 2+ buildings while targeting mode is on, and when hovering a building. Hidden otherwise to keep the map clean.
+- **Anti-air range** (`render.js`): while aiming a plane, a faint red ring around every visible gun that would fire on it (level 2+ structures of anyone not the player or an ally), so a route can be picked around them. Hidden otherwise. (The draft showed the player's own guns instead; the guns that threaten the plane are what aiming needs.)
 - **Notifications:** for the owner, "Plane shot down (−N troops)" or "Plane shot down (empty)", and "Drop failed: troops returned" when no drop happened. "Drop cancelled: still allied" when a plane despawns over an ally. For the defender, "Enemy plane shot down" without the load, and "Enemy paratroopers landed".
 
 ## 8. Implementation notes
 
 - **New sim module** `js/game/paratroopers.js`: `paraBlockReason`, `launchPlane(playerId, cityTile, destTile, troops)`, `stepPlanes`, `stepAntiAir`, `resolvePlaneArrival`. It adds `Game.planes` (an array, in insertion order) and `nextPlaneId`. Each city building gets a `paraReadyAt` timestamp (or equivalent) for its cooldown. A plane record is `{ id, owner, srcTile, destTile, troops, hp, born, duration, cell }`. `troops` is 0 for an empty plane.
 - **Tick order** in `core.js`: `stepAntiAir` runs before `stepPlanes`, so a plane shot down this tick never also arrives this tick. This is the same reasoning as SAM running before nukes.
-- **Reuse:** the drop branch should share the attack-seeding code with `resolveLanding` instead of copying it. Pull that code into a helper, for example `openBeachhead(attackerId, targetId, tile, troops)`.
+- **Reuse:** the drop and a boat's landing share `openBeachhead` in `naval.js`, extracted from `resolveLanding`. A drop's attack also carries `dropTile`, which is what `airdropHolds` (R16a) looks for.
+- **Where it lives:** sim in `js/game/paratroopers.js`; the annexation exemption hooks into `enclosedPocketsOf`/`sweepPocketsOf` in `annex.js`; plane troops count in `marchingTroops` (`economy.js`); tick order in `core.js`. UI in `ui.js` (city buttons, aiming bar, toasts), `render.js` (planes, tracers, rings, aim ghost); wire intent `launch_plane` in `js/net/`; outcome toasts via `Fx.planeEvent`.
+- **Verified:** matches that never launch a plane play out identically to before (`sim-harness neutral`; the only flagged difference is `aaFlashes` joining `COSMETIC_STATE`). Fog checks pass. Two runs with planes in flight produce identical hashes.
 - **Front merging:** check that `refreshFrontier` doesn't fold the inland drop into the attacker's main front against the same target too early. The boat code sets `landmassId` from the landing tile. An inland drop shares a landmass with the main front, so it may need its own front identity.
 - **Alliance check:** `resolvePlaneArrival` reads `areAllied(owner, destOwner)` at arrival only. Launch never checks it, and nothing in flight cancels a plane when an alliance forms or breaks.
 - **Fog safety:** `paraBlockReason` must never look at terrain or ownership for an undiscovered destination (R5). The Scout ship's `resolveScoutLaunch` is the model.
@@ -171,6 +174,7 @@ decoys arrive first and use up those guns' reloads.
 | Q12 | The fog-only Scout ship already exists. Keep it alongside the plane? | Keep it. The ship is persistent and sea-only; the plane is a one-way, cooldown-limited flyover. |
 | Q13 | Should planes fly back to their city after arriving instead of being one-way? | No, one-way (R17). A return trip would double the scouting value and the anti-air exposure. |
 | Q14 | When a plane despawns over a still-allied destination, what happens to its troops? | **Decided:** they come home minus 25%, the same as any other failed drop. |
+| Q15 | A drop that grows bigger than the player's homeland becomes their "main" territory, and the existing rule lets any surrounded piece smaller than the main one fall for free. A landlocked homeland can then be annexed outright by whoever surrounds it (seen in testing). Keep it, or protect the piece holding the player's capital? | **Decided:** protect the capital. Each nation's capital is the centre of its starting disc (`p.capital`). The piece holding it can't be annexed while the nation still owns that tile; the largest piece stays protected too. This applies to every match, planes or not. |
 
 ## 10. Acceptance checklist
 

@@ -310,24 +310,34 @@ Object.assign(Game, {
     // Fog of war: a landing is an attack, so the target has met the attacker.
     if (this.fog) this.markMet(boat.target, boat.attacker);
 
-    // A normal attack, seeded from the landing tile's own border — it's real
-    // owned territory now (setOwner just ran), so no special-casing is needed
-    // anywhere else; touchesPlayer already sees it.
-    // A beachhead is a real attack and gets a real attack id — the boat's own
-    // id dies with the landing, and the front it opens is separately
-    // cancellable from that moment on.
-    // landmassId is stamped from the landing tile itself, not left null, so a
-    // later click on this same island folds into the beachhead (same
-    // consolidation rule as launchAttack) instead of always opening a
-    // parallel front beside it.
-    const a = { id: this.nextAttackId++, attacker: boat.attacker, target: boat.target, troops: boat.troops,
+    this.openBeachhead(boat.attacker, boat.target, tile, boat.troops);
+  },
+
+  // A normal attack, seeded from the landing tile's own border — it's real
+  // owned territory now (setOwner already ran), so no special-casing is needed
+  // anywhere else; touchesPlayer already sees it. Shared by a boat's landing
+  // and a plane's drop (game/paratroopers.js).
+  // A beachhead is a real attack and gets a real attack id — the boat's own
+  // id dies with the landing, and the front it opens is separately
+  // cancellable from that moment on.
+  // landmassId is stamped from the landing tile itself, not left null, so a
+  // later click on this same island folds into the beachhead (same
+  // consolidation rule as launchAttack) instead of always opening a
+  // parallel front beside it.
+  // `airdrop` (planes only) stamps the attack with the tile it was dropped
+  // on, which keeps its pocket from being annexed while it fights — see
+  // Game.airdropHolds. Boat attacks never carry the field.
+  openBeachhead(attackerId, targetId, tile, troops, airdrop) {
+    const attacker = this.players[attackerId];
+    const a = { id: this.nextAttackId++, attacker: attackerId, target: targetId, troops,
                 heapTile: [], heapPrio: [], border: new Set(), landmassId: GameMap.landmassId[tile],
                 frontSeed: ((this.rng() * 0x7fffffff) | 0) || 1 };
+    if (airdrop) a.dropTile = tile;
     const nb = this.nbuf;
     const n = GameMap.neighbors(tile, nb);
     for (let k = 0; k < n; k++) {
       const j = nb[k];
-      if (GameMap.owner[j] === boat.target) {
+      if (GameMap.owner[j] === targetId) {
         a.border.add(j);
         this.heapPush(a, j, this.frontierPriority(j, a));
       }
@@ -336,7 +346,7 @@ Object.assign(Game, {
     // a third party while the boat was crossing) — the free tile is still
     // ours; the rest of the troops simply garrison it rather than vanish.
     if (a.heapTile.length > 0) this.attacks.push(a);
-    else attacker.troops += boat.troops;
+    else attacker.troops += troops;
   },
 
 });

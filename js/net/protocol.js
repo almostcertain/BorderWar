@@ -306,6 +306,15 @@ const Protocol = {
       openfront: 'MoveWarshipIntentSchema (single unitId there; a list here — '
         + 'this game shift-selects a fleet and moves it as one order)'
     },
+    launch_plane: {
+      // Ours (docs/paratroopers-spec.md). `city` is the level 2+ City the
+      // plane leaves from, `dst` the tile it flies to — any tile, fog
+      // included — and `troops` the slider's absolute load, which the sim
+      // flies empty when it is under PARA_MIN_TROOPS.
+      fields: { city: 'tile', dst: 'tile', troops: 'troops' },
+      from: 'ui.js Game.launchPlane',
+      openfront: null
+    },
     move_scout: {
       // Ours (fog of war, docs/fog-of-war.md). The same shape as move_warship
       // and a separate intent on purpose: a Scout may be sent to any tile,
@@ -524,6 +533,7 @@ const Protocol = {
     // that has already been queued for a turn.
     moveWarship(unitIds, tile) { return { type: 'move_warship', unitIds: unitIds.slice(), tile: tile }; },
     moveScout(unitIds, tile) { return { type: 'move_scout', unitIds: unitIds.slice(), tile: tile }; },
+    launchPlane(city, dst, troops) { return { type: 'launch_plane', city: city, dst: dst, troops: troops }; },
     annexRegion(tile) { return { type: 'annex_region', tile: tile }; },
     allianceRequest(recipient) { return { type: 'allianceRequest', recipient: recipient }; },
     allianceReject(requestor) { return { type: 'allianceReject', requestor: requestor }; },

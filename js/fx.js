@@ -59,6 +59,13 @@ const Fx = {
   // { toId, fromId, kind ('gold'|'troops'), amount, born } — same
   // append-in-order/prune-from-front contract as the popup lists.
   donationToasts: [],
+  // Plane outcomes (game/paratroopers.js): { kind, ownerId, otherId, tile,
+  // troops, born }. kind is 'shotdown' (otherId fired the gun), 'landed',
+  // 'allied' (turned away over a still-allied nation) or 'nodrop'. Recorded
+  // for every plane; UI.updatePlaneAlert decides who is told what, and never
+  // tells anyone but the owner what a plane carried.
+  PLANE_TOAST_LIFETIME: 3,
+  planeToasts: [],
 
   // Called from Game.init. Effects are per-match, same as everything they
   // decorate; carrying a previous match's popups into a new map would draw
@@ -67,6 +74,7 @@ const Fx = {
     this.goldPopups.length = 0;
     this.killPopups.length = 0;
     this.donationToasts.length = 0;
+    this.planeToasts.length = 0;
   },
 
   // Record the spoils of eliminating a nation/tribe/player over `tile`. Called
@@ -100,6 +108,14 @@ const Fx = {
     list.push({ toId, fromId, kind, amount, born });
   },
 
+  planeEvent(kind, ownerId, otherId, tile, troops) {
+    const born = Game.elapsed;
+    const list = this.planeToasts, life = this.PLANE_TOAST_LIFETIME;
+    let i = 0;
+    while (i < list.length && born - list[i].born >= life) i++;
+    if (i > 0) list.splice(0, i);
+    list.push({ kind, ownerId, otherId, tile, troops, born });
+  },
   pruneDonations(now) {
     const list = this.donationToasts, life = this.DONATION_TOAST_LIFETIME;
     let i = 0;

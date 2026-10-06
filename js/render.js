@@ -56,7 +56,7 @@ const Render = {
   // name labels at 70% of main-thread time (~19 fps). Each icon is rasterised
   // once per whole-pixel size into its own small canvas and stamped with
   // drawImage from then on, which every browser does cheaply.
-  ICON_NAMES: ['ally', 'teammate', 'target', 'traitor', 'embargo', 'expiring'],
+  ICON_NAMES: ['ally', 'teammate', 'target', 'traitor', 'embargo', 'expiring', 'plane'],
   iconImages: null,
   iconCache: new Map(),
 
@@ -992,6 +992,9 @@ const Render = {
     this.drawNukes();
     this.drawNukeBlasts();
     this.drawSamFlashes();
+    this.drawAntiAirRings();
+    this.drawAaFlashes();
+    this.drawPlanes(false);
     if (fog) {
       // Everything above is the world, and the fog goes over all of it:
       // whatever runs out past the discovered area (a range ring, a boat's
@@ -1012,6 +1015,7 @@ const Render = {
       }
       this.drawMirvs(true);
       this.drawNukes(true);
+      this.drawPlanes(true);
     }
     // Over the fog, because it marks where the player sent a scout, which may
     // well be in the black. Nothing to draw in a match without fog.
@@ -1630,6 +1634,7 @@ const Render = {
   // new one would link to. The rings centred on the cursor itself say nothing.
   drawPlacement() {
     if (!UI.placing || UI.placing === 'debugpeace' || UI.placeHover < 0) return;   // debugpeace has no ghost
+    if (UI.placing === 'plane') { this.drawPlaneAim(UI.placeHover); return; }
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
     const tile = UI.placeHover;
@@ -2905,6 +2910,195 @@ const Render = {
         ctx.fill();
       }
     }
+  },
+
+  // --- Planes (game/paratroopers.js) ----------------------------------------
+
+  // Whether the viewer is told what plane `pl` carries and where it is going:
+  // its owner and their teammates only. Everyone else sees an identical bare
+  // sprite whatever the load — the decoy rule (docs/paratroopers-spec.md).
+  planeIsFriendly(pl) {
+    return pl.owner === Game.me || Game.onSameTeam(Game.me, pl.owner);
+  },
+
+  // Planes in flight. Called twice in a fog match, like drawNukes: once under
+  // the fog for everyone else's (culled where the viewer can't see), and once
+  // over it for the viewer's own and their team's, which they always see.
+  drawPlanes(overFog) {
+    if (!Game.planes.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr, dpr = this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
+    const fog = this.fogged;
+    const size = Math.max(26 * dpr, Math.min(40 * dpr, s * 1.8));
+    const img = this.icon('plane', size);
+    for (const pl of Game.planes) {
+      const friendly = this.planeIsFriendly(pl);
+      if (fog && friendly !== !!overFog) continue;
+      if (!fog && overFog) continue;
+      const { x, y } = Game.planePos(pl, Game.renderElapsed);
+      if (fog && !friendly && this.fogHidesAt(x, y)) continue;
+      const px = (x + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (y + 0.5 - this.cam.y) * s + ch / 2;
+      const ex = (pl.dst % w + 0.5 - this.cam.x) * s + cw / 2;
+      const ey = (((pl.dst / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+
+      // Owner's view: a dashed course line and a ring on the destination.
+      if (friendly) {
+        ctx.setLineDash([6 * dpr, 5 * dpr]);
+        ctx.lineWidth = Math.max(1, dpr * 1.2);
+        ctx.strokeStyle = 'rgba(230, 240, 255, 0.75)';
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(ex, ey, Math.max(5 * dpr, s * 0.8), 0, Math.PI * 2);
+        ctx.strokeStyle = pl.troops > 0 ? 'rgba(255, 210, 120, 0.9)' : 'rgba(200, 220, 255, 0.8)';
+        ctx.lineWidth = Math.max(1.5, dpr * 1.5);
+        ctx.stroke();
+      }
+      if (px < -size || py < -size || px > cw + size || py > ch + size) continue;
+
+      // The sprite points east; turn it onto the course.
+      const sx = pl.src % w, sy = (pl.src / w) | 0;
+      const angle = Math.atan2(((pl.dst / w) | 0) - sy, pl.dst % w - sx);
+      if (img) {
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(angle);
+        ctx.drawImage(img, -size / 2, -size / 2, size, size);
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        ctx.arc(px, py, size / 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#e6ebf2';
+        ctx.fill();
+      }
+
+      // Health bar for everyone once it has taken a hit.
+      if (pl.hp < Game.PLANE_HP) {
+        const bw = size * 0.9, bh = Math.max(3, 3 * dpr);
+        const bx = px - bw / 2, by = py - size / 2 - bh - 2 * dpr;
+        ctx.fillStyle = 'rgba(8, 12, 20, 0.85)';
+        ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+        const f = Math.max(0, pl.hp / Game.PLANE_HP);
+        ctx.fillStyle = f > 0.5 ? '#7fe08a' : f > 0.25 ? '#ffc65a' : '#ff5a5a';
+        ctx.fillRect(bx, by, bw * f, bh);
+      }
+
+      // The load, for the owner only.
+      if (friendly) {
+        const label = pl.troops > 0 ? Math.floor(pl.troops).toLocaleString() : 'empty';
+        ctx.font = `700 ${Math.round(11 * dpr)}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.lineWidth = 3 * dpr;
+        ctx.strokeStyle = 'rgba(8, 12, 20, 0.9)';
+        ctx.lineJoin = 'round';
+        ctx.strokeText(label, px, py + size / 2);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, px, py + size / 2);
+      }
+    }
+  },
+
+  // Anti-air tracers: a short-lived line from the gun to where the plane was,
+  // red on a hit. Purely cosmetic (Game.aaFlashes).
+  drawAaFlashes() {
+    if (!Game.aaFlashes.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height;
+    const fog = this.fogged;
+    for (const f of Game.aaFlashes) {
+      if (fog && this.fogHidesAt(f.x, f.y) && this.fogHidesAt(f.fx, f.fy)) continue;
+      const t = Math.max(0, Math.min(1, (Game.renderElapsed - f.born) / Game.AA_FLASH_FX_DURATION));
+      const a = 1 - t;
+      const x0 = (f.fx + 0.5 - this.cam.x) * s + cw / 2, y0 = (f.fy + 0.5 - this.cam.y) * s + ch / 2;
+      const x1 = (f.x + 0.5 - this.cam.x) * s + cw / 2, y1 = (f.y + 0.5 - this.cam.y) * s + ch / 2;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
+      ctx.strokeStyle = f.hit ? `rgba(255, 90, 70, ${0.9 * a})` : `rgba(255, 240, 180, ${0.6 * a})`;
+      ctx.stroke();
+      if (f.hit) {
+        ctx.beginPath();
+        ctx.arc(x1, y1, Math.max(4 * this.dpr, s * 0.7) * (0.6 + t), 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 140, 60, ${0.7 * a})`;
+        ctx.fill();
+      }
+    }
+  },
+
+  // While a plane is being aimed: the reach of every gun the plane would
+  // face — any visible level 2+ structure not belonging to the viewer or an
+  // ally — so a route can be picked around the thick of it.
+  drawAntiAirRings() {
+    if (typeof UI === 'undefined' || UI.placing !== 'plane') return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
+    const fog = this.fogged;
+    ctx.lineWidth = Math.max(1, this.dpr);
+    for (const b of Game.buildings.values()) {
+      if (!Game.hasAntiAir(b)) continue;
+      const owner = GameMap.owner[b.tile];
+      if (owner < 0 || owner === Game.me || Game.areAllied(Game.me, owner)) continue;
+      if (fog && this.fogHides(b.tile)) continue;
+      const px = (b.tile % w + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (((b.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+      const rr = Game.aaRange(b.level) * s;
+      if (px + rr < 0 || py + rr < 0 || px - rr > cw || py - rr > ch) continue;
+      ctx.beginPath();
+      ctx.arc(px, py, rr, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 90, 70, 0.08)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 110, 90, 0.5)';
+      ctx.stroke();
+    }
+  },
+
+  // The aiming ghost: a course line from the launching city to the hovered
+  // tile and a marker on it — green for a drop or a scouting run, amber over
+  // an ally (the drop only happens if the alliance is broken first), red for
+  // a refusal, and plain over the black, which must never be judged.
+  drawPlaneAim(tile) {
+    const city = UI.planeCity;
+    if (city < 0) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr, dpr = this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
+    const troops = Math.floor(Game.players[Game.me].troops * UI.ratio);
+    const blind = this.fogged && this.fogHides(tile);
+    const reason = Game.planeBlockReason(Game.me, city, tile, troops);
+    const owner = GameMap.owner[tile];
+    let colour;
+    if (reason) colour = '255, 90, 90';
+    else if (blind) colour = '220, 225, 235';
+    else if (owner >= 0 && owner !== Game.me && Game.areAllied(Game.me, owner)) colour = '255, 190, 80';
+    else colour = '120, 230, 140';
+    const x0 = (city % w + 0.5 - this.cam.x) * s + cw / 2, y0 = (((city / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+    const x1 = (tile % w + 0.5 - this.cam.x) * s + cw / 2, y1 = (((tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+    ctx.setLineDash([6 * dpr, 5 * dpr]);
+    ctx.lineWidth = Math.max(1, dpr * 1.4);
+    ctx.strokeStyle = `rgba(${colour}, 0.8)`;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const r = Math.max(7 * dpr, s * 0.9);
+    ctx.beginPath();
+    ctx.arc(x1, y1, r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${colour}, 0.2)`;
+    ctx.fill();
+    ctx.lineWidth = Math.max(1.5, dpr * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x1 - r * 1.5, y1); ctx.lineTo(x1 - r * 0.5, y1);
+    ctx.moveTo(x1 + r * 0.5, y1); ctx.lineTo(x1 + r * 1.5, y1);
+    ctx.moveTo(x1, y1 - r * 1.5); ctx.lineTo(x1, y1 - r * 0.5);
+    ctx.moveTo(x1, y1 + r * 0.5); ctx.lineTo(x1, y1 + r * 1.5);
+    ctx.stroke();
   },
 
   // The live shift-drag marquee rectangle — see Input's `selecting` state.

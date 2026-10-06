@@ -224,6 +224,13 @@ const Executor = {
       return Game.launchNavalInvasion(playerId, it.dst, it.troops);
     },
 
+    // Game.launchPlane (game/paratroopers.js). Both tiles travel raw; the sim
+    // checks the city and never reads the fog under `dst`.
+    launch_plane(playerId, it) {
+      if (!Executor._tileOnMap(it.city) || !Executor._tileOnMap(it.dst)) return false;
+      return Game.launchPlane(playerId, it.city, it.dst, it.troops);
+    },
+
     // ui.js:792 Game.retreatBoat.
     cancel_boat(playerId, it) {
       const b = Executor._boat(it.boatID, playerId);

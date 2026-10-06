@@ -34,6 +34,9 @@ const UI = {
   dismissed: new Set(),
 
   placing: null,      // structure type armed for placement, if any
+  // While placing === 'plane': the level 2+ City the plane leaves from
+  // (docs/paratroopers-spec.md). -1 otherwise.
+  planeCity: -1,
   placeHover: -1,     // tile under the cursor while armed (mouse only)
   flashText: '',
   flashUntil: 0,
@@ -96,6 +99,15 @@ const UI = {
       this.updateRatioTroops();
     });
     this.resetRatio();
+
+    // Planes: the targeting bar's Cancel (touch players have no Esc), and the
+    // floating buttons over level 2+ cities, delegated because they are
+    // created and dropped as cities come and go.
+    document.getElementById('planeCancel').addEventListener('click', () => this.cancelPlacing());
+    document.getElementById('planeButtons').addEventListener('click', e => {
+      const btn = e.target.closest('.planeBtn');
+      if (btn) this.armPlane(+btn.dataset.tile);
+    });
 
     document.getElementById('diploYes').addEventListener('click', () => {
       if (this.diplo) { this.diplo.accept(); this.diplo = null; }
@@ -313,6 +325,7 @@ const UI = {
     this.placeHover = -1;
     this.debugNukeType = null;
     this.debugNukeSrc = -1;
+    this.planeCity = -1;
     return wasArmed;
   },
 
@@ -321,6 +334,7 @@ const UI = {
     if (!Game.running) return;
     this.placing = this.placing === type ? null : type;
     this.placeHover = -1;
+    this.planeCity = -1;
     this.clearShipSelection();
     if (this.placing) { Radial.hide(); this.hideHoverPanel(); }
   },
@@ -572,8 +586,9 @@ const UI = {
   // and every update() tick (troops change on their own between drags).
   updateRatioTroops() {
     const troops = this._meTroops || 0;
-    document.getElementById('ratioTroops').textContent =
-      '(' + Math.floor(troops * this.ratio).toLocaleString() + ')';
+    // 0% is the plane's empty-plane stop (docs/paratroopers-spec.md).
+    document.getElementById('ratioTroops').textContent = this.ratio === 0 ? '(empty)'
+      : '(' + Math.floor(troops * this.ratio).toLocaleString() + ')';
   },
 
   updateSpawnBanner() {
@@ -740,6 +755,26 @@ const UI = {
           : Game.areAllied(owner, Game.me) ? 'Already allied'
           : 'Offer already pending');
       }
+      return;
+    }
+
+    // Plane (docs/paratroopers-spec.md): the tap is the destination. Any tile
+    // will do, the black included, so like the Scout nothing here may react
+    // to what an undiscovered tile is; planeBlockReason only refuses
+    // discovered tiles. Refusals about this tile keep the cursor armed so the
+    // player can pick again; anything else (cooldown, troops, the city lost)
+    // disarms.
+    if (this.placing === 'plane') {
+      const tile = Render.screenToTile(sx, sy);
+      const troops = Math.floor(Game.players[Game.me].troops * this.ratio);
+      const reason = Game.planeBlockReason(Game.me, this.planeCity, tile, troops);
+      if (reason) {
+        this.flash(reason, 'plane');
+        if (reason !== 'Off the map' && reason !== 'Your own land' && reason !== 'Teammate') this.cancelPlacing();
+        return;
+      }
+      Transport.sendIntent(Protocol.intent.launchPlane(this.planeCity, tile, troops));
+      this.cancelPlacing();
       return;
     }
 
@@ -999,6 +1034,9 @@ const UI = {
     // view state and its value travels inside the intent (§4).
     const me = Game.players[Game.me];
     const troops = Math.floor(me.troops * this.ratio);
+    // The slider's 0% stop exists for empty planes; a land attack or boat
+    // with nobody aboard would be refused anyway, so say why here.
+    if (this.ratio === 0) { this.flash('Slider is at 0% · raise it to attack'); return; }
 
     // Quick boat (ticket #27): a tap on a target we don't touch by land on
     // that landmass, but that sits a short sail from our coast, sends the
@@ -1144,6 +1182,9 @@ const UI = {
 
     this.updateNukeAlert();
     this.updateDonationAlert();
+    this.updatePlaneAlert();
+    this.updatePlaneBar(me);
+    this.updatePlaneButtons(me);
     this.updateBanner();
     this.updateBuildBar(me);
     this.updateFronts();
@@ -1363,6 +1404,8 @@ const UI = {
         ? 'Build a Missile Silo first to unlock the ' + def.name + ' · Esc to cancel'
         : 'Tap anywhere to strike with ' + article + ' ' + def.name + ' from your nearest ready Silo · ' +
           formatGold(Game.unitCost(me, this.placing)) + ' gold · Esc to cancel';
+    } else if (this.placing === 'plane') {
+      hintEl.textContent = 'Tap where the plane should fly, even into the dark · Esc to cancel';
     } else if (this.placing === 'debugpeace') {
       hintEl.textContent = '[DEBUG] Tap a nation to make it offer you peace · Esc to cancel';
     } else if (this.placing === 'debugnuke') {
@@ -1658,6 +1701,137 @@ const UI = {
     if (row._name === name) return;
     row._name = name;
     row._textEl.innerHTML = `${iconHtml(icon)} ${what} incoming from ${escapeHtml(name)}!`;
+  },
+
+  // --- Planes (docs/paratroopers-spec.md) ---------------------------------
+
+  // A city button was tapped: arm the targeting cursor from that city, or put
+  // it away if it was already armed from there.
+  armPlane(cityTile) {
+    if (!Game.running) return;
+    if (this.placing === 'plane' && this.planeCity === cityTile) { this.cancelPlacing(); return; }
+    const troops = Math.floor(Game.players[Game.me].troops * this.ratio);
+    const reason = Game.planeLaunchBlockReason(Game.me, cityTile, troops);
+    if (reason) { this.flash(reason, 'plane'); return; }
+    if (this.placing !== 'plane') this.togglePlacing('plane');
+    this.planeCity = cityTile;
+  },
+
+  // The bar over the slider while a plane is armed: what is going, with a
+  // Cancel button. Live with the slider, since the load is read at tap time.
+  // Also disarms if the launching city is lost or drops below level 2.
+  updatePlaneBar(me) {
+    if (this.placing === 'plane' && !Game.planeCity(Game.me, this.planeCity)) this.cancelPlacing();
+    const armed = this.placing === 'plane';
+    document.getElementById('planeBar').classList.toggle('hidden', !armed);
+    Render.canvas.classList.toggle('aiming', armed);
+    if (!armed) return;
+    const load = Game.planeLoad(Math.floor(me.troops * this.ratio));
+    const text = load > 0
+      ? 'Plane · ' + Math.floor(load).toLocaleString() + ' troops · tap a drop zone'
+      : 'Plane · empty (scout / decoy) · tap a destination';
+    const el = document.getElementById('planeBarText');
+    if (el._text !== text) { el._text = text; el.innerHTML = iconHtml('plane') + ' ' + escapeHtml(text); }
+  },
+
+  // How often to rescan which cities get a button; positions update every
+  // frame in between.
+  PLANE_BTN_RESCAN_MS: 250,
+
+  // One round button floating over each of the player's own level 2+ cities,
+  // with a cooldown sweep until the next plane is ready. Shown with the
+  // structure icons (Render.structureIconsShown): zoomed far out the icons
+  // become dots and the buttons would carpet the map. Diffed per city, never
+  // rewritten wholesale, so a tap is never lost to a rebuild.
+  updatePlaneButtons(me) {
+    const root = document.getElementById('planeButtons');
+    const show = Game.running && me.alive && !!Render.cam && Render.structureIconsShown();
+    const now = performance.now();
+    if (!this._planeBtns) this._planeBtns = new Map();
+    const btns = this._planeBtns;
+    if (!show) {
+      root.classList.add('hidden');
+      return;
+    }
+    root.classList.remove('hidden');
+    if (!this._planeScanAt || now - this._planeScanAt > this.PLANE_BTN_RESCAN_MS) {
+      this._planeScanAt = now;
+      const keep = new Set();
+      for (const b of Game.buildings.values()) {
+        if (b.type === 'city' && Game.planeCity(Game.me, b.tile)) keep.add(b.tile);
+      }
+      for (const [tile, el] of btns) if (!keep.has(tile)) { el.remove(); btns.delete(tile); }
+      for (const tile of keep) {
+        if (btns.has(tile)) continue;
+        const el = document.createElement('button');
+        el.type = 'button';
+        el.className = 'planeBtn';
+        el.dataset.tile = tile;
+        el.title = 'Send a plane';
+        el.innerHTML = iconHtml('plane');
+        root.appendChild(el);
+        btns.set(tile, el);
+      }
+    }
+
+    const s = Render.cam.scale, w = GameMap.width;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    // Clear of the structure's own disc.
+    const lift = Render.structureRadius() * 0.5 + 26;
+    for (const [tile, el] of btns) {
+      const x = (tile % w + 0.5 - Render.cam.x) * s + vw / 2;
+      const y = (((tile / w) | 0) + 0.5 - Render.cam.y) * s + vh / 2 - lift;
+      const off = x < -40 || y < -40 || x > vw + 40 || y > vh + 40;
+      el.style.display = off ? 'none' : '';
+      if (off) continue;
+      el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -50%)`;
+      const left = Game.planeCooldownLeft(tile);
+      el.style.setProperty('--cd', left > 0 ? (left / Game.PARA_COOLDOWN).toFixed(3) : '0');
+      el.classList.toggle('cooling', left > 0);
+      el.classList.toggle('armed', this.placing === 'plane' && this.planeCity === tile);
+    }
+  },
+
+  // Plane outcomes from Fx.planeToasts, filtered to what this viewer may
+  // know. The load is only ever named to the plane's own owner (the decoy
+  // rule); a defender learns a plane was downed or landed, never its size.
+  // Returns [text, bad] or null.
+  planeToastText(e) {
+    const me = Game.me;
+    const troops = Math.floor(e.troops).toLocaleString();
+    if (e.ownerId === me) {
+      if (e.kind === 'shotdown') return [e.troops > 0 ? 'Plane shot down · ' + troops + ' troops lost' : 'Plane shot down (empty)', true];
+      if (e.kind === 'landed') return ['Paratroopers landed · ' + troops + ' troops', false];
+      if (e.kind === 'allied') return ['Drop cancelled: still allied with ' + this.nameOf(e.otherId, 'them') + ' · troops returned', true];
+      if (e.kind === 'nodrop') return ['Nothing to drop on there · troops returned', true];
+      return null;
+    }
+    if (e.otherId === me && e.kind === 'shotdown') return ['Shot down a plane from ' + this.nameOf(e.ownerId, 'unknown'), false];
+    if (e.otherId === me && e.kind === 'landed') return ['Enemy paratroopers landed!', true];
+    return null;
+  },
+
+  updatePlaneAlert() {
+    const el = document.getElementById('planeAlert');
+    const prev = this._planeRowByRef || new Map();
+    const next = new Map();
+    const life = Fx.PLANE_TOAST_LIFETIME;
+    for (const e of Fx.planeToasts) {
+      if (Game.elapsed - e.born >= life) continue;
+      let row = prev.get(e);
+      if (!row) {
+        const t = this.planeToastText(e);
+        if (!t) continue;
+        row = document.createElement('div');
+        row.className = 'planeAlertRow' + (t[1] ? ' bad' : '');
+        row.innerHTML = `<span class="donationAlertText">${iconHtml('plane')} ${escapeHtml(t[0])}</span>`;
+      }
+      next.set(e, row);
+    }
+    for (const [ref, row] of prev) if (!next.has(ref)) row.remove();
+    for (const row of next.values()) if (row.parentNode !== el) el.appendChild(row);
+    el.classList.toggle('hidden', next.size === 0);
+    this._planeRowByRef = next.size ? next : null;
   },
 
   // Ticket #36: a toast whenever a teammate donates gold or troops to you.

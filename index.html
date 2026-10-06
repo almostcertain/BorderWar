@@ -11,6 +11,8 @@
 </head>
 <body>
 <canvas id="game"></canvas>
+<!-- Plane buttons over the player's level 2+ cities (UI.updatePlaneButtons). -->
+<div id="planeButtons"></div>
 
 <div id="topbar">
   <div id="leaderboard"></div>
@@ -86,6 +88,7 @@
 <div id="hud">
   <div id="nukeAlert" class="hidden"></div>
   <div id="donationAlert" class="hidden"></div>
+  <div id="planeAlert" class="hidden"></div>
   <div id="diploBanner" class="hidden">
     <span id="diploText"></span>
     <button id="diploYes">Accept</button>
@@ -106,9 +109,13 @@
     </div>
     <div id="goldChip"><span class="hpIcon"><img class="ic" src="assets/icons/gold.svg" alt="" draggable="false"></span><span id="goldValue">0</span></div>
   </div>
+  <div id="planeBar" class="hidden">
+    <span id="planeBarText"></span>
+    <button id="planeCancel" type="button">Cancel</button>
+  </div>
   <div id="ratioRow">
     <span id="ratioLabel"><span id="ratioValue">20%</span> <span id="ratioTroops"></span></span>
-    <input id="ratio" type="range" min="5" max="100" step="5" value="20">
+    <input id="ratio" type="range" min="0" max="100" step="5" value="20">
   </div>
   <div id="buildBar"></div>
   <div id="hint">Tap land to attack · right-click or hold a nation for diplomacy · drag to pan</div>
@@ -395,7 +402,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'menubg', 'options', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/paratroopers', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'menubg', 'options', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

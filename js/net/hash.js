@@ -51,7 +51,7 @@ const Hash = {
   // only mixed in there. They are the one ship type in the digest because
   // they are the one that writes vision state as it moves.
   INPUT_FIELDS: ['ticks', 'players', 'attacks', 'running', 'spawning', 'winnerId',
-    'visionCount', 'visionMet', 'visionShare', 'visionCells', 'visionStamped', 'scouts'],
+    'visionCount', 'visionMet', 'visionShare', 'visionCells', 'visionStamped', 'scouts', 'planes'],
 
   // Sample every Nth tile of GameMap.owner.
   //
@@ -207,6 +207,24 @@ const Hash = {
         const search = Game.scoutSearch;
         u32(search ? search.scoutId : -1);
         u32(search ? search.nodes : 0);
+      }
+    }
+
+    // Planes (game/paratroopers.js). Mixed only while one is in the air, so a
+    // match nobody launches a plane in digests exactly as it did before planes
+    // existed. Position is a pure function of born/duration, so those stand
+    // in for it.
+    if (uses('planes') && Game.planes.length) {
+      const planes = Game.planes;
+      u32(planes.length);
+      for (let i = 0; i < planes.length; i++) {
+        const pl = planes[i];
+        u32(pl.id);
+        u32(pl.owner);
+        u32(pl.dst);
+        u32(pl.hp);
+        num(Math.round(pl.troops));
+        num(Math.round(pl.born * 10));
       }
     }
 

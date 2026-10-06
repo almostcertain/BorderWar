@@ -132,7 +132,9 @@ const Game = {
   // in the sim ever reads back — only UI.checkEndGame does — even though
   // eliminatePlayer computes placements off shared, Game.me-blind player
   // state so every client would agree on it anyway.
-  COSMETIC_STATE: ['nukeBlasts', 'samFlashes', 'nationCount', 'placements'],
+  // aaFlashes (game/paratroopers.js) are anti-air tracers, the same kind of
+  // write-only presentation as samFlashes.
+  COSMETIC_STATE: ['nukeBlasts', 'samFlashes', 'nationCount', 'placements', 'aaFlashes'],
   // Per-tick sea-route scratch (see tick() and nearestCoastPath). Empty and
   // false between ticks.
   _inTick: false,
@@ -473,6 +475,10 @@ const Game = {
         targets: [],
         traitorUntil: 0,
         betrayals: 0,
+        // The centre of this player's starting disc (claimStart), -1 until
+        // they have one. The piece of land holding it can never be annexed
+        // while they still own it — see Game.capitalHolds in annex.js.
+        capital: -1,
         // When and by whom a fresh front (land or boat) last opened on this
         // player — AI.freshFrontLocked stops other nations piling on at once.
         frontOpenedAt: -Infinity,
@@ -499,6 +505,8 @@ const Game = {
     this.initVision();
     // Fog of war's Scouts (game/scouts.js): an empty list every match.
     this.initScouts();
+    // Planes and anti-air (game/paratroopers.js): empty every match.
+    this.initPlanes();
 
     // Spawn-pick phase: every Nation/Tribe claims a provisional starting disc
     // immediately, then keeps re-rolling it to a new nearby spot every
@@ -707,6 +715,8 @@ const Game = {
     const rSq = 29;
     const w = GameMap.width;
     const cx = center % w, cy = (center / w) | 0;
+    // Spawn-phase re-rolls claim again, so the last claim is the capital.
+    this.players[playerId].capital = center;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (dx * dx + dy * dy > rSq) continue;
@@ -957,6 +967,11 @@ const Game = {
     // Fog of war's Scouts (game/scouts.js). None can exist with fog off.
     if (this.fog) this.stepScouts();
     this.stepShells();
+    // Planes (game/paratroopers.js). Anti-air first, so a plane shot down this
+    // tick never also lands this tick — the same ordering as stepSAMs before
+    // stepNukes below.
+    this.stepAntiAir();
+    this.stepPlanes();
     // Must run before stepSAMs/stepNukes: a MIRV that splits this tick has
     // to land its fresh MIRVWarhead entries in this.nukes before either one
     // runs, so a warhead can be shot down or can detonate the very same tick

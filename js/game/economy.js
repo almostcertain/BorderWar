@@ -98,6 +98,7 @@ Object.assign(Game, {
     let n = 0;
     for (const a of this.attacks) if (a.attacker === playerId) n += a.troops;
     for (const b of this.boats) if (b.attacker === playerId) n += b.troops;
+    for (const pl of this.planes) if (pl.owner === playerId) n += pl.troops;
     return n;
   },
 
