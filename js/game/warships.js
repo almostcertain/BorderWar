@@ -53,7 +53,15 @@ Object.assign(Game, {
   WARSHIP_REPATH_INTERVAL: 5,             // seconds between patrol-wander waypoint picks
   WARSHIP_CHASE_REPATH: 1.5,              // seconds between trade-ship-chase path refreshes
   WARSHIP_SNAP_MAX_DIST: 8,               // AI.warshipSite's own coast-to-water snap distance
-  MAX_WARSHIPS_PER_PLAYER: 6,             // keeps per-tick seaPath calls (patrol/chase) bounded
+  // Repair and retreat — Config.ts warshipRetreatHealthPercent / DockingRange /
+  // PassiveHealing(+Range) / PortHealingBonusPerLevel, in this game's tiles
+  // and 10 ticks/sec (OpenFront's ticks are the same 10/sec).
+  WARSHIP_RETREAT_HEALTH_PCT: 75,         // below this % of max health a patrolling warship heads for a Port
+  WARSHIP_DOCK_RANGE: 5,                  // within this of the Port it docks
+  WARSHIP_PASSIVE_HEAL: 1,                // hp/tick while within PASSIVE_HEAL_RANGE of any own Port
+  WARSHIP_PASSIVE_HEAL_RANGE: 150,
+  WARSHIP_DOCK_HEAL_PER_LEVEL: 5,         // hp/tick pool per Port level, split among the ships docked there
+  WARSHIP_RETREAT_BLOCK: 5,               // seconds after a manual order during which it won't retreat (50 ticks)
 
   // Float tile-space position of anything shaped like a boat/trade ship/
   // warship — {path: [tile,...], pos: float index along it} — interpolating
@@ -170,11 +178,6 @@ Object.assign(Game, {
     }
     if (ports.length === 0) return { ok: false, reason: 'Build a Port first' };
 
-    let myWarships = 0;
-    for (const w of this.warships) if (w.owner === playerId) myWarships++;
-    if (myWarships >= this.MAX_WARSHIPS_PER_PLAYER) {
-      return { ok: false, reason: 'Warship limit reached' };
-    }
     if (p.gold < this.unitCost(p, 'warship')) return { ok: false, reason: 'Not enough gold' };
 
     // Fog of war: a warship can only be ordered to discovered water. The click
@@ -244,6 +247,7 @@ Object.assign(Game, {
       ordered: true,
       health: this.WARSHIP_MAX_HEALTH, maxHealth: this.WARSHIP_MAX_HEALTH,
       target: null, targetKind: null,
+      state: 'patrolling', retreatPort: -1, retreatBlockUntil: 0, healRemainder: 0,
       lastShellAt: -Infinity, lastPathAt: this.elapsed
     });
     if (this.fog) this.warshipReveal(this.warships[this.warships.length - 1]);
@@ -283,6 +287,8 @@ Object.assign(Game, {
       w.patrolTile = tile;
       w.ordered = true;
       w.target = null; w.targetKind = null;
+      w.state = 'patrolling'; w.retreatPort = -1; w.healRemainder = 0;
+      w.retreatBlockUntil = this.elapsed + this.WARSHIP_RETREAT_BLOCK;
       w.lastPathAt = this.elapsed;
       moved = true;
     }
@@ -313,7 +319,7 @@ Object.assign(Game, {
 
     best = null; bestDist = Infinity;
     for (const ow of this.warships) {
-      if (ow === w || ow.owner === w.owner || this.areAllied(w.owner, ow.owner)) continue;
+      if (ow === w || ow.owner === w.owner || ow.state === 'docked' || this.areAllied(w.owner, ow.owner)) continue;
       const op = this.pathPos(ow);
       const d = (op.x - pos.x) ** 2 + (op.y - pos.y) ** 2;
       if (d <= rangeSq && d < bestDist) { best = ow; bestDist = d; }
@@ -451,6 +457,9 @@ Object.assign(Game, {
     const curTile = w.path[idx];
     const pos = this.pathPos(w);
     const rangeSq = this.WARSHIP_TARGET_RANGE * this.WARSHIP_TARGET_RANGE;
+    const healthBefore = w.health;
+
+    this.warshipHeal(w, curTile);
 
     if (w.target) {
       const kind = w.targetKind;
@@ -460,9 +469,23 @@ Object.assign(Game, {
         const tp = this.pathPos(w.target);
         const d = (tp.x - pos.x) ** 2 + (tp.y - pos.y) ** 2;
         const ownerOf = kind === 'boat' ? w.target.attacker : w.target.owner;
-        ok = d <= rangeSq && ownerOf !== w.owner && !this.areAllied(w.owner, ownerOf);
+        ok = d <= rangeSq && ownerOf !== w.owner && !this.areAllied(w.owner, ownerOf) &&
+          !(kind === 'warship' && w.target.state === 'docked');
       }
       if (!ok) { w.target = null; w.targetKind = null; }
+    }
+
+    // Docked: sits in the Port healing, untargetable, until full health or its
+    // Port is gone (WarshipExecution.tick's docked branch).
+    if (w.state === 'docked') {
+      if (!this.warshipRetreatPort(w) || w.health >= w.maxHealth) this.warshipCancelRetreat(w);
+      else { w.target = null; w.targetKind = null; return; }
+    }
+
+    if (w.state === 'retreating') {
+      if (this.warshipRetreat(w, curTile, pos, rangeSq)) return;
+    } else if (this.warshipShouldRetreat(w, healthBefore)) {
+      if (this.warshipStartRetreat(w, curTile) && this.warshipRetreat(w, curTile, pos, rangeSq)) return;
     }
 
     if (w.ordered && w.pos >= w.path.length - 1) w.ordered = false;
@@ -487,6 +510,140 @@ Object.assign(Game, {
       return;
     }
     this.warshipPatrol(w, curTile);
+  },
+
+  // --- Repair and retreat (WarshipExecution healWarship / handleRepairRetreat) ---
+
+  // A player's built, owned Ports, in Game.buildings insertion order.
+  warshipPorts(playerId) {
+    const ports = [];
+    for (const b of this.buildings.values()) {
+      if (b.type === 'port' && b.built && GameMap.owner[b.tile] === playerId) ports.push(b);
+    }
+    return ports;
+  },
+
+  // The Port a retreating/docked ship is bound for, or null if it is gone.
+  warshipRetreatPort(w) {
+    if (w.retreatPort < 0) return null;
+    for (const b of this.warshipPorts(w.owner)) if (b.tile === w.retreatPort) return b;
+    return null;
+  },
+
+  // Ships docked at `port`: the Port's capacity is its level.
+  warshipsDockedAt(port, except) {
+    let n = 0;
+    const owner = GameMap.owner[port.tile];
+    for (const o of this.warships) {
+      if (o !== except && o.owner === owner && o.state === 'docked' && o.retreatPort === port.tile) n++;
+    }
+    return n;
+  },
+
+  // +1 hp/tick anywhere within range of an own Port; docked ships also share
+  // the Port's pool (level * 5 hp/tick) between them, with the fraction carried.
+  warshipHeal(w, curTile) {
+    if (w.health >= w.maxHealth) return;
+    const ports = this.warshipPorts(w.owner);
+    const r2 = this.WARSHIP_PASSIVE_HEAL_RANGE * this.WARSHIP_PASSIVE_HEAL_RANGE;
+    for (const b of ports) {
+      if (this.tileDistSq(curTile, b.tile) <= r2) { w.health += this.WARSHIP_PASSIVE_HEAL; break; }
+    }
+    if (w.state === 'docked') {
+      const port = ports.find(b => b.tile === w.retreatPort);
+      if (port) {
+        const n = this.warshipsDockedAt(port, null);
+        if (n > 0) {
+          w.healRemainder += port.level * this.WARSHIP_DOCK_HEAL_PER_LEVEL / n;
+          const whole = Math.floor(w.healRemainder);
+          w.healRemainder -= whole;
+          w.health += whole;
+        }
+      }
+    }
+    if (w.health > w.maxHealth) w.health = w.maxHealth;
+  },
+
+  warshipShouldRetreat(w, healthBefore) {
+    if (this.elapsed < w.retreatBlockUntil) return false;
+    if (healthBefore >= Math.floor(w.maxHealth * this.WARSHIP_RETREAT_HEALTH_PCT / 100)) return false;
+    return this.warshipPorts(w.owner).length > 0;
+  },
+
+  // Nearest own Port with free dock space that this ship can actually sail to,
+  // with the route. `except` is the ship itself so its own berth doesn't count.
+  warshipFindPort(w, curTile) {
+    const ports = this.warshipPorts(w.owner).filter(b => this.warshipsDockedAt(b, w) < b.level);
+    ports.sort((a, c) => this.tileDistSq(a.tile, curTile) - this.tileDistSq(c.tile, curTile));
+    for (let i = 0; i < Math.min(ports.length, this.WARSHIP_LAUNCH_PORT_ATTEMPTS); i++) {
+      const path = this.seaPath([curTile], ports[i].tile);
+      if (path) return { port: ports[i], path };
+    }
+    return null;
+  },
+
+  warshipStartRetreat(w, curTile) {
+    const r = this.warshipFindPort(w, curTile);
+    if (!r) return false;
+    w.state = 'retreating';
+    w.retreatPort = r.port.tile;
+    w.path = r.path; w.pos = 0;
+    w.ordered = false;
+    w.healRemainder = 0;
+    w.target = null; w.targetKind = null;
+    return true;
+  },
+
+  warshipCancelRetreat(w) {
+    w.state = 'patrolling';
+    w.retreatPort = -1;
+    w.healRemainder = 0;
+    w.ordered = false;
+    w.target = null; w.targetKind = null;
+    w.path = [w.path[Math.min(w.path.length - 1, Math.floor(w.pos))]];
+    w.pos = 0;
+    w.lastPathAt = this.elapsed;
+  },
+
+  // One tick of retreating. Fires back at a boat or warship in range while it
+  // runs (never chases, never stops for a trade ship), docks inside the dock
+  // range if the Port has room, and re-routes if the Port is lost or full.
+  // Returns true when it handled the tick.
+  warshipRetreat(w, curTile, pos, rangeSq) {
+    if (!w.target) {
+      this.warshipAcquireTarget(w, pos, rangeSq);
+      if (w.targetKind === 'tradeship') { w.target = null; w.targetKind = null; }
+    }
+    if (w.target) this.warshipShootAt(w);
+
+    let port = this.warshipRetreatPort(w);
+    if (port && this.warshipsDockedAt(port, w) >= port.level) port = null;
+    if (!port) {
+      const r = this.warshipFindPort(w, curTile);
+      if (!r) { this.warshipCancelRetreat(w); return false; }
+      port = r.port;
+      w.retreatPort = port.tile;
+      w.path = r.path; w.pos = 0;
+    }
+
+    const d2 = this.tileDistSq(curTile, port.tile);
+    if (d2 <= this.WARSHIP_DOCK_RANGE * this.WARSHIP_DOCK_RANGE) {
+      w.state = 'docked';
+      w.target = null; w.targetKind = null;
+      return true;
+    }
+    if (w.pos >= w.path.length - 1) {
+      // Path spent but not within dock range: re-route once per repath interval.
+      if (this.elapsed - w.lastPathAt >= this.WARSHIP_CHASE_REPATH) {
+        const path = this.seaPath([curTile], port.tile);
+        if (path) { w.path = path; w.pos = 0; }
+        else { this.warshipCancelRetreat(w); return false; }
+        w.lastPathAt = this.elapsed;
+      }
+      return true;
+    }
+    w.pos = Math.min(w.path.length - 1, w.pos + this.WARSHIP_SPEED * this.TICK_DT);
+    return true;
   },
 
   // Advances every in-flight shell (see warshipShootAt) by re-homing on its

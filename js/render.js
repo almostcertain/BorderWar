@@ -2687,11 +2687,19 @@ const Render = {
       ctx.save();
       ctx.translate(px, py);
 
+      // Aggro: while the ship has a live target (read-only look at sim state)
+      // its hull flashes red and white, so a fight is readable at a glance.
+      const aggro = !!w.target;
+      const flash = aggro && (((performance.now() / 250) | 0) & 1) === 0;
       ctx.beginPath();
       ctx.arc(0, 0, r * 0.95, 0, Math.PI * 2);
-      ctx.fillStyle = `rgb(${(col[0] * 0.55) | 0}, ${(col[1] * 0.55) | 0}, ${(col[2] * 0.55) | 0})`;
+      ctx.fillStyle = aggro
+        ? (flash ? '#e53935' : '#f5f5f5')
+        : `rgb(${(col[0] * 0.55) | 0}, ${(col[1] * 0.55) | 0}, ${(col[2] * 0.55) | 0})`;
       ctx.fill();
-      ctx.strokeStyle = `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
+      ctx.strokeStyle = aggro
+        ? (flash ? '#f5f5f5' : '#e53935')
+        : `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
       ctx.lineWidth = Math.max(1.2, r * 0.16);
       ctx.stroke();
 
@@ -2699,10 +2707,18 @@ const Render = {
       // used, just circular now.
       ctx.beginPath();
       ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
-      ctx.strokeStyle = '#ffffff';
+      ctx.strokeStyle = aggro && !flash ? '#e53935' : '#ffffff';
       ctx.lineWidth = Math.max(1, r * 0.14);
       ctx.stroke();
       ctx.restore();
+
+      // Repair: a green + beside the bar while it runs for, or sits in, a Port.
+      if (w.state === 'retreating' || w.state === 'docked') {
+        ctx.fillStyle = '#7ee787';
+        ctx.font = `bold ${Math.max(9, r * 1.4) | 0}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(w.state === 'docked' ? '+' : '\u2192+', px, py - r * 1.8);
+      }
 
       // Health bar: only once damaged, matching the rest of the HUD's
       // "only surface what's changed from the default" restraint.

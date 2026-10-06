@@ -695,8 +695,7 @@ const AI = {
     // deliberate user design request, not an OpenFront fidelity thing),
     // checked here too so a bot without one skips straight past instead of
     // wasting a coastalTiles scan on a purchase that's going to fail anyway.
-    if (Game.unitsOwned(p, 'port') >= 1 && spendable('warship') >= Game.unitCost(p, 'warship') &&
-        this.warshipCount(p) < Game.MAX_WARSHIPS_PER_PLAYER) {
+    if (Game.unitsOwned(p, 'port') >= 1 && spendable('warship') >= Game.unitCost(p, 'warship')) {
       const site = this.warshipSite(p);
       if (site >= 0) Game.buildWarship(p.id, site);
     }
