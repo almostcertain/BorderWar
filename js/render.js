@@ -1627,7 +1627,7 @@ const Render = {
       if (icon) ctx.drawImage(icon, Math.round(px - icon.width / 2), Math.round(py - icon.height / 2));
       else this.paintStructureIcon(ctx, b.type, owner, b.built, px, py, r);
 
-      // One bar reused for both timers: dim blue while a fresh structure
+      // One bar reused for both timers: green while a fresh structure
       // stands unfinished, warm gold while a finished one is climbing a
       // level — same geometry, so the eye reads either as "not done yet"
       // without needing a second visual language.
@@ -1635,9 +1635,13 @@ const Render = {
         const barW = r * 1.7, barH = Math.max(2 * this.dpr, r * 0.24);
         const bx = px - barW / 2, by = py + r + barH * 1.3;
         const pct = b.buildTime > 0 ? Math.max(0, Math.min(1, b.progress / b.buildTime)) : 1;
+        // Black outline around a dark trough so the bar stands out on any terrain.
+        const bd = Math.max(1, this.dpr);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(bx - bd, by - bd, barW + bd * 2, barH + bd * 2);
         ctx.fillStyle = 'rgba(8, 14, 26, 0.85)';
         ctx.fillRect(bx, by, barW, barH);
-        ctx.fillStyle = b.upgrading ? 'rgba(255, 205, 110, 0.95)' : 'rgba(130, 215, 255, 0.95)';
+        ctx.fillStyle = b.upgrading ? 'rgba(255, 205, 110, 0.95)' : '#2fd35a';
         ctx.fillRect(bx, by, barW * pct, barH);
       }
 
