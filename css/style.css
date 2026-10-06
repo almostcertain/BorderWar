@@ -383,7 +383,7 @@ html, body {
 
 /* --- Pause button (singleplayer) ------------------------------------------ */
 
-#pauseBtn, #musicBtn, #exitBtn {
+#pauseBtn, #musicBtn {
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 700;
@@ -397,27 +397,20 @@ html, body {
 
 #musicBtn, #menuBtn { padding: 6px 8px; }
 
-/* Phones: the whole button row folds into one small menu button. Everywhere
-   else the menu is Escape. */
+/* Escape opens the same menu. On phones the Pause and Music buttons fold into
+   it, leaving this one small button. */
 #menuBtn {
-  display: none;
   border: 0;
   border-radius: 8px;
   background: rgba(11, 18, 32, 0.75);
   cursor: pointer;
 }
 @media (pointer: coarse) {
-  #menuBtn { display: block; }
-  #pauseBtn, #musicBtn, #exitBtn { display: none !important; }
+  #pauseBtn, #musicBtn { display: none !important; }
 }
 body.replaying #menuBtn { display: none !important; }
 
-:is(#pauseBtn, #musicBtn, #exitBtn):active { filter: brightness(0.85); }
-
-/* Clicked once mid-match, waiting for the confirming click (main.js). */
-#exitBtn.armed {
-  background: rgba(215, 60, 60, 0.95);
-}
+:is(#pauseBtn, #musicBtn, #menuBtn):active { filter: brightness(0.85); }
 
 #pauseBtn.paused {
   background: rgba(255, 190, 70, 0.95);
@@ -477,7 +470,7 @@ body.replaying #menuBtn { display: none !important; }
 #replayRevealRow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 
 body.replaying #hud { bottom: calc(env(safe-area-inset-bottom) + 54px); background: none; }
-body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pauseBtn, #exitBtn, #debugToggle, #debugPanel) { display: none !important; }
+body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pauseBtn, #debugToggle, #debugPanel) { display: none !important; }
 
 @media (max-width: 700px) {
   #replayBar { flex-wrap: wrap; justify-content: center; }
