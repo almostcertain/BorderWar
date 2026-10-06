@@ -3,147 +3,104 @@
 // former js/game.js; see docs/game-split-plan.md.
 Object.assign(Game, {
   // --- Structures ----------------------------------------------------------
-  // OpenFront's build menu. City is the first entry; the rest of their list
-  // (port, defence post, silo, SAM, warship, the bombs) slots in here as each
-  // is built, which is why this is a table rather than a special case.
+  // The build menu, one table entry per unit.
   //
-  // Cost follows their unitInfo exactly: min(maxCost, 2^n * baseCost), where
-  // n is verbatim their costWrapper's own reduce — min(unitsOwned(type),
-  // unitsConstructed(type)) — not unitsOwned alone. unitsConstructed is a
-  // separate lifetime counter (Player.numUnitsConstructed in their source)
-  // that only increments on this player's own buildUnit()/upgradeUnit()
-  // calls; capturing a unit reassigns ownership and nothing else, so it can
-  // raise unitsOwned without ever touching unitsConstructed. The min() is
-  // what that buys: capturing cities you never built cannot itself inflate
-  // your price past what your own build history already set as the ceiling,
-  // though it can let a currently-owned count that fell behind (from losing
-  // a built city) climb back up toward that same ceiling. Every one you
-  // build OR upgrade doubles the price of the next until it plateaus, so a
-  // self-built/upgraded run costs 125k, 250k, 500k, 1M, then 1M forever —
-  // verified against their PlayerImpl.upgradeUnit, which calls the exact same
-  // recordUnitConstructed() a fresh build does.
+  // Cost: City, Factory and Port double with each one held, min(maxCost,
+  // 2^n * baseCost). `linear` entries climb by baseCost a step, min(maxCost,
+  // (n+1) * baseCost). `flat` entries never move. n is min(unitsOwned,
+  // unitsBuilt) — see unitCost. unitsBuilt is a lifetime counter that only
+  // this player's own build() and upgrade() calls raise; capturing a unit
+  // changes its owner and nothing else. The min() is what that buys:
+  // captured cities cannot push the price past what the player's own build
+  // history set as the ceiling, though a count that fell behind (a built
+  // city lost) can climb back up to it. A self-built run costs 125k, 250k,
+  // 500k, 1M, then 1M forever, and an upgrade counts exactly as a build.
   //
   // `unitsOwned` (units[type] below) is therefore a SUM OF LEVELS, not a
-  // headcount — verbatim PlayerImpl.unitsOwned: a built unit contributes its
-  // level, a still-under-construction one contributes a flat 1. A second city
-  // and a first city upgraded to level 2 cost, and are worth, exactly the
-  // same. See maxTroopsRaw, which spends that same sum on the pop bonus.
+  // headcount: a built unit contributes its level, one still under
+  // construction a flat 1. A second city and a first city upgraded to level
+  // 2 cost, and are worth, exactly the same. See maxTroopsRaw, which spends
+  // that same sum on the pop bonus.
   //
   // buildTime is seconds of construction after placement, ticked in
-  // Game.tick — see updateConstruction. Chosen short enough to stay a visible
-  // pause rather than a real commitment; the gold cost is already the real
-  // one. OpenFront's own upgrades are instant (UpgradeStructureExecution has
-  // no tick phase at all) — the timer here is this game's own addition, so
-  // upgrading reuses buildTime rather than a ported duration.
+  // Game.tick — see updateConstruction. City and Factory take 2, Port and
+  // Defense Fort 5, Missile Silo 10, SAM Launcher 30, Radio Tower 5.
+  //
+  // Upgrades are instant: UPGRADE_TIME is 0, so the level lands on the next
+  // updateConstruction pass. It is its own dial rather than buildTime so an
+  // upgrade never inherits a structure's construction time.
+  UPGRADE_TIME: 0,
   UNITS: [
     {
       type: 'city', name: 'City', icon: '🏙', hotkey: '1',
-      baseCost: 125000, maxCost: 1000000, buildTime: 8, upgradable: true
+      baseCost: 125000, maxCost: 1000000, buildTime: 2, upgradable: true
     },
-    // OpenFront's UnitType.Factory: same cost curve as City, and the same
-    // constructionDuration ratio (both 2*10 ticks in their config — 1:1 —
-    // which is why this reuses city's own non-ported buildTime dial rather
-    // than inventing a different one). Their costWrapper actually pools
-    // Factory's count together with Port (see Port's own entry below, added
-    // later) rather than pricing against its own count alone — costGroup
-    // below is what wires that in. What a Factory actually DOES — recruiting
-    // nearby cities into a rail network and running trains between them for
-    // gold — lives in the "Rail network & trains" section below, hooked in
-    // through updateConstruction() the instant one finishes.
+    // Factory: City's cost curve and build time, but priced against Factory
+    // and Port counted together (costGroup) rather than its own count alone.
+    // What it does — recruiting nearby cities into a rail network and
+    // running trains between them for gold — is the "Rail network & trains"
+    // section, hooked in through updateConstruction() the instant one
+    // finishes.
     {
       type: 'factory', name: 'Factory', icon: '🏭', hotkey: '2',
-      baseCost: 125000, maxCost: 1000000, buildTime: 8, upgradable: true,
+      baseCost: 125000, maxCost: 1000000, buildTime: 2, upgradable: true,
       costGroup: ['factory', 'port']
     },
-    // OpenFront's UnitType.Port: same exponential cost curve as City/Factory,
-    // but Config.ts's real costWrapper for Port explicitly pools its count
-    // together with Factory (costWrapper(fn, UnitType.Port, UnitType.Factory))
-    // rather than pricing against its own count alone — building either one
-    // makes the next Port OR Factory more expensive. See unitCost's costGroup
-    // handling below, and the Factory entry's own comment (written before
-    // Port existed) noting this was the one deliberate gap left to close once
-    // Port arrived. constructionDuration is 5*10 ticks in their config (2.5x
-    // City/Factory's own 2*10) but buildTime here is this game's own pacing
-    // dial, not a literal tick port (see the class comment above), so this
-    // just reuses the same 8s City/Factory already use as fellow members of
-    // the upgradable/exponential family.
+    // Port: the same doubling curve, pooled with Factory — building either
+    // one makes the next Port OR Factory dearer. See unitCost's costGroup
+    // handling. Takes 5s to build against City and Factory's 2.
     {
       type: 'port', name: 'Port', icon: '⚓', hotkey: '3',
-      baseCost: 125000, maxCost: 1000000, buildTime: 8, upgradable: true,
+      baseCost: 125000, maxCost: 1000000, buildTime: 5, upgradable: true,
       costGroup: ['factory', 'port']
     },
-    // OpenFront's UnitType.DefensePost. Cost curve is LINEAR (not exponential):
-    // (n+1)*50k, capped at 250k — first fort is 50k, second 100k, fifth+ is 250k.
-    // defensePostRange=30, defensePostDefenseBonus=5x, defensePostSpeedBonus=3x,
-    // constructionDuration=5*10 ticks. Not upgradable. See FORT_* constants and
-    // fortInRange() below for the combat hooks, and tileCost()/stepAttack() for
-    // where those bonuses fire.
+    // Defense Fort: LINEAR cost, (n+1)*50k capped at 250k — first fort 50k,
+    // second 100k, fifth and later 250k. Not upgradable. See the FORT_*
+    // constants and fortInRange() for the combat hooks, and tileCost()/
+    // stepAttack() for where those bonuses fire.
     {
       type: 'fort', name: 'Defense Fort', icon: '🛡', hotkey: '4',
       baseCost: 50000, maxCost: 250000, buildTime: 5, upgradable: false, linear: true
     },
-    // OpenFront's UnitType.Warship: cost is LINEAR like Fort (not pooled with
-    // anything else) — Config.ts's real costWrapper is
-    // `(numUnits+1)*250_000` capped at 1_000_000. Not upgradable (OpenFront
-    // has no warship upgrade path either). Placed on WATER near the player's
-    // own coast rather than on owned land — see warshipBlockReason/
-    // buildWarship in the "Warships" section below, which this entry's
-    // buildTime is NOT read by: a warship spawns instantly (matching
-    // OpenFront's own SpawnExecution, which has no construction phase for
-    // units the way City/Factory/Port/Fort do here), it's carried only so
-    // the build-bar hint text has a number to show.
-    // `action: true` marks a UNITS entry that is never placed on a land tile
-    // via the normal buildBlockReason/build path and never lands in
-    // Game.buildings — AI.economy's generic cost-group loop skips these
-    // (see its own comment) and gives each its own purchase call instead
-    // (buildWarship / launchNuke). Warship predates this flag; it's added
-    // retroactively here to close a real latent gap the flag's own
-    // introduction (for the two nuke types just below) surfaced: without it,
-    // economy()'s generic loop was quietly attempting
-    // Game.build(p.id, 'warship', buildSite(p)) every cycle — buildTime:0
-    // meant a hit would silently plant a phantom "warship" entry in
-    // Game.buildings that instantly completed and incremented
-    // units.warship, inflating the REAL buildWarship price curve (unitCost
-    // sums unitsOwned+unitsPending) with builds that never touched the
-    // fleet at all. Never actually observed misfiring in practice — buildSite
-    // only offers a tile once a nation already has land, by which point a
-    // bot's real Port-gated Warship purchase below usually wins the cycle
-    // first — but a latent bug wasn't worth leaving in place while adding two
-    // more UNITS entries in exactly the same danger zone.
+    // Warship: LINEAR like Fort and pooled with nothing — (n+1)*250k capped
+    // at 1M. Not upgradable. Placed on WATER near the player's own coast
+    // rather than on owned land — see warshipBlockReason/buildWarship in the
+    // "Warships" section, which does not read this entry's buildTime: a
+    // warship spawns instantly, and the field is only here so the build-bar
+    // hint has a number to show.
+    //
+    // `action: true` marks an entry that is never placed on a land tile
+    // through buildBlockReason/build and never lands in Game.buildings.
+    // AI.economy's generic cost-group loop skips these and gives each its
+    // own purchase call instead (buildWarship / launchNuke). Without the
+    // flag that loop would call Game.build(p.id, 'warship', buildSite(p)),
+    // and with buildTime 0 a hit would plant a phantom "warship" in
+    // Game.buildings that completes at once and raises units.warship,
+    // inflating the real buildWarship price with builds that never touched
+    // the fleet.
     {
       type: 'warship', name: 'Warship', icon: '🚢', hotkey: '5',
       baseCost: 250000, maxCost: 1000000, buildTime: 0, upgradable: false, linear: true, action: true
     },
-    // OpenFront's UnitType.MissileSilo: cost is FLAT — Config.ts's real
-    // costWrapper is `() => 1_000_000` with the numUnits argument ignored
-    // entirely, unlike every cost curve above (exponential City/Factory/Port,
-    // linear Fort/Warship) — a 2nd or 5th Silo costs exactly what the 1st
-    // did. See unitCost's `flat` handling. Their config marks it
-    // upgradable:true, but no per-level effect for it surfaced anywhere in
-    // Config.ts/MissileSiloExecution.ts/UnitImpl.ts while porting (unlike
-    // City, where a level directly feeds maxTroops) — rather than invent a
-    // fabricated bonus, this was first left NOT upgradable. Ticket #41 found
-    // the effect: UnitImpl gives a Silo the same _missileTimerQueue a SAM
-    // has, capped at its level, so each level is one more missile slot that
-    // reloads on its own SILO_COOLDOWN (see siloFreeSlots). Placement is the
-    // ordinary own-land buildBlockReason/build path (territoryBound, exactly
-    // like City) — nothing structure-specific to add there. What it actually
-    // DOES — hosting nuke launches on a cooldown — lives in the "Missile
-    // Silo & Nukes" section below.
+    // Missile Silo: FLAT cost — a 2nd or 5th Silo costs exactly what the 1st
+    // did. See unitCost's `flat` handling. Upgradable: each level is one
+    // more missile slot that reloads on its own SILO_COOLDOWN (ticket #41,
+    // see siloFreeSlots). Placement is the ordinary own-land
+    // buildBlockReason/build path, exactly like City. What it does —
+    // hosting nuke launches on a cooldown — is the "Missile Silo & Nukes"
+    // section.
     {
       type: 'silo', name: 'Missile Silo', icon: '🚀', hotkey: '6',
-      baseCost: 1000000, maxCost: 1000000, buildTime: 8, upgradable: true, flat: true
+      baseCost: 1000000, maxCost: 1000000, buildTime: 10, upgradable: true, flat: true
     },
-    // OpenFront's UnitType.AtomBomb/HydrogenBomb: also flat-cost (see Silo's
-    // own comment on the `flat` curve), and `action: true` for the same
-    // reason Warship is — a bomb click means "launch one at this tile from my
-    // nearest ready Silo," not "place one exactly here," resolved through
-    // resolveNukeLaunch/launchNuke rather than buildBlockReason/build. See
-    // the "Missile Silo & Nukes" section for the launch/flight/detonation
-    // logic and nukeMagnitudes for the inner/outer blast radii each type
-    // ports from Config.ts. buildTime carried only for build-bar consistency,
-    // same as Warship's own comment — a nuke launches the instant it's
-    // ordered, no construction phase.
+    // Atom Bomb / Hydrogen Bomb: flat cost too, and `action: true` for the
+    // same reason Warship is — a bomb click means "launch one at this tile
+    // from my nearest ready Silo", not "place one exactly here", resolved
+    // through resolveNukeLaunch/launchNuke rather than buildBlockReason/
+    // build. See the "Missile Silo & Nukes" section for launch, flight and
+    // detonation, and nukeMagnitudes for each type's inner/outer blast
+    // radii. buildTime is carried only for build-bar consistency, as on
+    // Warship: a nuke launches the instant it is ordered.
     {
       type: 'atombomb', name: 'Atom Bomb', icon: '☢', hotkey: '7',
       baseCost: 750000, maxCost: 750000, buildTime: 0, upgradable: false, flat: true, action: true
@@ -152,56 +109,70 @@ Object.assign(Game, {
       type: 'hydrogenbomb', name: 'Hydrogen Bomb', icon: '💥', hotkey: '8',
       baseCost: 5000000, maxCost: 5000000, buildTime: 0, upgradable: false, flat: true, action: true
     },
-    // OpenFront's UnitType.SAMLauncher — the defensive interceptor the
-    // "Missile Silo & Nukes" section's own class comment flagged as
-    // deliberately deferred ("SAM Launcher... left for a later pass"), now
-    // ported against the real SAMLauncherExecution.ts/SAMMissileExecution.ts/
-    // Config.ts source. Named "SAM Launcher" rather than reusing "Missile
-    // Silo" even though the user described it that way — this game already
-    // has a structure called Missile Silo (the offensive nuke launcher
-    // above), and OpenFront itself treats these as two entirely separate
-    // buildings with separate names, so keeping them separate here avoids a
-    // straight naming collision. Cost is LINEAR like Fort — their real
-    // costWrapper is `min(3_000_000, (numUnits+1)*1_500_000)`: first SAM
-    // 1.5M, second+ pinned at the 3M cap. Territory-bound placement (own
-    // land only) needs no special-casing, same as City/Fort/Silo. What it
-    // actually DOES — charges, range-per-level, and shooting down incoming
-    // nukes — lives in the "SAM Launcher & Interceptors" section below.
+    // SAM Launcher: the defensive interceptor. Named "SAM Launcher" rather
+    // than anything with "Silo" in it, because Missile Silo (the offensive
+    // nuke launcher above) is a separate building. LINEAR cost like Fort:
+    // first SAM 1.5M, second and later pinned at the 3M cap. Own-land
+    // placement with no special-casing, same as City/Fort/Silo. What it
+    // does — charges, range per level, shooting down incoming nukes — is
+    // the "SAM Launcher & Interceptors" section.
     {
       type: 'sam', name: 'SAM Launcher', icon: '📡', hotkey: '9',
-      baseCost: 1500000, maxCost: 3000000, buildTime: 8, upgradable: true, linear: true
+      baseCost: 1500000, maxCost: 3000000, buildTime: 30, upgradable: true, linear: true
     },
-    // OpenFront's UnitType.MIRV (ticket #28) — the top-tier multi-warhead
-    // strike, ported against MIRVExecution.ts/Config.ts. Same `action: true`
-    // "strike here" shape as the two bomb types above (resolveNukeLaunch/
-    // launchMirv, not buildBlockReason/build), but its cost does NOT follow
-    // baseCost/maxCost/flat/linear/costGroup the way every other entry here
-    // does: Config.ts's real cost is 25_000_000 + 15_000_000 per MIRV any
-    // player has EVER launched this match — a whole-match counter, not this
-    // player's own build history — so Game.unitCost special-cases
-    // type==='mirv' and returns before ever consulting this entry's
-    // baseCost/maxCost/flat fields. They're carried anyway (set to
-    // MIRV_BASE_COST, matching nukes.js's own constant) purely so this
-    // entry has SOME non-garbage number if anything ever reads it before
-    // unitCost's special case fires — not a claim they're the real curve.
-    // See nukes.js's "MIRV" section for the launch/flight/split/detonation
-    // logic and its own MIRV_WARHEAD_COUNT/MIRV_RANGE comments for what was
-    // scoped down from the real 350-warhead port and why.
+    // MIRV (ticket #28): the top-tier multi-warhead strike. Same
+    // `action: true` "strike here" shape as the two bombs above
+    // (resolveNukeLaunch/launchMirv, not buildBlockReason/build), but its
+    // cost follows none of baseCost/maxCost/flat/linear/costGroup: it is
+    // 25M plus 15M for every MIRV any player has launched this match — a
+    // whole-match counter, not this player's own build history — so
+    // Game.unitCost special-cases type==='mirv' and returns before reading
+    // these fields. They are set to MIRV_BASE_COST anyway so the entry
+    // holds a sane number if anything reads it first. See nukes.js's
+    // "MIRV" section for launch, flight, split and detonation.
     {
       type: 'mirv', name: 'MIRV', icon: '🛰', hotkey: '0',
       baseCost: 25000000, maxCost: 25000000, buildTime: 0, upgradable: false, flat: true, action: true
     },
     // Fog of war's Scout (docs/fog-of-war.md, game/scouts.js): an unarmed
-    // ship that uncovers the map. This game's own unit, no OpenFront
-    // counterpart. Flat 25k, and `action: true` for the same reason Warship
-    // is: a click means "send one toward this tile from one of my Ports"
-    // (resolveScoutLaunch/buildScout), not "place one here". `fogOnly` marks
-    // an entry that only exists in fog matches: buildScout refuses with fog
-    // off, and the build bar leaves the entry out. It has no hotkey for the
-    // same reason. Last in the table so no other entry's position moves.
+    // ship that uncovers the map. Flat 25k, and `action: true` for the same
+    // reason Warship is: a click means "send one toward this tile from one
+    // of my Ports" (resolveScoutLaunch/buildScout), not "place one here".
+    // `fogOnly` marks an entry that only exists in fog matches: buildScout
+    // refuses with fog off, and the build bar leaves the entry out. It has
+    // no hotkey for the same reason. Last in the table so no other entry's
+    // position moves.
     {
       type: 'scout', name: 'Scout', icon: '🔭',
       baseCost: 25000, maxCost: 25000, buildTime: 0, upgradable: false, flat: true, action: true, fogOnly: true
+    },
+    // Battle Royale's Drill (docs/battle-royale.md, game/drill.js). This
+    // game's own unit. Flat 20M (DRILL_COST). `action: true` because it never
+    // lands in Game.buildings: placement is drillBlockReason/placeDrill
+    // (own land, instant, one per match), not buildBlockReason/build — and
+    // the flag is also what keeps AI.economy's generic loop from buying it.
+    // No hotkey yet; the build bar entry is BR-5. Last in the table so no
+    // other entry's position moves.
+    {
+      type: 'drill', name: 'The Drill', icon: '🌀',
+      baseCost: 20000000, maxCost: 20000000, buildTime: 0, upgradable: false, flat: true, action: true
+    },
+    // Fog of war's Radio Tower (docs/fog-of-war.md). This game's own unit: a
+    // cheap structure on the builder's own land that uncovers a wide disc of
+    // the map (VISION_SIGHT_RADIO) once, the moment it finishes — see
+    // updateConstruction. It is how a landlocked nation, which can launch no
+    // Scout, looks past its border. Discovery is permanent, so the tower has
+    // done all it ever will by then, and it is removed on the spot (see
+    // updateConstruction); what it showed stays shown. LINEAR like Fort
+    // (50k, 100k ... capped at 250k), so carpeting a border with them is a
+    // real spend. Placed through the ordinary buildBlockReason/build path —
+    // no `action` flag — but `fogOnly` like the Scout: refused with fog off,
+    // left out of the build bar, no hotkey, and skipped by AI.economy's
+    // generic loop (AI.buyRadio buys it instead). Last in the table so no
+    // other entry's position moves.
+    {
+      type: 'radio', name: 'Radio Tower', icon: '🗼',
+      baseCost: 50000, maxCost: 250000, buildTime: 5, upgradable: false, linear: true, fogOnly: true
     }
   ],
 
@@ -225,25 +196,23 @@ Object.assign(Game, {
   unitCost(p, type) {
     const def = this.unitDef(type);
     if (!def) return Infinity;
-    // MIRV: Config.ts's real cost formula reads game.mirvsLaunched() — a
-    // whole-match, EVERY-player lifetime counter (see nukes.js's
-    // launchMirv/Game.mirvsLaunched) — not this player's own unitsOwned/
-    // unitsBuilt history the way every curve below does, so it can't be
-    // expressed as flat/linear/exponential over `n` at all and gets its own
-    // early return. See the UNITS 'mirv' entry's own comment.
+    // MIRV: priced off Game.mirvsLaunched — a whole-match counter across
+    // EVERY player (see nukes.js's launchMirv) — not this player's own
+    // unitsOwned/unitsBuilt history the way every curve below is, so it
+    // cannot be expressed as flat/linear/exponential over `n` and gets its
+    // own early return. See the UNITS 'mirv' entry.
     if (type === 'mirv') return this.MIRV_BASE_COST + this.mirvsLaunched * this.MIRV_COST_STEP;
-    // Silo/AtomBomb/HydrogenBomb: costWrapper's callback ignores numUnits
-    // entirely in Config.ts, so the price never moves regardless of how many
-    // you've bought — no n/costGroup accounting applies at all. See the
-    // UNITS entries' own comments.
+    // Silo, Atom Bomb, Hydrogen Bomb and the other flat entries: the price
+    // never moves however many have been bought, so no n/costGroup
+    // accounting applies. See the UNITS entries.
     if (def.flat) return def.baseCost;
     // Committed = finished-and-owned plus still-building — so queuing a
     // second one before the first finishes still prices at the doubled rate,
     // not the base rate `units` alone would show until completion.
     // costGroup (Port/Factory — see their UNITS entries) sums this same
     // per-type min() across every type in the group instead of just this
-    // one, matching Config.ts's real costWrapper reduce: building either one
-    // raises the price of both, not just its own kind.
+    // one: building either one raises the price of both, not just its own
+    // kind.
     const types = def.costGroup || [type];
     let n = 0;
     for (const t of types) {
@@ -263,24 +232,123 @@ Object.assign(Game, {
       : Math.min(def.maxCost, Math.pow(2, n) * def.baseCost);
   },
 
+  // No structure may stand closer than this many tiles (Euclidean, strict
+  // <) to any other structure — any type, any owner, finished or still
+  // under construction. It is what stops icons stacking on top of each
+  // other. The distance is one icon's width — a structure disc is about
+  // 5.8 tiles across at the zooms where it scales with the map
+  // (Render.structureRadius) — so two icons can sit side by side but never
+  // overlap.
+  STRUCTURE_MIN_DIST: 6,
+
+  // Whether `tile` is inside STRUCTURE_MIN_DIST of something already standing
+  // (the tile itself included, at distance 0).
+  structureTooClose(tile) {
+    const w = GameMap.width, x = tile % w, y = (tile / w) | 0;
+    const r2 = this.STRUCTURE_MIN_DIST * this.STRUCTURE_MIN_DIST;
+    for (const t of this.buildings.keys()) {
+      const dx = t % w - x, dy = ((t / w) | 0) - y;
+      if (dx * dx + dy * dy < r2) return true;
+    }
+    return false;
+  },
+
+  // Where a placement click at `tile` should actually land: the nearest tile
+  // to it that is the player's own, connected to the click through their own
+  // land, within STRUCTURE_MIN_DIST of it, and clear of every other
+  // structure. It takes the closest valid tile rather than refusing a click
+  // that is merely near a structure. A Port also needs the coast, and is
+  // allowed a click just off the player's shore. -1 when nothing qualifies.
+  // Click interpretation for the UI, like nearestOwnedCoastNear: build()
+  // takes the tile it is given.
+  structureSiteNear(playerId, type, tile) {
+    const def = this.unitDef(type);
+    if (!def || def.action || tile < 0) return -1;
+    if (type === 'port' && GameMap.owner[tile] !== playerId) {
+      tile = this.nearestOwnedCoastNear(playerId, tile, this.PORT_SNAP_MAX_DIST);
+    }
+    if (tile < 0 || GameMap.owner[tile] !== playerId) return -1;
+    const w = GameMap.width, cx = tile % w, cy = (tile / w) | 0;
+    const r2 = this.STRUCTURE_MIN_DIST * this.STRUCTURE_MIN_DIST;
+    // Only structures within twice the radius can rule out a tile in it.
+    const near = [];
+    for (const t of this.buildings.keys()) {
+      const dx = t % w - cx, dy = ((t / w) | 0) - cy;
+      if (dx * dx + dy * dy < 4 * r2) near.push(t);
+    }
+    const seen = new Set([tile]);
+    const queue = [tile];
+    const nb = new Int32Array(4);
+    let best = -1, bestDist = Infinity;
+    for (let head = 0; head < queue.length; head++) {
+      const i = queue[head], ix = i % w, iy = (i / w) | 0;
+      const dist = (ix - cx) * (ix - cx) + (iy - cy) * (iy - cy);
+      if (dist < bestDist && (type !== 'port' || GameMap.isCoastal(i))) {
+        let clear = true;
+        for (const t of near) {
+          const dx = t % w - ix, dy = ((t / w) | 0) - iy;
+          if (dx * dx + dy * dy < r2) { clear = false; break; }
+        }
+        if (clear) { best = i; bestDist = dist; }
+      }
+      const n = GameMap.neighbors(i, nb);
+      for (let k = 0; k < n; k++) {
+        const j = nb[k];
+        if (seen.has(j) || GameMap.owner[j] !== playerId) continue;
+        const dx = j % w - cx, dy = ((j / w) | 0) - cy;
+        if (dx * dx + dy * dy >= r2) continue;
+        seen.add(j);
+        queue.push(j);
+      }
+    }
+    return best;
+  },
+
+  // The player's own finished structure of `type` nearest to `tile` and
+  // within STRUCTURE_MIN_DIST of it, or null. Nothing new can be built that
+  // close to it, so a click there with the same type armed means "upgrade
+  // that one".
+  upgradeTargetNear(playerId, type, tile) {
+    const def = this.unitDef(type);
+    if (!def || !def.upgradable || tile < 0) return null;
+    const w = GameMap.width, x = tile % w, y = (tile / w) | 0;
+    let best = null, bestDist = this.STRUCTURE_MIN_DIST * this.STRUCTURE_MIN_DIST;
+    for (const b of this.buildings.values()) {
+      if (b.type !== type || !b.built || GameMap.owner[b.tile] !== playerId) continue;
+      const dx = b.tile % w - x, dy = ((b.tile / w) | 0) - y;
+      const dist = dx * dx + dy * dy;
+      if (dist < bestDist) { best = b; bestDist = dist; }
+    }
+    return best;
+  },
+
   // Why a structure cannot go here, for the UI to say out loud. null when it
   // can, in the same shape as allianceBlockReason.
   //
-  // OpenFront marks a City territoryBound, which is the only placement rule
-  // there is: your own land, and not on top of something already standing.
+  // The placement rule for a structure on land: your own land, and at least
+  // STRUCTURE_MIN_DIST from anything already standing.
   buildBlockReason(playerId, type, tile) {
     const p = this.players[playerId];
     if (!p || !p.alive) return 'Nation defeated';
     if (!this.unitDef(type)) return 'Unknown structure';
     if (tile < 0 || GameMap.owner[tile] !== playerId) return 'Your own land only';
-    if (this.buildings.has(tile)) return 'Already built here';
-    // OpenFront's UnitType.Port is territoryBound AND requires an ocean
-    // shore tile — a Port sitting one tile inland could never actually touch
+    if (this.structureTooClose(tile)) return 'Too close to another structure';
+    // A Port must stand on the player's own land AND on an ocean shore
+    // tile — a Port sitting one tile inland could never actually touch
     // water for a trade ship to sail from. The placement UI snaps a click
     // near the coast onto the nearest valid tile first (see
     // nearestOwnedCoastNear), so this only fires for a tap too far inland to
     // snap at all.
     if (type === 'port' && !GameMap.isCoastal(tile)) return 'Ports must be on the coast';
+    // Radio Tower: fog matches only, and only where its disc still holds
+    // something the builder has not discovered — a tower that would show
+    // nothing is gold thrown away, since it does nothing else. That answer
+    // comes from the builder's own discovered set alone, so it gives nothing
+    // away about what the fog hides.
+    if (type === 'radio') {
+      if (!this.fog) return 'Fog of war matches only';
+      if (this.visionHiddenAround(playerId, tile, this.VISION_SIGHT_RADIO) === 0) return 'Nothing left to uncover here';
+    }
     if (p.gold < this.unitCost(p, type)) return 'Not enough gold';
     return null;
   },
@@ -294,8 +362,8 @@ Object.assign(Game, {
     p.gold -= this.unitCost(p, type);   // priced before any count goes up
     // Placed immediately, but not functional until `built` flips — see
     // updateConstruction. `progress`/`buildTime` are what the small bar drawn
-    // in Render.drawStructures reads. `level` is set once construction
-    // completes, matching UnitImpl's own default of 1.
+    // in Render.drawStructures reads. `level` is set to 1 once construction
+    // completes.
     // station/rails/lastTrainAt are only ever touched for city/factory types
     // (see the "Rail network & trains" section) but are cheap enough to carry
     // on every building rather than special-case the record shape by type.
@@ -308,14 +376,13 @@ Object.assign(Game, {
       tradeRejections: 0, lastTradeCheckAt: -Infinity,
       // Silo-only (see "Missile Silo & Nukes"), carried on every building for
       // the same reason as the Port fields above. One launch time per missile
-      // slot still reloading, capped at `level` — the Silo's copy of
-      // UnitImpl's _missileTimerQueue, same model as samQueue below.
+      // slot still reloading, capped at `level` — same model as samQueue
+      // below.
       siloQueue: [],
       // SAM-only (see "SAM Launcher & Interceptors"). samQueue holds one
-      // timestamp per charge currently reloading — UnitImpl's real
-      // _missileTimerQueue — capacity-capped at `level` (isInCooldown there
-      // is verbatim `queue.length === level`), so a level-2 SAM can have two
-      // independent charges reloading on their own clocks at once.
+      // timestamp per charge currently reloading, capacity-capped at `level`
+      // (the SAM is in cooldown when queue.length === level), so a level-2 SAM
+      // can have two independent charges reloading on their own clocks at once.
       // samRangeUpgrade holds the in-progress range ramp after a level-up
       // (null once settled) — see dynamicSamRange.
       samQueue: [], samRangeUpgrade: null
@@ -353,11 +420,10 @@ Object.assign(Game, {
     if (!this.canUpgrade(playerId, tile)) return false;
     const p = this.players[playerId];
     const b = this.buildings.get(tile);
-    const def = this.unitDef(b.type);
     p.gold -= this.unitCost(p, b.type);   // priced before the level goes up
     b.upgrading = true;
     b.progress = 0;
-    b.buildTime = def.buildTime;   // the upgrade timer, reusing the same bar
+    b.buildTime = this.UPGRADE_TIME;   // the upgrade timer, reusing the same bar
     // Same two counters a fresh build touches — an in-flight upgrade prices
     // the next build/upgrade higher immediately, exactly like a queued build
     // does, and unitsBuilt's ceiling climbs the moment gold is committed.
@@ -388,7 +454,10 @@ Object.assign(Game, {
         b.built = true;
         b.level = 1;
         const owner = GameMap.owner[b.tile];
-        if (owner < 0) continue;
+        if (owner < 0) {
+          if (b.type === 'radio') this.buildings.delete(b.tile);
+          continue;
+        }
         const p = this.players[owner];
         p.unitsPending[b.type] = Math.max(0, this.unitsPending(p, b.type) - 1);
         p.units[b.type] = this.unitsOwned(p, b.type) + 1;
@@ -396,19 +465,29 @@ Object.assign(Game, {
         // see the "Rail network & trains" section. An upgrade (the branch
         // below) never re-triggers it.
         this.onStructureCompleted(b);
+        // Fog of war's Radio Tower: its one reveal, to whoever holds the
+        // tile now — a tower overrun mid-build finishes, and reveals, under
+        // its new owner. That is all it ever does, so it does not stand on:
+        // the record goes the moment it finishes, the tile is free to build
+        // on again, and Fx plays the scan in its place. units.radio keeps the
+        // += 1 above for good — with no building left to lose, it is a count
+        // of towers used, which is what keeps the linear price climbing.
+        if (b.type === 'radio') {
+          this.revealAround(owner, b.tile, this.VISION_SIGHT_RADIO);
+          Fx.radioScan(b.tile, owner);
+          this.buildings.delete(b.tile);
+        }
       } else if (b.upgrading) {
         b.progress += this.TICK_DT;
         if (b.progress < b.buildTime) continue;
         b.progress = b.buildTime;
         b.upgrading = false;
-        // UnitImpl.increaseLevel: a SAM's range doesn't jump instantly on
-        // upgrade, it ramps smoothly (see dynamicSamRange) — captured before
-        // b.level++ so the ramp starts from whatever range is actually in
-        // effect right now (mid-ramp or settled), matching the real source's
-        // own chained-upgrade behavior rather than resetting hard each time.
-        // The freshly gained charge slot also starts consumed/reloading
-        // immediately, exactly like a real launch — increaseLevel pushes the
-        // queue the same way for SAMLauncher.
+        // A SAM's range doesn't jump instantly on upgrade, it ramps smoothly
+        // (see dynamicSamRange) — captured before b.level++ so the ramp starts
+        // from whatever range is actually in effect right now (mid-ramp or
+        // settled), so chained upgrades carry on from there rather than
+        // resetting hard each time. The freshly gained charge slot also starts
+        // consumed/reloading immediately, exactly like a real launch.
         if (b.type === 'sam') {
           b.samRangeUpgrade = {
             startAt: this.elapsed,
@@ -417,7 +496,7 @@ Object.assign(Game, {
           };
           b.samQueue.push(this.elapsed);
         }
-        // Same for a Silo: increaseLevel pushes its missile queue too, so the
+        // Same for a Silo: the level-up pushes its missile queue too, so the
         // new slot reloads once before it can fire.
         if (b.type === 'silo') b.siloQueue.push(this.elapsed);
         b.level++;

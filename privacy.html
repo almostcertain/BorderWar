@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b1220">
+<title>Privacy Policy · BorderWar</title>
+<link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
+<style>
+  body {
+    margin: 0;
+    background: #0b1220;
+    color: #dbe4f0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 28px; margin: 0 0 4px; color: #fff; }
+  h2 { font-size: 19px; margin: 32px 0 8px; color: #fff; }
+  p, ul { margin: 0 0 12px; }
+  ul { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  a { color: #8ab4ff; }
+  code { font-size: 14px; background: rgba(255, 255, 255, 0.08); padding: 1px 5px; border-radius: 4px; }
+  .updated { opacity: 0.6; font-size: 14px; margin-bottom: 24px; }
+  .back { display: inline-block; margin-bottom: 20px; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="./">&larr; Back to BorderWar</a>
+  <h1>Privacy Policy</h1>
+  <div class="updated">Last updated: October 5, 2026</div>
+
+  <p>
+    BorderWar is a free browser strategy game. This page explains what information the
+    game handles when you play at borderwar.io, and what we do with it. The short
+    version: we keep as little as we can, we don't run ads or analytics, and we don't
+    sell or share your information.
+  </p>
+
+  <h2>Playing without an account</h2>
+  <p>You can play singleplayer and multiplayer without signing up. In that case:</p>
+  <ul>
+    <li>
+      <strong>Your player name and clan tag</strong> are whatever you type. In multiplayer
+      they are sent to our server and shown to the other players in your lobby and match.
+      Anyone can pick any name, so please don't use your real one.
+    </li>
+    <li>
+      <strong>A random browser ID</strong> is created once and sent when you join a
+      multiplayer game, so a dropped connection can rejoin the same match. It isn't
+      shown to other players and isn't linked to who you are.
+    </li>
+    <li>
+      <strong>Your moves in a multiplayer match</strong> (attacks, builds, alliances and
+      so on) pass through our server and are relayed to the other players, because every
+      player's browser runs the same simulation. The server holds them in memory while
+      the match runs and does not keep them afterwards.
+    </li>
+    <li>
+      <strong>A singleplayer headcount.</strong> Singleplayer runs entirely in your
+      browser. While a match is open, the game tells our server every half minute that
+      one is in progress, so we can see how many people are playing. It sends only a
+      random number made fresh each time the page loads. That number isn't kept in your
+      browser, isn't saved or logged by the server, and isn't linked to who you are.
+    </li>
+  </ul>
+
+  <h2>If you create an account</h2>
+  <p>Accounts are optional. If you make one, our server stores:</p>
+  <ul>
+    <li>Your email address. It is only your sign-in name: it is never shown to other
+      players, and we don't send email to it.</li>
+    <li>Your password, stored only as a salted scrypt hash. We can't read it.</li>
+    <li>Your display name, clan tag and game settings, so they follow you between devices.</li>
+    <li>The date the account was created, and your active sign-in sessions.</li>
+    <li>Results of multiplayer matches you play while signed in (win or loss, finishing
+      place, map and mode), used for your own stats.</li>
+  </ul>
+  <p>
+    The IP address you connect from is used to limit repeated sign-in and sign-up
+    attempts. It is held in the server's memory for up to an hour for that purpose and
+    is not written to our logs or stored with your account.
+  </p>
+
+  <h2>What is stored in your browser</h2>
+  <p>The game keeps a few things on your own device. They stay there unless noted above.</p>
+  <ul>
+    <li><strong>Local storage:</strong> your options, last-used name and tag, and the
+      random browser ID.</li>
+    <li><strong>Session storage:</strong> a short-lived token for rejoining the match you
+      are in.</li>
+    <li><strong>IndexedDB:</strong> replays of your recent matches. Replays are never
+      uploaded; they leave your device only if you download the file and share it
+      yourself.</li>
+    <li><strong>One cookie,</strong> <code>bw_session</code>, set only when you sign in.
+      It keeps you signed in for up to 30 days and is removed when you sign out. There
+      are no advertising or tracking cookies.</li>
+  </ul>
+  <p>You can clear all of this at any time through your browser's site-data settings.</p>
+
+  <h2>What we don't do</h2>
+  <ul>
+    <li>No ads, no analytics scripts, no third-party trackers.</li>
+    <li>No selling, renting or sharing of your information.</li>
+    <li>No in-game chat, so there are no messages to store.</li>
+  </ul>
+
+  <h2>Who else handles your data</h2>
+  <p>
+    The game server is run by the BorderWar developers and is reached through
+    Cloudflare, which carries the traffic between your browser and the server and
+    therefore sees your IP address and requests, under
+    <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">Cloudflare's privacy policy</a>.
+    The links to Reddit, Discord and GitHub on the main menu take you to those sites,
+    which have their own policies; nothing is sent to them unless you click through.
+  </p>
+
+  <h2>How long we keep things</h2>
+  <ul>
+    <li>Account information is kept until you delete the account or ask us to.</li>
+    <li>The account database is backed up daily and each backup is kept for 14 days, so
+      a deleted account can remain in backups for up to 14 days before it is gone
+      completely.</li>
+    <li>Sign-in sessions expire after 30 days without use.</li>
+    <li>Server logs record events for troubleshooting, such as sign-ins by account
+      number and players joining a match by player name. They contain no IP addresses
+      or email addresses.</li>
+    <li>The server also keeps anonymous totals (how many players and games are online)
+      to monitor its health. These contain nothing about individual players.</li>
+  </ul>
+
+  <h2>Your choices</h2>
+  <p>
+    When signed in, the Account link on the main menu lets you change your email or
+    password, or delete your account and everything attached to it, straight away. Your
+    name, tag and settings can be changed from the menu as usual. For a copy of your
+    account information, contact us and we'll send it. Depending on where you
+    live, you may have further rights under local law (such as the GDPR or CCPA); we'll
+    honor those requests too.
+  </p>
+
+  <h2>Children</h2>
+  <p>
+    BorderWar isn't directed at children under 13, and we don't knowingly collect
+    personal information from them. Creating an account requires confirming that you
+    are 13 or older. If you believe a child has created an account,
+    contact us and we'll delete it.
+  </p>
+
+  <h2>Changes</h2>
+  <p>
+    If the game starts handling information differently, we'll update this page and the
+    date at the top. The rules for playing are in the
+    <a href="terms.html">Terms of Service</a>.
+  </p>
+
+  <h2>Contact</h2>
+  <p>
+    For privacy questions or requests, email
+    <a href="mailto:contact@borderwar.io">contact@borderwar.io</a>. For anything else you
+    can also find the developers on
+    <a href="https://discord.gg/X9ZEYN8Qv7" target="_blank" rel="noopener">Discord</a>
+    and <a href="https://www.reddit.com/r/BorderWar/" target="_blank" rel="noopener">r/BorderWar</a>.
+    BorderWar's source code is public on
+    <a href="https://github.com/almostcertain/BorderWar" target="_blank" rel="noopener">GitHub</a>,
+    so you can check any of the above for yourself.
+  </p>
+</main>
+</body>
+</html>

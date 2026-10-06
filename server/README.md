@@ -14,6 +14,9 @@ reach it.
 | **2** | Same house / LAN | Add a Windows Defender Firewall inbound rule for the port on *private* networks, then `http://<lan-ip>:8124` from another device | Local playtesting |
 | **3** | Over the internet | Cloudflare Tunnel (`cloudflared`) in front of the local port; connect over `wss://` | Friends elsewhere |
 
+To run the live server on a rented Linux box instead of this machine (same
+server, same tunnel), see `docs/cloud-hosting.md`.
+
 Starting the server from cold is four commands:
 
 ```
@@ -24,7 +27,42 @@ node index.js
 
 (or `npm start`, which just runs `node index.js`). It listens on port `8124` by
 default; override with `PORT=<n> node index.js`. Ctrl+C sends `SIGINT`, which
-the server handles gracefully (terminates open sockets, then exits).
+drains the server: lobbies are closed with a "server is restarting" message, no
+new games can start, and it exits once the matches in progress have finished.
+Press Ctrl+C again to stop immediately (players still get the message).
+
+To do the same from another window, with a progress readout:
+
+```
+node tools/drain-server.js              # wait as long as the matches take
+node tools/drain-server.js --max-minutes 30
+```
+
+It calls `POST /admin/drain` with the admin token and returns when the server
+has exited. The Cloudflare tunnel is a separate process; stop it afterwards.
+
+### Player accounts: data and admin commands
+
+Accounts live in one SQLite file, `server/data/borderwar.db` (override with
+`BORDERWAR_DB`). It holds emails and password hashes, so treat `server/data/` as
+private: it is gitignored, never served over HTTP, and the server sets the
+database, its backups and the admin token to owner-only access (macOS/Linux; on
+Windows, keep the folder out of shared or synced locations).
+
+The server writes a backup to `server/data/backups/` once a day and keeps the
+last 14. To restore, stop the server and copy a backup over `borderwar.db`
+(delete the `-wal` and `-shm` files beside it).
+
+Run these on the host; they are safe while the server is up:
+
+```
+node server/accounts/admin.js export <email>           # a player's data as JSON (data requests)
+node server/accounts/admin.js reset-password <email>   # temporary password, signs them out
+node server/accounts/admin.js revoke-sessions <email>  # sign one account out everywhere
+node server/accounts/admin.js revoke-sessions --all    # sign everyone out
+```
+
+If the database or host may have been exposed, follow `docs/breach-response.md`.
 
 ### Mac quick start
 

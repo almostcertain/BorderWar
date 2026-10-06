@@ -37,7 +37,7 @@ const UI = {
   // While placing === 'plane': the level 2+ City the plane leaves from
   // (docs/paratroopers-spec.md). -1 otherwise.
   planeCity: -1,
-  placeHover: -1,     // tile under the cursor while armed (mouse only)
+  placeHover: -1,     // tile under the cursor while armed (mouse hover, or a build-bar drag)
   flashText: '',
   flashUntil: 0,
 
@@ -53,6 +53,16 @@ const UI = {
   debugNukeSrc: -1,
   // Whether the debug panel is expanded; closed by default, toggled by #debugToggle.
   debugOpen: false,
+
+  // The debug button and panel, and Pause, are for development, so they exist only where
+  // the page is served from a developer's own machine or home network, never
+  // from the live site. Decided once from the address; nothing a player can
+  // type into the URL turns it on.
+  DEBUG_HOST: /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|.*\.localhost|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/
+    .test(location.hostname),
+  // Singleplayer as well: every debug action writes around the intent
+  // pipeline (see the BYPASS notes in setup()).
+  debugAllowed() { return this.DEBUG_HOST && Transport.isLocal; },
 
   // The player's own warships currently selected via Input's shift-drag box
   // (or a shift-click on a single one) — see selectWarshipsInBox/
@@ -75,7 +85,33 @@ const UI = {
   // Hotkeys for entries whose Game.UNITS row carries none (the Scout: its row
   // is sim data and was left alone). 'e' for explore; the digits, P and the
   // WASD pan keys are taken.
-  EXTRA_HOTKEYS: { scout: 'e' },
+  EXTRA_HOTKEYS: { scout: 'e', drill: 'k', radio: 'r' },
+
+  // What each build-bar entry is for, shown when the mouse rests on its
+  // button (setupTips). Kept here rather than in Game.UNITS: that table is sim
+  // data and the goldens hash it. Numbers are read from the sim's constants so
+  // a balance change cannot leave a tip behind.
+  UNIT_TIPS: {
+    city: () => 'Raises your maximum population. Tap one you own to upgrade it. Each City or upgrade costs more than the last.',
+    factory: () => 'Lays rail to nearby Cities and runs trains between them. Every train pays gold, and a train to another nation pays both of you.',
+    port: () => 'Built on the coast. Sends trade ships to other nations\' Ports, paying both sides gold; longer routes pay more. Needed to launch ships.',
+    fort: () => 'Defends your land within ' + Game.FORT_RANGE + ' tiles: it costs attackers ' + Game.FORT_DEF_MULT +
+      'x the troops to take and they advance ' + Game.FORT_SPEED_MULT + 'x slower.',
+    warship: () => 'Patrols the water where you send it. Sinks enemy boats and warships and captures unfriendly trade ships. Needs a Port. Shift-drag to select, then tap water to move.',
+    silo: () => 'Launches your Atom Bombs, Hydrogen Bombs and MIRVs. Reloads for ' + Game.SILO_COOLDOWN +
+      's after each launch. Each upgrade adds another missile slot.',
+    atombomb: () => 'A nuclear strike launched from your nearest ready Missile Silo. Its blast reaches ' +
+      Game.NUKE_MAGNITUDES.atombomb.outer + ' tiles from where it lands. Enemy SAM Launchers can shoot it down.',
+    hydrogenbomb: () => 'A far larger nuclear strike: its blast reaches ' + Game.NUKE_MAGNITUDES.hydrogenbomb.outer +
+      ' tiles, against the Atom Bomb\'s ' + Game.NUKE_MAGNITUDES.atombomb.outer + '. Needs a Missile Silo.',
+    sam: () => 'Shoots down enemy nukes that fly within its range. Reloads for ' + Game.SAM_COOLDOWN +
+      's after each shot. Upgrades widen the range and add charges.',
+    mirv: () => 'Splits into ' + Game.MIRV_WARHEAD_COUNT + ' warheads that rain down across a huge area. Needs a Missile Silo. The price rises every time anyone launches one.',
+    scout: () => 'An unarmed ship that uncovers the map as it sails. Launched from your nearest Port; send it anywhere, even into the dark.',
+    drill: () => 'Starts the endgame. After a ' + Game.DRILL_COUNTDOWN_S + 's warning the world closes in on this spot over ' +
+      Math.round(Game.DRILL_SHRINK_S / 60) + ' minutes, and the last nation standing wins. One per match, and it cannot be stopped.',
+    radio: () => 'Uncovers the map in a wide circle around it once built, then is gone. A way to see past your border without a Port.'
+  },
 
   // Puts the attack ratio back to its default and moves the slider handle and
   // label to match. The browser restores a range input's last value on refresh
@@ -149,7 +185,10 @@ const UI = {
     });
 
     this.setupBuildBar();
+    this.setupTips();
     this.setupLobby();
+    this.setupAccount();
+    this.setupReplays();
 
     // DEBUG BYPASS #1 — dev-only gold cheats.
     //
@@ -167,7 +206,7 @@ const UI = {
     // can't be pressed against an empty player list.
     for (const btn of document.querySelectorAll('#debugPanel button[data-gold]')) {
       btn.addEventListener('click', () => {
-        if (!Transport.isLocal) return;
+        if (!this.debugAllowed()) return;
         const me = Game.players[Game.me];
         if (me) me.gold += +btn.dataset.gold;
       });
@@ -190,11 +229,22 @@ const UI = {
     // singleplayer-only in effect — a real server would ignore the request —
     // but there is nothing here for it to desync.
     document.getElementById('debugFastForward').addEventListener('click', () => {
-      if (!Transport.isLocal) return;
+      if (!this.debugAllowed()) return;
       LocalServer.burst(Math.round(300 / Game.TICK_DT));
     });
 
+    // Speed-up: cycles LocalServer.speed, which only shortens the pump's turn
+    // gate. Turns still flow through the normal path, so nothing to desync;
+    // singleplayer only. Backpressure caps it at what the client can drain.
+    document.getElementById('debugSpeed').addEventListener('click', () => {
+      if (!this.debugAllowed()) return;
+      const steps = [1, 2, 4, 8, 16];
+      LocalServer.speed = steps[(steps.indexOf(LocalServer.speed) + 1) % steps.length];
+    });
+
     document.getElementById('pauseBtn').addEventListener('click', () => this.togglePause());
+    this.initGameMenu();
+    document.getElementById('musicBtn').addEventListener('click', () => this.toggleMusic());
 
     document.getElementById('debugToggle').addEventListener('click', () => {
       this.debugOpen = !this.debugOpen;
@@ -203,6 +253,7 @@ const UI = {
     document.getElementById('debugNukeAtom').addEventListener('click', () => this.armDebugNuke('atombomb'));
     document.getElementById('debugNukeHydrogen').addEventListener('click', () => this.armDebugNuke('hydrogenbomb'));
     document.getElementById('debugPeace').addEventListener('click', () => this.armDebugPeace());
+    document.getElementById('debugForfeit').addEventListener('click', () => this.debugForfeit());
 
     // Hotkeys, one digit per structure in bar order, and Escape to disarm.
     // Guarded on the focused element so typing a bot count in the start menu
@@ -211,25 +262,89 @@ const UI = {
       const tag = e.target && e.target.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (e.key === 'Escape') {
-        this.cancelPlacing();
+        // The capture-phase handler in initGameMenu already used this press.
+        if (e._menuHandled) return;
+        const armed = this.cancelPlacing();
+        const selected = this.selectedWarships.size + this.selectedScouts.size > 0;
         this.clearShipSelection();
+        // Nothing to put away: Escape opens the menu.
+        if (!armed && !selected) this.openGameMenu();
         return;
       }
       if (e.key === 'p' || e.key === 'P') { this.togglePause(); return; }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'm') { this.toggleMusic(); return; }
+      if (Replay.active) return; // watching: nothing to build
       const u = Game.UNITS.find(x => x.hotkey === e.key);
       if (u) this.togglePlacing(u.type);
       // Only a fog match has the button, so only a fog match has the key.
       else if (Game.fog && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === this.EXTRA_HOTKEYS.scout) {
         this.togglePlacing('scout');
       }
+      else if (Game.fog && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === this.EXTRA_HOTKEYS.radio) {
+        this.togglePlacing('radio');
+      }
+      else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === this.EXTRA_HOTKEYS.drill) {
+        this.togglePlacing('drill');
+      }
     });
+  },
+
+  // In-game menu: Escape, or the corner button on touch. Pause is
+  // singleplayer-only, so its row shows only where the Pause button would.
+  initGameMenu() {
+    const menu = document.getElementById('gameMenu');
+    const optionsOpen = () => !document.getElementById('optionsOverlay').classList.contains('hidden');
+    const pauseRow = document.getElementById('gmPause');
+    this.gameMenuEl = menu;
+    document.getElementById('menuBtn').addEventListener('click', () => this.openGameMenu());
+    document.getElementById('gmResume').addEventListener('click', () => this.closeGameMenu());
+    document.getElementById('gmOptions').addEventListener('click', () => Options.open());
+    pauseRow.addEventListener('click', () => {
+      this.togglePause();
+      this.closeGameMenu();
+    });
+    menu.addEventListener('click', e => { if (e.target === menu) this.closeGameMenu(); });
+    // Capture phase, so it runs before Options closes itself on the same press.
+    window.addEventListener('keydown', e => {
+      if (e.key !== 'Escape' || menu.classList.contains('hidden')) return;
+      e._menuHandled = true;
+      if (!optionsOpen()) this.closeGameMenu();
+    }, true);
+  },
+
+  openGameMenu() {
+    if (Replay.active || !Game.running || !Game.players[Game.me]) return;
+    if (!document.getElementById('overlay').classList.contains('hidden')) return;
+    const showPause = this.debugAllowed() && Game.winnerId === null;
+    const pauseRow = document.getElementById('gmPause');
+    pauseRow.classList.toggle('hidden', !showPause);
+    pauseRow.textContent = (Tutorial.active ? Tutorial.userPaused : LocalServer.paused) ? 'Resume game' : 'Pause game';
+    this.cancelPlacing();
+    Radial.hide();
+    this.gameMenuEl.classList.remove('hidden');
+  },
+
+  closeGameMenu() {
+    this.gameMenuEl.classList.add('hidden');
+    document.getElementById('gmExit').dispatchEvent(new Event('disarm'));
   },
 
   // Singleplayer only, and only while a match is live: LocalServer stops its
   // pump when paused, which freezes the sim since it advances on turn arrival.
   togglePause() {
-    if (!Transport.isLocal || !Game.players[Game.me] || Game.winnerId !== null) return;
+    if (Replay.active) { Replay.setPaused(Replay.ended() ? false : !Replay.paused); return; }
+    if (!this.debugAllowed() || !Game.players[Game.me] || Game.winnerId !== null) return;
+    // A tutorial holds the match itself while the player reads; it keeps the
+    // player's own pause apart from that (js/tutorial.js).
+    if (Tutorial.active) { Tutorial.togglePause(); return; }
     LocalServer.setPaused(!LocalServer.paused);
+  },
+
+  // In a match only: the menu has no music to mute, and its own Options
+  // checkbox for the same setting.
+  toggleMusic() {
+    if (!document.getElementById('overlay').classList.contains('hidden')) return;
+    Options.set('musicOn', !Options.get('musicOn'));
   },
 
   // Build-bar icon per unit type, where the file name differs from the type.
@@ -274,6 +389,13 @@ const UI = {
     };
     bar.addEventListener('scroll', updateFade);
     new ResizeObserver(updateFade).observe(bar);
+
+    // Drag-to-place. Delegated to the bar rather than bound per button, since
+    // rebuildBuildBar replaces the buttons.
+    bar.addEventListener('pointerdown', e => this.onBarDown(e));
+    bar.addEventListener('pointermove', e => this.onBarMove(e));
+    bar.addEventListener('pointerup', e => this.onBarUp(e));
+    bar.addEventListener('pointercancel', e => this.onBarUp(e));
     // A rebuilt bar can change width without the bar's own box changing.
     this._updateBarFade = updateFade;
     updateFade();
@@ -284,19 +406,30 @@ const UI = {
   // any match has said whether it has fog, so syncBuildBar redoes it when the
   // answer changes from one match to the next. A fog-off bar comes out exactly
   // as it always was.
+  //
+  // The bar follows Game.UNITS' order, except that The Drill and the Scout
+  // trade places, so the two fog entries sit together at the end. Done here
+  // rather than in the table: that is sim data and the goldens hash it.
   rebuildBuildBar() {
     const bar = document.getElementById('buildBar');
     const fog = this._barFog = !!Game.fog;
-    bar.innerHTML = Game.UNITS.filter(u => !u.fogOnly || fog).map(u =>
-      `<button class="buildBtn" data-type="${u.type}">
-         <span class="bbKey">${u.hotkey || this.EXTRA_HOTKEYS[u.type] || ''}</span>
+    const units = Game.UNITS.filter(u => !u.fogOnly || fog);
+    const si = units.findIndex(u => u.type === 'scout'), di = units.findIndex(u => u.type === 'drill');
+    if (si >= 0 && di >= 0) [units[si], units[di]] = [units[di], units[si]];
+    bar.innerHTML = units.map(u => {
+      const key = u.hotkey || this.EXTRA_HOTKEYS[u.type] || '';
+      const tip = this.UNIT_TIPS[u.type];
+      const tipAttr = tip ? ` data-tip-title="${u.name}" data-tip-key="${key}" data-tip="${escapeHtml(tip())}"` : '';
+      return `<button class="buildBtn" data-type="${u.type}"${tipAttr}>
+         <span class="bbKey">${key}</span>
          <span class="bbIcon">${iconHtml(this.UNIT_ICONS[u.type] || u.type)}</span>
          <span class="bbBody">
            <span class="bbName">${u.name}</span>
            <span class="bbCost"></span>
          </span>
          <span class="bbCount"></span>
-       </button>`).join('');
+       </button>`;
+    }).join('');
 
     this.buildEls = new Map();
     for (const btn of bar.querySelectorAll('.buildBtn')) {
@@ -305,15 +438,160 @@ const UI = {
         cost: btn.querySelector('.bbCost'),
         count: btn.querySelector('.bbCount')
       });
-      btn.addEventListener('click', () => this.togglePlacing(btn.dataset.type));
+      btn.addEventListener('click', () => {
+        // The click that ends a drag-to-place (mouse only; touch sends none)
+        // must not also toggle the button it started on.
+        if (this._barDragged) { this._barDragged = false; return; }
+        this.togglePlacing(btn.dataset.type);
+      });
     }
     if (this._updateBarFade) this._updateBarFade();
+  },
+
+  // Hover descriptions. Any element carrying data-tip gets one, with optional
+  // data-tip-title and data-tip-key (a hotkey) for a heading; the build bar and
+  // the radial menu write theirs as they render, the fixed HUD has them in
+  // index.html. One delegated pointerover does the lot, because both of those
+  // rewrite their elements and a removed element sends no pointerout: every
+  // move onto a new element lands here, and either finds a tip or clears it.
+  //
+  // Mouse only. Touch has no hover, and a tip that appeared on press would sit
+  // under the finger and over the drag-to-place ghost.
+  TIP_DELAY_MS: 350,
+
+  setupTips() {
+    const el = document.getElementById('tip');
+    let shownFor = null, timer = 0;
+    const hide = () => {
+      clearTimeout(timer);
+      shownFor = null;
+      el.classList.add('hidden');
+    };
+    const show = target => {
+      shownFor = target;
+      const d = target.dataset;
+      el.innerHTML =
+        (d.tipTitle ? `<div class="tipTitle">${escapeHtml(d.tipTitle)}` +
+          (d.tipKey ? `<span class="tipKey">${escapeHtml(d.tipKey.toUpperCase())}</span>` : '') + '</div>' : '') +
+        `<div class="tipBody">${escapeHtml(d.tip)}</div>`;
+      el.classList.remove('hidden');
+      // Above the element, centred on it; below instead when there is no room
+      // (the buttons along the top edge), and never off either side.
+      const r = target.getBoundingClientRect(), m = 6;
+      const w = el.offsetWidth, h = el.offsetHeight;
+      const x = Math.max(m, Math.min(window.innerWidth - w - m, r.left + r.width / 2 - w / 2));
+      const y = r.top - h - m >= m ? r.top - h - m : Math.min(window.innerHeight - h - m, r.bottom + m);
+      el.style.left = Math.round(x) + 'px';
+      el.style.top = Math.round(y) + 'px';
+    };
+    document.addEventListener('pointerover', e => {
+      if (e.pointerType === 'touch') return;
+      const target = e.target.closest ? e.target.closest('[data-tip]') : null;
+      if (target && target === shownFor) return;
+      // Already reading one: the next appears at once, as a row of buttons
+      // swept across should. From nothing, wait, so tips do not flicker up
+      // every time the cursor crosses the HUD on its way somewhere else.
+      const wasShown = !el.classList.contains('hidden');
+      hide();
+      if (!target) return;
+      if (wasShown) show(target);
+      else timer = setTimeout(() => { if (target.isConnected) show(target); }, this.TIP_DELAY_MS);
+    });
+    // A press is the player acting on the thing, not asking about it.
+    document.addEventListener('pointerdown', hide, true);
+    document.documentElement.addEventListener('pointerleave', hide);
+    window.addEventListener('blur', hide);
   },
 
   // Cheap enough for every frame; a no-op unless the match's fog setting
   // differs from what the bar was built for.
   syncBuildBar() {
     if (this._barFog !== !!Game.fog) this.rebuildBuildBar();
+  },
+
+  // Drag-to-place: pressing a build button and dragging up onto the map arms
+  // it and carries the placement ghost along; letting go places it there, as
+  // a tap on that spot would. Mostly for touch, which has no hover and so
+  // otherwise never sees the ghost before committing. Dragging sideways still
+  // scrolls the bar (touch-action: pan-x on .buildBtn), which is why only an
+  // upward drag starts one.
+  BAR_DRAG_START: 12,   // px, the same tolerance Input uses for tap-vs-drag
+  // A finger covers the spot it is on, so on touch the ghost rides this far
+  // above it.
+  BAR_DRAG_LIFT: 56,
+
+  onBarDown(e) {
+    this._barDragged = false;
+    this.barDrag = null;
+    const btn = e.target.closest('.buildBtn');
+    if (!btn || e.button !== 0 || !Game.running) return;
+    this.barDrag = {
+      id: e.pointerId, type: btn.dataset.type, btn, x0: e.clientX, y0: e.clientY,
+      lift: e.pointerType === 'mouse' ? 0 : this.BAR_DRAG_LIFT, active: false
+    };
+  },
+
+  onBarMove(e) {
+    const d = this.barDrag;
+    if (!d || e.pointerId !== d.id) return;
+    if (!d.active) {
+      const up = d.y0 - e.clientY;
+      if (up < this.BAR_DRAG_START || up < Math.abs(e.clientX - d.x0)) return;
+      if (this.placing !== d.type) this.togglePlacing(d.type);
+      if (this.placing !== d.type) { this.barDrag = null; return; }
+      d.active = true;
+      // Touch is captured to the button already; a mouse is not, and would
+      // stop reporting here the moment it left the bar.
+      try { d.btn.setPointerCapture(e.pointerId); } catch {}
+    }
+    // Put away mid-drag (Escape, or the player died).
+    if (this.placing !== d.type) { this.barDrag = null; return; }
+    this.placeHover = this.barDragOverMap(e) ? this.placeTileAt(e.clientX, e.clientY - d.lift) : -1;
+  },
+
+  onBarUp(e) {
+    const d = this.barDrag;
+    if (!d || e.pointerId !== d.id) return;
+    this.barDrag = null;
+    if (!d.active) return;
+    this._barDragged = true;
+    if (this.placing !== d.type) return;
+    // Let go back over the HUD, or the browser took the gesture: put it away.
+    if (e.type === 'pointercancel' || !this.barDragOverMap(e)) { this.cancelPlacing(); return; }
+    this.onTap(e.clientX, e.clientY - d.lift);
+    // A refused placement stays armed for a follow-up tap; with a mouse the
+    // hover takes the ghost back over, but touch has none, so it would be
+    // left standing where the finger lifted.
+    if (d.lift) this.placeHover = -1;
+  },
+
+  // Whether the pointer itself (not the lifted ghost) is over the map rather
+  // than the HUD.
+  barDragOverMap(e) {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    return !!el && el.id === 'game';
+  },
+
+  // The tile a tap at this screen point would act on with the current build
+  // armed: an existing same-type structure nearby (upgrade), else the
+  // rail/coast snap, else the tile itself. Mirrors onTap's own resolution so
+  // the ghost is honest about what a tap will do.
+  placeTileAt(sx, sy) {
+    const raw = Render.screenToTile(sx, sy);
+    const near = Render.findStructureNear(sx, sy, this.placing) ||
+      Game.upgradeTargetNear(Game.me, this.placing, raw);
+    if (near) return near.tile;
+    const railSnap = this.placing === 'city' ? Render.findRailSnapTile(sx, sy) : -1;
+    const base = railSnap >= 0 ? railSnap : raw;
+    // Structures keep STRUCTURE_MIN_DIST apart, so a click near one lands on
+    // the nearest tile that is clear of it (and, for a Port, on the coast).
+    // Warship placement has no click-time snap at all — a click can land
+    // anywhere on the map (Game.resolveWarshipLaunch snaps it to the nearest
+    // open water and picks a launching Port on its own) — and
+    // structureSiteNear answers -1 for it and every other non-structure, so
+    // those just get the raw tile.
+    const site = Game.structureSiteNear(Game.me, this.placing, base);
+    return site >= 0 ? site : base;
   },
 
   // Puts away whatever build is armed — structure, nuke, warship or the debug
@@ -348,7 +626,7 @@ const UI = {
     // Arms DEBUG BYPASS #2 (see onTap's 'debugnuke' branch) — singleplayer
     // only, for the same reason as the gold buttons: Game.debugNuke has no
     // intent behind it and never will.
-    if (!Transport.isLocal) return;
+    if (!this.debugAllowed()) return;
     if (this.placing === 'debugnuke' && this.debugNukeType === type) {
       this.placing = null;
       this.debugNukeType = null;
@@ -366,10 +644,22 @@ const UI = {
 
   // Arms the debug "peace offer" tool: the next tap on a nation makes that
   // nation send you an alliance request. See onTap's 'debugpeace' branch.
+  // DEBUG BYPASS #4 — singleplayer only, same reasoning as the gold buttons.
+  // Gives up the player's land and eliminates them on the spot, which brings
+  // up the defeat screen without playing a match out. The bots carry on.
+  debugForfeit() {
+    if (!this.debugAllowed() || !Game.running) return;
+    const me = Game.players[Game.me];
+    if (!me || !me.alive) return;
+    for (const tile of [...me.tiles]) Game.setOwner(tile, NEUTRAL);
+    me.troops = 0;
+    Game.eliminatePlayer(me);
+  },
+
   armDebugPeace() {
     if (!Game.running) return;
     // DEBUG BYPASS #3 — singleplayer only, same reasoning as armDebugNuke.
-    if (!Transport.isLocal) return;
+    if (!this.debugAllowed()) return;
     if (this.placing === 'debugpeace') { this.placing = null; return; }
     this.placing = 'debugpeace';
     this.placeHover = -1;
@@ -605,8 +895,10 @@ const UI = {
     // the phase's own turn counter (Game.ticks stays frozen at 0 throughout
     // the whole spawn phase by design, so it can't drive this).
     const remaining = Math.max(0, Math.ceil((Game.SPAWN_PHASE_TURNS - Game.spawnPhaseTicks) * Game.TICK_DT));
-    const hint = Game.fog ? this.SPAWN_FOG_HINT : (this.spawnSent ? this.SPAWN_SENT_HINT : this.SPAWN_HINT);
-    el.textContent = hint + ' · ' + remaining + 's';
+    const hint = Game.fog ? this.SPAWN_FOG_HINT : this.spawnSent ? this.SPAWN_SENT_HINT
+      : Tutorial.active ? Tutorial.SPAWN_HINT : this.SPAWN_HINT;
+    // Solo matches start on the tap, so there is no deadline worth showing.
+    el.textContent = Game.humanCount > 1 || Game.fog ? hint + ' · ' + remaining + 's' : hint;
   },
 
   hoverId: -1,
@@ -691,6 +983,7 @@ const UI = {
   },
 
   onTap(sx, sy) {
+    if (Replay.active) return; // watching: a tap is not an order
     if (Game.spawning) {
       const tile = Render.screenToTile(sx, sy);
       if (tile < 0) return;
@@ -727,7 +1020,7 @@ const UI = {
       // is a dev tool for looking at blast/fallout behaviour rather than a
       // move a player can make. Singleplayer only — armDebugNuke refuses to
       // arm it when the transport is not local, and update() hides the panel.
-      if (!Transport.isLocal) return;
+      if (!this.debugAllowed()) return;
       Game.debugNuke(this.debugNukeType, this.debugNukeSrc, tile);
       this.placing = null;
       this.debugNukeType = null;
@@ -742,7 +1035,7 @@ const UI = {
     // as you. Singleplayer only (armDebugPeace refuses otherwise). Stays armed so
     // several nations can be tapped in a row; Esc or the button disarms it.
     if (this.placing === 'debugpeace') {
-      if (!Transport.isLocal) return;
+      if (!this.debugAllowed()) return;
       const tile = Render.screenToTile(sx, sy);
       const owner = tile < 0 ? -1 : GameMap.owner[tile];
       if (owner < 0 || owner === Game.me) { this.flash('Tap another nation'); return; }
@@ -806,6 +1099,24 @@ const UI = {
         return;
       }
       Transport.sendIntent(Protocol.intent.buildUnit('warship', tile));
+      this.placing = null;
+      this.placeHover = -1;
+      return;
+    }
+
+    // The Drill (Battle Royale): a click on the player's own land, instant, one
+    // per match. Its own reasons (Game.drillBlockReason) rather than
+    // buildBlockReason's, since it never lands in Game.buildings. Placement
+    // is a normal build_unit intent; the executor routes it to Game.placeDrill.
+    if (this.placing === 'drill') {
+      const tile = Render.screenToTile(sx, sy);
+      const reason = Game.drillBlockReason(Game.me, tile);
+      if (reason) {
+        this.flash(reason);
+        if (reason !== 'Your own land only') { this.placing = null; this.placeHover = -1; }
+        return;
+      }
+      Transport.sendIntent(Protocol.intent.buildUnit('drill', tile));
       this.placing = null;
       this.placeHover = -1;
       return;
@@ -934,7 +1245,11 @@ const UI = {
       // would resolve to. The same button doing double duty this way matches
       // OpenFront's own build menu (its buildableUnits() resolves to either
       // canBuild or canUpgrade depending on what's already standing there).
-      const existing = Render.findStructureNear(sx, sy, this.placing);
+      // OpenFront also reads a click anywhere inside the minimum spacing
+      // around one (Game.upgradeTargetNear) the same way, since nothing new
+      // could be built that close to it anyway.
+      const existing = Render.findStructureNear(sx, sy, this.placing) ||
+        Game.upgradeTargetNear(Game.me, this.placing, Render.screenToTile(sx, sy));
       if (existing) {
         const reason = Game.upgradeBlockReason(Game.me, existing.tile);
         if (reason) { this.flash(reason); return; }
@@ -945,13 +1260,14 @@ const UI = {
       }
 
       const railSnap = this.placing === 'city' ? Render.findRailSnapTile(sx, sy) : -1;
-      // A Port has to land on the coast — snap a click near the shore onto
-      // the nearest actual coastal tile of the player's own territory, same
-      // idea as the city/rail snap just above but geometric (BFS) rather
-      // than a line-distance test, since a coastline isn't straight.
-      const coastSnap = this.placing === 'port'
-        ? Game.nearestOwnedCoastNear(Game.me, Render.screenToTile(sx, sy), Game.PORT_SNAP_MAX_DIST) : -1;
-      const tile = railSnap >= 0 ? railSnap : coastSnap >= 0 ? coastSnap : Render.screenToTile(sx, sy);
+      const base = railSnap >= 0 ? railSnap : Render.screenToTile(sx, sy);
+      // Structures keep a minimum distance apart, so the click lands on the
+      // nearest tile of the player's own land that is clear of every other
+      // structure — and, for a Port, on the coast (see Game.structureSiteNear).
+      // With no such tile nearby the raw one goes through, so the refusal
+      // below can say why.
+      const site = Game.structureSiteNear(Game.me, this.placing, base);
+      const tile = site >= 0 ? site : base;
       const reason = Game.buildBlockReason(Game.me, this.placing, tile);
       if (reason) {
         this.flash(reason);
@@ -1096,18 +1412,28 @@ const UI = {
     // BYPASS notes in setup()) and would desync a networked match.
     // The panel itself additionally stays closed until the toggle opens it.
     const debugToggle = document.getElementById('debugToggle');
-    debugToggle.classList.toggle('hidden', !Transport.isLocal);
+    debugToggle.classList.toggle('hidden', !this.debugAllowed());
     debugToggle.textContent = this.debugOpen ? 'Debug ▾' : 'Debug ▸';
-    document.getElementById('debugPanel').classList.toggle('hidden', !Transport.isLocal || !this.debugOpen);
+    document.getElementById('debugPanel').classList.toggle('hidden', !this.debugAllowed() || !this.debugOpen);
 
     const pauseBtn = document.getElementById('pauseBtn');
-    pauseBtn.classList.toggle('hidden', !Transport.isLocal || Game.winnerId !== null);
-    pauseBtn.classList.toggle('paused', LocalServer.paused);
+    pauseBtn.classList.toggle('hidden', !this.debugAllowed() || Game.winnerId !== null);
+    // The tutorial's own hold is not the player's pause, and the button only
+    // speaks for the player's.
+    const paused = Tutorial.active ? Tutorial.userPaused : LocalServer.paused;
+    pauseBtn.classList.toggle('paused', paused);
     // Only rewritten on a change: this runs every frame, and replacing the
     // button's contents at 60Hz would reload its icon and break :active.
-    if (pauseBtn._paused !== LocalServer.paused) {
-      pauseBtn._paused = LocalServer.paused;
-      pauseBtn.innerHTML = LocalServer.paused ? iconHtml('play') + ' Resume' : iconHtml('pause') + ' Pause';
+    if (pauseBtn._paused !== paused) {
+      pauseBtn._paused = paused;
+      pauseBtn.innerHTML = paused ? iconHtml('play') + ' Resume' : iconHtml('pause') + ' Pause';
+    }
+
+    const musicBtn = document.getElementById('musicBtn');
+    const musicOn = Options.get('musicOn');
+    if (musicBtn._on !== musicOn) {
+      musicBtn._on = musicOn;
+      musicBtn.innerHTML = iconHtml(musicOn ? 'music' : 'music-off');
     }
 
     this.syncBuildBar();
@@ -1185,6 +1511,7 @@ const UI = {
     this.updatePlaneAlert();
     this.updatePlaneBar(me);
     this.updatePlaneButtons(me);
+    this.updateDrillHud(me);
     this.updateBanner();
     this.updateBuildBar(me);
     this.updateFronts();
@@ -1360,11 +1687,14 @@ const UI = {
       els.count.textContent = isScout ? (owned ? owned + '/' + Game.MAX_SCOUTS_PER_PLAYER : '') : owned ? '×' + owned : '';
       // Affordability drives the dim, not the disabled attribute: a button you
       // cannot press is also a button that cannot tell you the price.
+      const isDrill = u.type === 'drill';
+      if (isDrill) els.cost.textContent = Game.drill ? 'Built' : formatGold(cost);
       els.btn.classList.toggle('poor', me.gold < cost);
       els.btn.classList.toggle('armed', this.placing === u.type);
       els.btn.classList.toggle('locked',
         (u.type === 'atombomb' || u.type === 'hydrogenbomb' || u.type === 'mirv') && Game.unitsOwned(me, 'silo') < 1 ||
         (u.type === 'warship' && Game.unitsOwned(me, 'port') < 1) ||
+        (isDrill && !!Game.drill) ||
         (isScout && (this.scoutReason() === 'Build a Port first' || this.scoutReason() === 'Scout limit reached')));
     }
 
@@ -1373,6 +1703,9 @@ const UI = {
     document.getElementById('debugNukeHydrogen').classList.toggle('armed',
       this.placing === 'debugnuke' && this.debugNukeType === 'hydrogenbomb');
     document.getElementById('debugPeace').classList.toggle('armed', this.placing === 'debugpeace');
+    const speedBtn = document.getElementById('debugSpeed');
+    speedBtn.textContent = `Speed ${LocalServer.speed}x`;
+    speedBtn.classList.toggle('armed', LocalServer.speed !== 1);
 
     const hintEl = document.getElementById('hint');
     if (performance.now() < this.flashUntil) {
@@ -1391,12 +1724,19 @@ const UI = {
         ? 'Build a Port first to unlock Warships · Esc to cancel'
         : 'Tap anywhere to launch a Warship from your nearest Port · ' +
           formatGold(Game.unitCost(me, 'warship')) + ' gold · Esc to cancel';
+    } else if (this.placing === 'drill') {
+      hintEl.textContent = Game.drill ? 'The Drill has already been built · Esc to cancel'
+        : 'Tap your own land to build The Drill — the world closes in, and the last nation standing wins · ' +
+          formatGold(Game.unitCost(me, 'drill')) + ' gold · Esc to cancel';
     } else if (this.placing === 'scout') {
       const reason = this.scoutReason();
       hintEl.textContent = reason === 'Build a Port first' ? 'Build a Port first to unlock Scouts · Esc to cancel'
         : reason ? reason + ' · Esc to cancel'
         : 'Tap anywhere, even into the dark, to send a Scout from your nearest Port · ' +
           formatGold(Game.unitCost(me, 'scout')) + ' gold · Esc to cancel';
+    } else if (this.placing === 'radio') {
+      hintEl.textContent = 'Tap your own land to place a Radio Tower — it uncovers the map around it once built · ' +
+        formatGold(Game.unitCost(me, 'radio')) + ' gold · ' + Game.unitDef('radio').buildTime + 's to build · Esc to cancel';
     } else if (this.placing === 'atombomb' || this.placing === 'hydrogenbomb' || this.placing === 'mirv') {
       const def = Game.unitDef(this.placing);
       const article = this.placing === 'atombomb' ? 'an' : 'a';
@@ -1425,7 +1765,7 @@ const UI = {
       if (hoverB && hoverB.type === this.placing && hoverB.built) {
         hintEl.textContent = 'Tap to upgrade this ' + def.name + ' to level ' + (hoverB.level + 1) +
           ' · ' + formatGold(Game.unitCost(me, this.placing)) + ' gold' +
-          ' · ' + def.buildTime + 's · Esc to cancel';
+          (Game.UPGRADE_TIME ? ' · ' + Game.UPGRADE_TIME + 's' : '') + ' · Esc to cancel';
       } else {
         hintEl.textContent = 'Tap your own land to place a ' + def.name +
           ' · ' + formatGold(Game.unitCost(me, this.placing)) + ' gold' +
@@ -1901,6 +2241,55 @@ const UI = {
   // One offer at a time: a peace deal someone has put to you, or an ally asking
   // to renew before the clock runs out. Ignoring either is a valid answer —
   // both simply lapse, and neither costs you anything.
+  // Battle Royale: the placement banner (everyone sees it, once, when the
+  // Drill record first appears) and the HUD chip counting down to the shrink,
+  // then to full closure. Reads the sim only; the "your land is next" flag is
+  // refreshed at 1 Hz from the player's border tiles (a few thousand at most,
+  // never the whole map) and lives on UI, not Game.
+  updateDrillHud(me) {
+    const d = Game.drill;
+    const chip = document.getElementById('drillHud'), banner = document.getElementById('drillBanner');
+    if (!d) {
+      if (this._drillSeen) { this._drillSeen = null; this._drillBannerUntil = 0; this._drillDanger = false; }
+      chip.classList.add('hidden');
+      banner.classList.add('hidden');
+      return;
+    }
+    const tps = Game.TICKS_PER_SEC, now = performance.now();
+    if (this._drillSeen !== d) {
+      this._drillSeen = d;
+      // Join/catch-up replays shouldn't re-announce an old placement.
+      if (Game.ticks - d.placedTick < 10 * tps) {
+        this._drillBannerUntil = now + 8000;
+        document.getElementById('drillBannerText').textContent =
+          (d.ownerId === Game.me ? 'You have' : this.nameOf(d.ownerId) + ' has') +
+          ' built The Drill — the world is closing in';
+        banner.classList.remove('hidden', 'fade');
+      }
+    }
+    if (this._drillBannerUntil) {
+      if (now > this._drillBannerUntil) { banner.classList.add('hidden'); this._drillBannerUntil = 0; }
+      else if (now > this._drillBannerUntil - 1200) banner.classList.add('fade');
+    }
+
+    const t = Game.ticks;
+    let text, secs;
+    if (t < d.startTick) { text = 'The Drill — shrink begins in'; secs = (d.startTick - t) / tps; }
+    else if (t < d.endTick) { text = 'The world is closing — full closure in'; secs = (d.endTick - t) / tps; }
+    else { text = 'The circle has closed'; secs = 0; }
+    if (now - (this._drillDangerAt || 0) > 1000) {
+      this._drillDangerAt = now;
+      this._drillDanger = me.alive && Render.ownLandDoomed(me, 30);
+    }
+    if (this._drillDanger && t >= d.startTick && t < d.endTick) text = 'YOUR LAND IS NEXT — full closure in';
+    if (Game.winnerId !== null) { text = 'Battle Royale over'; secs = 0; this._drillDanger = false; }
+    const timeText = secs > 0 ? Math.floor(secs / 60) + ':' + String(Math.floor(secs % 60)).padStart(2, '0') : '';
+    if (chip._text !== text) { chip._text = text; document.getElementById('drillHudText').textContent = text; }
+    if (chip._time !== timeText) { chip._time = timeText; document.getElementById('drillHudTime').textContent = timeText; }
+    chip.classList.toggle('danger', !!this._drillDanger && t < d.endTick);
+    chip.classList.remove('hidden');
+  },
+
   updateBanner() {
     const el = document.getElementById('diploBanner');
     const state = this.pendingOffer();
@@ -2008,15 +2397,18 @@ const UI = {
     if (Game.winnerId === null || this.endGameHandled) return;
     this.endGameHandled = true;
 
+    // Battle Royale: once a Drill exists the land-share win is off, so the
+    // only way to win is to be the last one standing (docs/battle-royale.md).
+    const br = !!Game.drill;
     if (Game.winnerTeam) {
       // Issue #31: a team game is won by the whole team, alive or not.
       if (Game.teamOf(Game.me) === Game.winnerTeam) {
-        this.showEnd('Victory', 'Team ' + Game.winnerTeam + ' controls the world.');
+        this.showEnd('Victory', br ? 'Your team is the last one standing — Battle Royale won.' : 'Team ' + Game.winnerTeam + ' controls the world.');
       } else {
-        this.showEnd('Game Over', 'Team ' + Game.winnerTeam + ' has won the game.');
+        this.showEnd('Game Over', 'Team ' + Game.winnerTeam + (br ? ' is the last team standing — Battle Royale.' : ' has won the game.'));
       }
     } else if (Game.winnerId === Game.me) {
-      this.showEnd('Victory', 'You control the world.');
+      this.showEnd('Victory', br ? 'You are the last nation standing — Battle Royale won.' : 'You control the world.');
     } else if (!me.alive) {
       // Already shown above, with the placement text — leave it as is.
     } else {
@@ -2024,7 +2416,7 @@ const UI = {
       // the old me-relative checks could never reach, so this client used to
       // show nothing at all once the match ended for everyone else.
       const winner = Game.players[Game.winnerId];
-      this.showEnd('Game Over', (winner ? winner.name : 'Another player') + ' has won the game.');
+      this.showEnd('Game Over', (winner ? winner.name : 'Another player') + (br ? ' is the last nation standing — Battle Royale.' : ' has won the game.'));
     }
 
     // This client's one vote (§4 `winner`) — sent in every case above,
@@ -2033,6 +2425,10 @@ const UI = {
   },
 
   showEnd(title, text) {
+    // A replay has no result of its own to announce; its bar shows the end.
+    if (Replay.active) return;
+    Replay.noteResult(title);
+    document.getElementById('endReplayRow').classList.toggle('hidden', !Replay.snapshot());
     document.getElementById('endTitle').textContent = title;
     document.getElementById('endText').textContent = text;
     // #22: a popup over the live map. Each new result (e.g. Victory/Game Over
@@ -2060,36 +2456,49 @@ const UI = {
   // main.js what the host/join forms currently say.
   //
   // #spMode (map/bots/tribes/#startBtn) is the pre-existing singleplayer
-  // panel, untouched — this section only adds the tab chrome around it and
-  // the two new panels beside it.
+  // panel, untouched — this section only adds the menu rows around it and
+  // the screens beside it. Host and join share one screen (#friendsMode).
 
   setupLobby() {
     const tabs = Array.prototype.slice.call(document.querySelectorAll('.modeTab'));
     const bodies = {
       sp: document.getElementById('spMode'),
-      host: document.getElementById('hostMode'),
-      join: document.getElementById('joinMode')
+      friends: document.getElementById('friendsMode'),
+      replay: document.getElementById('replayMode')
     };
-    // Picking a mode swaps the open-game card out for that mode's form; Back
-    // (#modeBack) undoes it. A class on #overlay rather than `hidden` on the
-    // card, because hideLobby() owns the card's `hidden` for the lobby screens.
+    // Picking a mode swaps the home screen (brand, open-game card, mode rows)
+    // out for that mode's screen; Back (#modeBack) undoes it. A class on
+    // #overlay rather than `hidden` on the card, because hideLobby() owns the
+    // card's `hidden` for the lobby screens.
     const overlay = document.getElementById('overlay');
     const back = document.getElementById('modeBack');
+    const title = document.getElementById('modeTitle');
+    // Solo / Friends switch in the header: forwards to the matching mode row.
+    const segs = Array.prototype.slice.call(document.querySelectorAll('#modeSeg button'));
+    segs.forEach((b) => b.addEventListener('click', () => {
+      const tab = tabs.find((t) => t.dataset.mode === b.dataset.seg);
+      if (tab) tab.click();
+    }));
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         tabs.forEach((t) => t.classList.toggle('active', t === tab));
+        segs.forEach((b) => b.classList.toggle('active', b.dataset.seg === tab.dataset.mode));
         for (const key in bodies) bodies[key].classList.toggle('hidden', key !== tab.dataset.mode);
         overlay.classList.add('modeOpen');
+        overlay.dataset.mode = tab.dataset.mode;
+        title.textContent = tab.dataset.title || '';
         back.classList.remove('hidden');
         this.setLobbyError('');
         // The preview skips drawing while its panel is hidden.
-        this.refreshMapPreview(tab.dataset.mode === 'host' ? 'host' : '');
+        if (tab.dataset.mode === 'sp') this.refreshMapPreview('');
+        if (tab.dataset.mode === 'replay') this.refreshReplayList();
       });
     });
     back.addEventListener('click', () => {
       tabs.forEach((t) => t.classList.remove('active'));
       for (const key in bodies) bodies[key].classList.add('hidden');
       overlay.classList.remove('modeOpen');
+      delete overlay.dataset.mode;
       back.classList.add('hidden');
       this.setLobbyError('');
     });
@@ -2111,6 +2520,343 @@ const UI = {
     document.getElementById('playerTag').value = savedTag;
   },
 
+  // --- Replays (js/replay.js, docs/replays.md) ---------------------------------
+  //
+  // The menu's Replays tab and the playback bar. Replay holds the state and
+  // does the work; this is the DOM around it.
+
+  setupReplays() {
+    const $ = (id) => document.getElementById(id);
+
+    $('replayLoadBtn').addEventListener('click', () => $('replayFile').click());
+    $('replayFile').addEventListener('change', () => {
+      const file = $('replayFile').files[0];
+      $('replayFile').value = '';
+      if (!file) return;
+      Replay.readFile(file)
+        .then((record) => Replay.put(record).then(() => this.playReplay(record)))
+        .catch((err) => this.setLobbyError(err.message));
+    });
+
+    $('endReplayBtn').addEventListener('click', () => {
+      const record = Replay.snapshot();
+      if (record) this.playReplay(record);
+    });
+    $('endSaveBtn').addEventListener('click', () => {
+      const record = Replay.snapshot();
+      if (record) Replay.download(record);
+    });
+
+    $('replayPlay').addEventListener('click', () => this.togglePause());
+    $('replaySpeed').addEventListener('click', () => Replay.cycleSpeed());
+    // Dragging only moves the readout; the jump happens on release, because a
+    // backward jump replays the match from the start.
+    $('replaySeek').addEventListener('input', () => { this._replayDragging = true; });
+    $('replaySeek').addEventListener('change', () => {
+      this._replayDragging = false;
+      Replay.seek(+$('replaySeek').value);
+    });
+    $('replayView').addEventListener('change', () => Replay.setView(+$('replayView').value));
+    $('replayReveal').addEventListener('change', () => { Replay.revealAll = $('replayReveal').checked; });
+    $('replayExit').addEventListener('click', () => Replay.host.exit());
+  },
+
+  playReplay(record) {
+    const err = Replay.play(record);
+    if (err) this.setLobbyError(err);
+  },
+
+  refreshReplayList() {
+    Replay.list().then((list) => this.renderReplayList(list));
+  },
+
+  // "12:40" from a turn count.
+  replayClock(turns) {
+    const s = Math.floor(turns * Game.TICK_DT);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  },
+
+  renderReplayList(list) {
+    const ul = document.getElementById('replayList');
+    ul.innerHTML = '';
+    if (list.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'lobbyListEmpty';
+      li.textContent = 'No replays yet. Matches you play are saved here automatically.';
+      ul.appendChild(li);
+      return;
+    }
+    list.forEach((record) => {
+      const info = record.gameStartInfo || {};
+      const cfg = info.config || {};
+      const humans = Array.isArray(info.players) ? info.players.length : 1;
+      const when = new Date(record.startedAt || record.savedAt);
+      const older = record.build && window.BUILD_ID && record.build !== window.BUILD_ID;
+
+      const li = document.createElement('li');
+      const label = document.createElement('span');
+      label.className = 'replayInfo';
+      label.title = 'Watch';
+      label.textContent = (record.result || 'Unfinished') + ' · ' +
+        (cfg.map === 'world' ? 'The World' : 'Procedural ' + (cfg.mapSize || ''));
+      const sub = document.createElement('small');
+      sub.textContent = when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
+        when.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) +
+        ' · ' + this.replayClock(record.turnCount) +
+        ' · ' + (humans > 1 ? humans + ' players' : 'Solo') +
+        (older ? ' · older version' : '');
+      label.appendChild(sub);
+      label.addEventListener('click', () => this.playReplay(record));
+
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.textContent = 'Save';
+      save.title = 'Download as a file';
+      save.addEventListener('click', () => Replay.download(record));
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.textContent = '✕';
+      del.title = 'Delete';
+      del.addEventListener('click', () => Replay.remove(record.id).then(() => this.refreshReplayList()));
+
+      li.appendChild(label);
+      li.appendChild(save);
+      li.appendChild(del);
+      ul.appendChild(li);
+    });
+  },
+
+  // Once a frame from main.js. Shows the bar only while a replay plays.
+  updateReplayBar() {
+    const $ = (id) => document.getElementById(id);
+    const bar = $('replayBar');
+    if (bar._record !== Replay.record) {
+      bar._record = Replay.record;
+      bar.classList.toggle('hidden', !Replay.active);
+      if (Replay.active) {
+        // Humans only: they are whose views differ in an interesting way.
+        const players = Replay.record.gameStartInfo.players || [];
+        const view = $('replayView');
+        view.innerHTML = '';
+        for (const p of players) {
+          const opt = document.createElement('option');
+          opt.value = p.playerId;
+          opt.textContent = p.username;
+          view.appendChild(opt);
+        }
+        view.value = Replay.viewAs;
+        view.classList.toggle('hidden', players.length < 2);
+        $('replayReveal').checked = Replay.revealAll;
+        this._replayDragging = false;
+      }
+    }
+    if (!Replay.active) return;
+
+    const seek = $('replaySeek');
+    const len = Replay.length();
+    if (+seek.max !== len) seek.max = len;
+    if (!this._replayDragging) seek.value = Replay.turn();
+    $('replayTime').textContent = (Replay.seeking() ? 'Seeking ' : '') +
+      this.replayClock(this._replayDragging ? +seek.value : Replay.turn()) + ' / ' + this.replayClock(len);
+
+    const waiting = Replay.paused || Replay.ended();
+    const play = $('replayPlay');
+    if (play._waiting !== waiting) {
+      play._waiting = waiting;
+      play.innerHTML = iconHtml(waiting ? 'play' : 'pause');
+      play.classList.toggle('paused', waiting);
+    }
+    $('replaySpeed').textContent = Replay.speed + 'x';
+    $('replayRevealRow').classList.toggle('hidden', !Game.fog);
+  },
+
+  // --- Accounts (docs/accounts-auth.md §2.1) -----------------------------------
+  //
+  // The menu strip ("Playing as guest · Sign in") and the sign-in / create
+  // account dialog. Account (js/account.js) does the talking to the server.
+  setupAccount() {
+    const $ = (id) => document.getElementById(id);
+    const overlay = $('accountOverlay');
+    const email = $('accountEmail'), pass = $('accountPassword'), confirm = $('accountConfirm');
+    const error = $('accountError'), submit = $('accountSubmit');
+    let creating = false, busy = false;
+
+    const showError = (msg) => {
+      error.textContent = msg || '';
+      error.classList.toggle('hidden', !msg);
+    };
+    const setCreating = (on) => {
+      creating = on;
+      $('accountTitle').textContent = on ? 'Create account' : 'Sign in';
+      submit.textContent = on ? 'Create account' : 'Sign in';
+      $('accountToggle').textContent = on ? 'I have an account' : 'Create account';
+      confirm.classList.toggle('hidden', !on);
+      $('accountNote').classList.toggle('hidden', !on);
+      $('accountPrivacy').classList.toggle('hidden', !on);
+      $('accountAge').classList.toggle('hidden', !on);
+      $('accountAgeBox').checked = false;
+      pass.autocomplete = on ? 'new-password' : 'current-password';
+      showError('');
+    };
+    const close = () => {
+      overlay.classList.add('hidden');
+      pass.value = confirm.value = '';
+    };
+
+    $('accountSignIn').addEventListener('click', () => {
+      setCreating(false);
+      overlay.classList.remove('hidden');
+      email.focus();
+    });
+    $('accountToggle').addEventListener('click', () => setCreating(!creating));
+    $('accountCancel').addEventListener('click', close);
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !overlay.classList.contains('hidden')) close();
+    });
+    $('accountSignOut').addEventListener('click', () => {
+      Account.logout().catch(() => {}).then(() => this.renderAccount());
+    });
+
+    $('accountForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (busy) return;
+      const addr = email.value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return showError('Enter a valid email address');
+      if (creating && pass.value.length < 8) return showError('Password must be at least 8 characters');
+      if (creating && pass.value !== confirm.value) return showError('The passwords do not match');
+      if (!pass.value) return showError('Enter your password');
+      if (creating && !$('accountAgeBox').checked) return showError('You must be 13 or older to create an account');
+
+      // A new account starts with whatever is in the menu's name and tag fields.
+      const name = ($('playerName').value || '').trim();
+      const tag = ($('playerTag').value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5);
+      const request = creating
+        ? Account.register(addr, pass.value, /[\[\]]/.test(name) ? '' : name, tag)
+        : Account.login(addr, pass.value);
+      busy = true;
+      submit.disabled = true;
+      showError('');
+      request.then((user) => {
+        // Signing in brings the account's name and tag to this browser.
+        if (!creating) {
+          $('playerName').value = user.displayName;
+          $('playerTag').value = user.tag;
+          try {
+            localStorage.setItem('borderwar_username', user.displayName);
+            localStorage.setItem('borderwar_tag', user.tag);
+          } catch (err) { /* ignore */ }
+        }
+        close();
+        this.renderAccount();
+      }, (err) => showError(err.message)).then(() => {
+        busy = false;
+        submit.disabled = false;
+      });
+    });
+
+    this.setupManageAccount();
+    Account.init().then(() => this.renderAccount());
+  },
+
+  // The signed-in "Account" dialog: change email, change password, delete
+  // account. Each asks for the current password, as the server requires.
+  setupManageAccount() {
+    const $ = (id) => document.getElementById(id);
+    const overlay = $('manageOverlay');
+    const email = $('manageEmail'), current = $('manageCurrent'), next = $('manageNew'), confirm = $('manageConfirm');
+    const error = $('manageError'), submit = $('manageSubmit');
+    const MODES = {
+      email: { title: 'Change email', submit: 'Save email', note: '', done: 'Email changed.' },
+      password: { title: 'Change password', submit: 'Save password', note: 'At least 8 characters. This signs you out on your other devices.', done: 'Password changed.' },
+      delete: { title: 'Delete account', submit: 'Delete my account', note: 'This permanently deletes your account and its stats. It cannot be undone.', done: 'Your account has been deleted.' }
+    };
+    let mode = null, busy = false;
+
+    const showError = (msg) => {
+      error.textContent = msg || '';
+      error.classList.toggle('hidden', !msg);
+    };
+    // mode: null (the menu), one of MODES, or 'done' (a result message).
+    const show = (m, doneText) => {
+      mode = m;
+      const def = MODES[m];
+      $('manageTitle').textContent = def ? def.title : 'Account';
+      $('manageMenu').classList.toggle('hidden', m !== null);
+      $('manageFields').classList.toggle('hidden', !def);
+      $('manageDone').classList.toggle('hidden', m !== 'done');
+      $('manageDone').textContent = doneText || '';
+      $('manageBack').classList.toggle('hidden', !def);
+      email.value = current.value = next.value = confirm.value = '';
+      showError('');
+      if (!def) return;
+      email.classList.toggle('hidden', m !== 'email');
+      next.classList.toggle('hidden', m !== 'password');
+      confirm.classList.toggle('hidden', m !== 'password');
+      $('manageNote').textContent = def.note;
+      $('manageNote').classList.toggle('hidden', !def.note);
+      submit.textContent = def.submit;
+      submit.classList.toggle('dangerBtn', m === 'delete');
+      (m === 'email' ? email : current).focus();
+    };
+    const close = () => {
+      overlay.classList.add('hidden');
+      show(null);
+    };
+
+    $('accountManage').addEventListener('click', () => {
+      show(null);
+      overlay.classList.remove('hidden');
+    });
+    $('manageMenu').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-manage]');
+      if (btn) show(btn.dataset.manage);
+    });
+    $('manageBack').addEventListener('click', () => show(null));
+    $('manageClose').addEventListener('click', close);
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !overlay.classList.contains('hidden')) close();
+    });
+
+    $('manageForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (busy || !MODES[mode]) return;
+      const addr = email.value.trim();
+      if (mode === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return showError('Enter a valid email address');
+      if (!current.value) return showError('Enter your current password');
+      if (mode === 'password' && next.value.length < 8) return showError('Password must be at least 8 characters');
+      if (mode === 'password' && next.value !== confirm.value) return showError('The passwords do not match');
+
+      const request = mode === 'email' ? Account.changeEmail(addr, current.value)
+        : mode === 'password' ? Account.changePassword(current.value, next.value)
+        : Account.deleteAccount(current.value);
+      const done = MODES[mode].done;
+      busy = true;
+      submit.disabled = true;
+      showError('');
+      request.then(() => {
+        show('done', done);
+        this.renderAccount();
+      }, (err) => showError(err.message)).then(() => {
+        busy = false;
+        submit.disabled = false;
+      });
+    });
+  },
+
+  renderAccount() {
+    const strip = document.getElementById('accountStrip');
+    strip.classList.toggle('hidden', !Account.available);
+    if (!Account.available) return;
+    const user = Account.user;
+    document.getElementById('accountStatus').textContent = user ? 'Signed in as ' + user.email + ' ·' : 'Playing as guest ·';
+    document.getElementById('accountSignIn').classList.toggle('hidden', !!user);
+    document.getElementById('accountManage').classList.toggle('hidden', !user);
+    document.getElementById('accountSignOut').classList.toggle('hidden', !user);
+  },
+
   // The one name field on the main menu, shared by singleplayer, host and
   // join. Read (and remembered) at the moment a game or lobby is started, so
   // it is written once per use rather than on every keystroke. Empty means the
@@ -2124,6 +2870,13 @@ const UI = {
     const tag = (document.getElementById('playerTag').value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5);
     document.getElementById('playerTag').value = tag;
     try { localStorage.setItem('borderwar_tag', tag); } catch (e) { /* ignore */ }
+    // Signed in: the account remembers the name and tag too, so they follow
+    // the player to another browser. Best effort; a name the server refuses
+    // (it is stricter than this field) just stays local.
+    const user = Account.user;
+    if (user && ((name && name !== user.displayName) || tag !== user.tag)) {
+      Account.saveProfile(name ? { displayName: name, tag: tag } : { tag: tag }).catch(() => {});
+    }
     if (tag.length < 2) return name;
     return '[' + tag + '] ' + (name || 'Player');
   },
@@ -2223,9 +2976,9 @@ const UI = {
       const opts = Protocol.MAP_GEN[key].map(v => '<option value="' + v + '">' + names[v] + '</option>').join('');
       return '<label>' + label + '<select id="' + this.mapGenId(prefix, 'gen_' + key) + '">' + opts + '</select></label>';
     };
+    // The preview comes first (the wide layout puts it in the right pane, the
+    // narrow one on top); the five knobs sit in a collapsed "Map options".
     box.innerHTML =
-      '<div class="optRow2">' + select('landform') + select('land') + '</div>' +
-      '<div class="optRow2">' + select('terrain') + select('rivers') + select('coast') + '</div>' +
       '<div class="mapPreview" id="' + this.mapGenId(prefix, 'mapPreviewBlock') + '">' +
         '<canvas id="' + this.mapGenId(prefix, 'mapPreview') + '" width="' + this.MAP_PREVIEW_W +
           '" height="' + this.MAP_PREVIEW_H + '"></canvas>' +
@@ -2234,14 +2987,28 @@ const UI = {
           '<label>Seed <input id="' + this.mapGenId(prefix, 'mapSeed') + '" type="number" min="0" max="4294967295"></label>' +
           '<button type="button" id="' + this.mapGenId(prefix, 'mapReroll') + '">New map</button>' +
         '</div>' +
-      '</div>';
+      '</div>' +
+      '<details class="mapOpts" id="' + this.mapGenId(prefix, 'mapOpts') + '">' +
+        '<summary>Map options <span class="mapOptsSummary" id="' + this.mapGenId(prefix, 'mapOptsSummary') + '"></span></summary>' +
+        '<div class="optRow2">' + select('landform') + select('land') + '</div>' +
+        '<div class="optRow2">' + select('terrain') + select('rivers') + select('coast') + '</div>' +
+        '<button type="button" class="linkBtn" id="' + this.mapGenId(prefix, 'mapOptsReset') + '">Reset</button>' +
+      '</details>';
 
     const seedInput = document.getElementById(this.mapGenId(prefix, 'mapSeed'));
     seedInput.value = String(Math.floor(Math.random() * 1e9));
     for (const key of Object.keys(Protocol.MAP_GEN)) {
       document.getElementById(this.mapGenId(prefix, 'gen_' + key))
-        .addEventListener('change', () => this.refreshMapPreview(prefix));
+        .addEventListener('change', () => { this.updateMapOptsSummary(prefix); this.refreshMapPreview(prefix); });
     }
+    document.getElementById(this.mapGenId(prefix, 'mapOptsReset')).addEventListener('click', () => {
+      for (const key of Object.keys(Protocol.MAP_GEN)) {
+        document.getElementById(this.mapGenId(prefix, 'gen_' + key)).selectedIndex = 0;
+      }
+      this.updateMapOptsSummary(prefix);
+      this.refreshMapPreview(prefix);
+    });
+    this.updateMapOptsSummary(prefix);
     seedInput.addEventListener('change', () => this.refreshMapPreview(prefix));
     document.getElementById(this.mapGenId(prefix, 'mapReroll')).addEventListener('click', () => {
       seedInput.value = String(Math.floor(Math.random() * 1e9));
@@ -2254,6 +3021,19 @@ const UI = {
       const canvas = document.getElementById(this.mapGenId(prefix, 'mapPreview'));
       new ResizeObserver(() => { if (canvas.clientWidth > 0) this.refreshMapPreview(prefix); }).observe(canvas);
     }
+  },
+
+  // The closed "Map options" header's one-liner: the landform, plus how many
+  // of the other knobs are off their default (the first option of each).
+  updateMapOptsSummary(prefix) {
+    const sel = (key) => document.getElementById(this.mapGenId(prefix, 'gen_' + key));
+    const landform = sel('landform');
+    let changed = 0;
+    for (const key of Object.keys(Protocol.MAP_GEN)) {
+      if (key !== 'landform' && sel(key).selectedIndex !== 0) changed++;
+    }
+    document.getElementById(this.mapGenId(prefix, 'mapOptsSummary')).textContent =
+      landform.options[landform.selectedIndex].text + (changed ? ' · ' + changed + ' changed' : '');
   },
 
   // {mapGen, seed} for gameStartInfo.config. An empty or invalid seed box
@@ -2348,15 +3128,15 @@ const UI = {
   // lobby exists (should not happen in practice — GameManager always keeps
   // one — but a server that's down or between restarts is exactly the case
   // this falls back for, per Transport.fetchLobbyList's own "resolves to []
-  // on any network failure" contract). Disables the button rather than
-  // leaving it clickable with nothing to join.
+  // on any network failure" contract). The button stays live either way:
+  // with nothing to join it starts a match against bots (main.js).
   renderQuickJoin(entry) {
     const info = document.getElementById('quickJoinInfo');
     const btn = document.getElementById('quickJoinBtn');
     if (!entry) {
       this._quickJoinEntry = null;
-      info.textContent = 'No open game right now — check back shortly.';
-      btn.disabled = true;
+      info.textContent = 'No open game right now. Play now starts a match against bots.';
+      btn.disabled = false;
       this.renderQuickJoinMap(null);
       return;
     }
@@ -2466,9 +3246,25 @@ const UI = {
     this._hidePreLobbyChrome();
   },
 
+  // Play now, into the open game: the menu's hero card is hidden once
+  // connected, so carry its already-painted map into the lobby panel.
+  showJoinLobbyMap() {
+    const src = document.getElementById('quickJoinMapCanvas');
+    const dst = document.getElementById('joinLobbyMapCanvas');
+    const wrap = document.getElementById('joinLobbyMap');
+    if (document.getElementById('quickJoinMap').classList.contains('hidden')) {
+      wrap.classList.add('hidden');
+      return;
+    }
+    dst.getContext('2d').drawImage(src, 0, 0);
+    document.getElementById('joinLobbyMapNote').textContent =
+      document.getElementById('quickJoinMapNote').textContent;
+    wrap.classList.remove('hidden');
+  },
+
   // Once connected to a lobby (host or join), the other ways to start a
-  // match no longer make sense to show — clicking the hero "Join Open Game"
-  // button or another mode tab wouldn't leave this lobby, just show a
+  // match no longer make sense to show — clicking the hero "Play now"
+  // button or another mode row wouldn't leave this lobby, just show a
   // confusingly unconnected panel next to a still-live one. Hidden rather
   // than disabled so the lobby screen (roster, code/status, leave button)
   // is the only thing on screen while connected.
@@ -2492,6 +3288,7 @@ const UI = {
     document.getElementById('hostLobby').classList.add('hidden');
     document.getElementById('hostCreateBtn').classList.remove('hidden');
     document.getElementById('joinLobby').classList.add('hidden');
+    document.getElementById('joinLobbyMap').classList.add('hidden');
     document.getElementById('joinBtn').classList.remove('hidden');
     document.getElementById('publicLobbyBrowser').classList.remove('hidden');
     document.getElementById('nameRow').classList.remove('hidden');

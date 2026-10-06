@@ -673,7 +673,8 @@ class GameServer {
       bots: bots,
       tribes: this.autoConfig.tribes,
       difficulty: this.autoConfig.difficulty,
-      seed: this.autoSeed
+      seed: this.autoSeed,
+      fogOfWar: true
     });
   }
 
@@ -780,7 +781,7 @@ class GameServer {
         gameMode: config.gameMode === 'team' ? 'team' : 'ffa',
         playerTeams: GameServer.normalizePlayerTeams(config.playerTeams),
         // Fog of war (docs/fog-of-war.md): a strict boolean. The auto lobby
-        // passes none, so it is always off.
+        // always turns it on (_startAutoLobby).
         fogOfWar: config.fogOfWar === true
       },
       players: players
@@ -898,10 +899,11 @@ GameServer.abandonedTimeout = 2 * 60 * 1000;
 
 // Issue #12: rotating open lobbies. Static, like disconnectedTimeout/
 // abandonedTimeout above, so a test can shorten the countdown without
-// editing shipped source. autoLobbyMinPlayers matches issue #9's "at least
-// two human players"; autoLobbyCountdownMs (20s) is this feature's own
-// fill/start window.
-GameServer.autoLobbyMinPlayers = 2;
+// editing shipped source. autoLobbyMinPlayers is 1 (issue #9 asked for two;
+// lowered by request): the first human in starts the countdown, and when it
+// runs out the empty slots fill with AI nations. autoLobbyCountdownMs (20s)
+// is this feature's own fill/start window.
+GameServer.autoLobbyMinPlayers = 1;
 GameServer.autoLobbyCountdownMs = 20 * 1000;
 
 // Issue #31: OpenFront's TeamCountConfig — a team count, or one of its named

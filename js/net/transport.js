@@ -553,7 +553,8 @@ const Transport = {
       // This page is on an older build than the server. Retrying would be
       // refused the same way, so drop the reconnect target (the close that
       // follows then schedules nothing) and let the error reach the UI.
-      if (msg.type === 'error' && msg.error === 'version-mismatch') this._lastRemoteOpts = null;
+      // Likewise when the server says it is going down for a restart.
+      if (msg.type === 'error' && (msg.error === 'version-mismatch' || msg.error === 'server-restarting')) this._lastRemoteOpts = null;
 
       if (this._deliver) this._deliver(msg);
     };

@@ -94,16 +94,85 @@ Object.assign(Game, {
   becomeStation(b) {
     if (b.station) return;
     b.station = true;
-    this.linkStationToNetwork(b);
+    // RailNetworkImpl.connectStation: a station beside an existing rail joins
+    // that rail and lays nothing new; only otherwise does it reach out to
+    // nearby stations.
+    if (!this.snapToExistingRails(b)) this.linkStationToNetwork(b);
   },
 
-  // RailNetworkImpl.connectToNearbyStations, minus the "snap onto the middle
-  // of an existing rail" refinement (connectToExistingRails) — a real but
-  // rare optimization OpenFront uses to keep dense networks from crossing
-  // themselves; skipping it just means two stations occasionally get a
-  // slightly longer point-to-point rail instead of branching off an existing
-  // one partway along. Also minus their minimum-range skip — see the class
-  // comment for why that's dropped rather than ported. Still skips a
+  // RailNetworkImpl's stationRadius: a new station this close to an existing
+  // rail splices into it instead of laying rails of its own.
+  RAIL_SNAP_RADIUS: 3,
+
+  // Every existing rail passing within RAIL_SNAP_RADIUS of `tile`, with where
+  // a station there would splice in: `leg` is the index of the rail leg
+  // holding the closest point, and `path` runs from that point to `tile`
+  // (just the one tile when `tile` is on the rail, otherwise a short
+  // axis-aligned spur). A rail whose closest point is one of its own ends is
+  // left alone, like connectToExistingRails' closestRailIndex check, and so
+  // is one whose spur would cross water.
+  railSnapPoints(tile) {
+    const w = GameMap.width, sx = tile % w, sy = (tile / w) | 0;
+    const r2 = this.RAIL_SNAP_RADIUS * this.RAIL_SNAP_RADIUS;
+    const out = [];
+    for (const rail of this.railroads) {
+      if (rail.a === tile || rail.b === tile) continue;
+      const wp = rail.waypoints;
+      let best = r2 + 1, leg = -1, at = -1;
+      for (let k = 0; k + 1 < wp.length; k++) {
+        const x1 = wp[k] % w, y1 = (wp[k] / w) | 0;
+        const x2 = wp[k + 1] % w, y2 = (wp[k + 1] / w) | 0;
+        const px = Math.max(Math.min(x1, x2), Math.min(sx, Math.max(x1, x2)));
+        const py = Math.max(Math.min(y1, y2), Math.min(sy, Math.max(y1, y2)));
+        const d = (px - sx) * (px - sx) + (py - sy) * (py - sy);
+        if (d < best) { best = d; leg = k; at = py * w + px; }
+      }
+      if (leg === -1 || at === rail.a || at === rail.b) continue;
+      const path = at === tile ? [tile] : this.orthogonalPath(at, tile);
+      if (path) out.push({ rail, leg, path });
+    }
+    return out;
+  },
+
+  // RailNetworkImpl.connectToExistingRails: each rail passing beside the new
+  // station is cut in two at its closest point, and both halves now end at
+  // the station. Returns whether any rail was spliced. Trains already under
+  // way keep the route they left with.
+  snapToExistingRails(station) {
+    let snapped = false;
+    for (const { rail, leg, path } of this.railSnapPoints(station.tile)) {
+      const a = this.buildings.get(rail.a), b = this.buildings.get(rail.b);
+      if (!a || !b) continue;
+      this.railroads.splice(this.railroads.indexOf(rail), 1);
+      a.rails.delete(rail.b);
+      b.rails.delete(rail.a);
+      const wp = rail.waypoints;
+      this.addRail(a, station, wp.slice(0, leg + 1).concat(path));
+      this.addRail(station, b, [...path].reverse().concat(wp.slice(leg + 1)));
+      snapped = true;
+    }
+    return snapped;
+  },
+
+  // RailNetworkImpl.removeStation/disconnectFromNetwork: a destroyed
+  // station's rails go with it. Call before the building leaves
+  // Game.buildings.
+  removeStationRails(b) {
+    if (!b.rails || b.rails.size === 0) return;
+    for (const n of b.rails.keys()) {
+      const other = this.buildings.get(n);
+      if (other) other.rails.delete(b.tile);
+    }
+    b.rails.clear();
+    for (let i = this.railroads.length - 1; i >= 0; i--) {
+      const rr = this.railroads[i];
+      if (rr.a === b.tile || rr.b === b.tile) this.railroads.splice(i, 1);
+    }
+  },
+
+  // RailNetworkImpl.connectToNearbyStations, for a station that had no rail
+  // to snap onto (see becomeStation). Minus their minimum-range skip — see
+  // the class comment for why that's dropped rather than ported. Still skips a
   // candidate already reachable within RAIL_MAX_CONNECTION_HOPS hops, so the
   // graph stays sparse rather than fully meshed — a new station still gets a
   // link to its actual nearest neighbours, just not to every station in
@@ -140,6 +209,15 @@ Object.assign(Game, {
   previewStationLinks(tile) {
     const range = this.TRAIN_STATION_MAX_RANGE;
     const lines = [];
+
+    // A station here would splice into the rail beside it and lay nothing
+    // new (computeGhostRailPaths' canSnapToExistingRailway early-out); the
+    // only thing to show is the spur, if the tile is off the rail.
+    const snaps = this.railSnapPoints(tile);
+    if (snaps.length) {
+      for (const s of snaps) if (s.path.length > 1) lines.push(s.path);
+      return lines;
+    }
 
     const stationCandidates = [];
     for (const other of this.buildings.values()) {
@@ -249,6 +327,14 @@ Object.assign(Game, {
     if (a.rails.has(b.tile)) return false;
     const waypoints = this.orthogonalPath(a.tile, b.tile);
     if (!waypoints || this.pathLength(waypoints) > this.RAILROAD_MAX_TILES) return false;
+    return this.addRail(a, b, waypoints);
+  },
+
+  // Records a rail running a -> b along `waypoints` (a.tile first, b.tile
+  // last; repeated tiles are dropped). One rail per station pair.
+  addRail(a, b, waypoints) {
+    if (a.rails.has(b.tile)) return false;
+    waypoints = waypoints.filter((t, i) => i === 0 || t !== waypoints[i - 1]);
     const id = this.nextRailId++;
     this.railroads.push({ id, a: a.tile, b: b.tile, waypoints });
     a.rails.set(b.tile, waypoints);
@@ -259,14 +345,15 @@ Object.assign(Game, {
   // Every tile along a horizontal run at fixed y from x0 to x1, or a
   // vertical run at fixed x from y0 to y1 (caller guarantees exactly one of
   // x0===x1 / y0===y1 holds) — true the instant one of them isn't land.
+  // Battle Royale's dead zone (game/drill.js) blocks a rail like water does.
   straightClear(x0, y0, x1, y1) {
-    const w = GameMap.width;
+    const w = GameMap.width, dead = this.drillDead;
     if (y0 === y1) {
       const lo = Math.min(x0, x1), hi = Math.max(x0, x1);
-      for (let x = lo; x <= hi; x++) if (!GameMap.isLand(y0 * w + x)) return false;
+      for (let x = lo; x <= hi; x++) if (!GameMap.isLand(y0 * w + x) || dead[y0 * w + x]) return false;
     } else {
       const lo = Math.min(y0, y1), hi = Math.max(y0, y1);
-      for (let y = lo; y <= hi; y++) if (!GameMap.isLand(y * w + x0)) return false;
+      for (let y = lo; y <= hi; y++) if (!GameMap.isLand(y * w + x0) || dead[y * w + x0]) return false;
     }
     return true;
   },

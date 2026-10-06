@@ -4,6 +4,7 @@
   Input.setup(canvas);
   Radial.setup();
   UI.setup();
+  Tutorial.setup();
 
   // How long one frame may spend advancing the simulation before it has to
   // hand the frame back to the renderer (docs/multiplayer-architecture.md §5).
@@ -17,6 +18,11 @@
   // is deep. This is the thing OpenFront buys instead by running its sim in a
   // Web Worker; §8 divergence #2 explains why we take the budget instead.
   const SIM_BUDGET_MS = 8;
+
+  // The same budget while a replay is seeking (js/replay.js). A jump is a
+  // long run of turns the viewer is waiting on, so the sim gets most of the
+  // frame and the picture drops to a few frames a second until it arrives.
+  const SEEK_BUDGET_MS = 48;
 
   // performance.now() at the moment the most recent turn finished executing.
   // Only ever used for render smoothing — see Game.renderElapsed below.
@@ -110,9 +116,9 @@
         WorldMapLoader.ensure().catch(() => {});
       }
     });
-    // World is selected by default in index.html, so without this the fields
-    // would sit at their static HTML values (9/16) instead of World's actual
-    // defaults until the player touches the dropdown themselves.
+    // Without this the fields would sit at their static HTML values (9/16)
+    // instead of the selected map's actual defaults until the player touches
+    // the dropdown themselves.
     applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes, prefix);
     // Browsers can restore the select's last value on reload or back/forward
     // after this runs, without a change event; re-sync once the page shows.
@@ -122,11 +128,15 @@
   bindMapType(document.getElementById('hostMapType'), document.getElementById('hostMapSizeRow'),
     document.getElementById('hostMapSize'), document.getElementById('hostBotCount'), document.getElementById('hostTribeCount'), 'host');
 
-  // World is the default selection in both panels (index.html) — start
-  // fetching it immediately rather than waiting for a change event that may
-  // never fire because the player never touches the dropdown. Failure is
+  // Procedural is the default selection in both panels (index.html), but a
+  // browser can restore World on reload or back/forward without a change
+  // event — start fetching it then rather than waiting for Start. Failure is
   // surfaced later, when Start is actually pressed.
-  WorldMapLoader.ensure().catch(() => {});
+  window.addEventListener('pageshow', () => {
+    if (mapTypeSelect.value === 'world' || document.getElementById('hostMapType').value === 'world') {
+      WorldMapLoader.ensure().catch(() => {});
+    }
+  });
 
   // --- Multiplayer lobby (MP-2.3) --------------------------------------------
   //
@@ -167,6 +177,7 @@
   // Transport's own business and the lobby screen is long gone.
   let inLobby = false;
   let lobbyLinkOpened = false; // did this lobby's socket ever open?
+  let fromQuickJoin = false; // entered via the main menu's open-game card
 
   Transport.onStatus = function(status) {
     if (!inLobby) return;
@@ -196,6 +207,12 @@
     iAmHost = false;
     Transport.disconnect();
     UI.hideLobby();
+    // Joined from the main menu's open-game card: return there, not to the
+    // join-by-code form that was opened only to host the lobby panel.
+    if (fromQuickJoin) {
+      fromQuickJoin = false;
+      document.getElementById('modeBack').click();
+    }
     // Back on the menu — the hero card is relevant again regardless of which
     // secondary tab happens to be selected, so this no longer checks which
     // one that is (contrast the old join-tab-only polling this replaced).
@@ -207,10 +224,12 @@
     const username = UI.getPlayerName() || 'Host';
     myRole = 'host';
     iAmHost = false; // confirmed once this connection's own lobby_info arrives
+    fromQuickJoin = false;
     inLobby = true;
     lobbyLinkOpened = false;
     stopLobbyListPolling();
 
+    Replay.finish();
     Transport.disconnect();
     Runner.reset();
     UI.showHostLobby(gameID);
@@ -230,10 +249,12 @@
     if (!code) { UI.setLobbyError('Enter a join code.'); return; }
     myRole = 'join';
     iAmHost = false;
+    fromQuickJoin = false;
     inLobby = true;
     lobbyLinkOpened = false;
     stopLobbyListPolling();
 
+    Replay.finish();
     Transport.disconnect();
     Runner.reset();
     UI.showJoinLobby();
@@ -300,20 +321,24 @@
 
   document.getElementById('lobbyListRefreshBtn').addEventListener('click', refreshLobbyList);
 
-  // The hero card's own button — joins whichever lobby the last poll found
-  // flagged `isAuto` (GameManager always keeps exactly one). Disabled by
-  // UI.renderQuickJoin whenever there isn't one yet, so this only ever fires
-  // with a real gameID in hand.
+  // The hero card's own button ("Play now") — joins whichever lobby the last
+  // poll found flagged `isAuto` (GameManager always keeps exactly one). With
+  // none to join (server down, or between restarts) it starts a singleplayer
+  // match instead, on whatever the Solo vs bots form currently says, so the
+  // menu's loudest button always leads to a game.
   document.getElementById('quickJoinBtn').addEventListener('click', () => {
+    if (debugLobby) return;
     const entry = lastLobbyList.find((e) => e.isAuto);
-    if (!entry || debugLobby) return;
-    // joinLobby()'s in-progress UI lives inside #joinMode's body (#joinLobby),
-    // which is only visible while the "Join custom lobby" tab is the active one
-    // (UI.setupLobby's click handler toggles each mode body's `hidden`
-    // class) — switch to it first so a hero-button join from the Host or
-    // Singleplayer tab doesn't connect into a panel nobody can see.
-    document.querySelector('.modeTab[data-mode="join"]').click();
+    if (!entry) { start(); return; }
+    // joinLobby()'s in-progress UI lives inside #joinMode (#joinLobby), which
+    // is only visible while the Play with friends screen is open (UI.setupLobby's
+    // click handler toggles each mode body's `hidden` class) — open it first
+    // so the join doesn't connect into a panel nobody can see.
+    document.querySelector('.modeTab[data-mode="friends"]').click();
+    document.getElementById('modeTitle').textContent = 'Open game';
     joinLobby(entry.gameID);
+    fromQuickJoin = true;
+    UI.showJoinLobbyMap();
   });
 
   // Starts as soon as the menu does — the hero card has nothing to show
@@ -343,7 +368,7 @@
   const inviteMatch = /[?&]join=([A-Za-z0-9_-]{1,32})/.exec(location.search);
   if (inviteMatch) {
     history.replaceState(null, '', location.pathname);
-    document.querySelector('.modeTab[data-mode="join"]').click();
+    document.querySelector('.modeTab[data-mode="friends"]').click();
     joinLobby(inviteMatch[1].toUpperCase());
   }
 
@@ -354,7 +379,61 @@
   function onConnect() {
     Runner.reset();
     Executor.reset();
+    // Transport.connect has just pointed Runner.onHash at itself. Replay sits
+    // in front: it keeps hashes while recording and checks them while playing.
+    const sendHash = Runner.onHash;
+    Runner.onHash = (turnNumber, hash) => {
+      Replay.onHash(turnNumber, hash);
+      sendHash(turnNumber, hash);
+    };
   }
+
+  // --- Replays (js/replay.js, docs/replays.md) --------------------------------
+  //
+  // A replay is one more path through the same connect/onConnect/
+  // onServerMessage pipeline: a local connection whose LocalServer feeds
+  // recorded turns. Replay calls back here because this file owns connections.
+  Replay.host = {
+    connect(feed) {
+      inLobby = false;
+      myRole = 'sp';
+      stopLobbyListPolling();
+      Transport.disconnect();
+      Runner.reset();
+      Transport.connect(onConnect, onServerMessage, { local: true, replay: feed });
+    },
+    exit() {
+      Transport.disconnect();
+      Runner.reset();
+      Replay.stop();
+      backToMenu();
+    }
+  };
+
+  // --- Tutorial (js/tutorial.js, docs/tutorial.md) ----------------------------
+  //
+  // A singleplayer match with a fixed configuration, started the way start()
+  // starts one. Tutorial calls back here because this file owns connections.
+  Tutorial.host = {
+    start(config) {
+      inLobby = false;
+      myRole = 'sp';
+      stopLobbyListPolling();
+      Replay.finish();
+      Transport.disconnect();
+      Runner.reset();
+      Transport.connect(onConnect, onServerMessage, Object.assign({
+        local: true,
+        gameID: 'local',
+        username: UI.getPlayerName() || 'You'
+      }, config));
+    },
+    exit() {
+      Transport.disconnect();
+      Runner.reset();
+      backToMenu();
+    }
+  };
 
   // Everything a server says to us (§4's server->client table). Two messages
   // matter in Phase 1; `lobby_info` and `error` are MP-2.3's additions, live
@@ -380,7 +459,7 @@
       // harmless if none is (the element simply sits hidden with old text).
       UI.setLobbyError(msg.message || msg.error || 'Server error.');
       // Mid-match the lobby error is hidden, so say it where it can't be missed.
-      if (msg.error === 'version-mismatch' && !inLobby) alert(msg.message);
+      if ((msg.error === 'version-mismatch' || msg.error === 'server-restarting') && !inLobby) alert(msg.message);
       return;
     }
 
@@ -433,6 +512,13 @@
         UI.reset();
         UI.enterSpawnSelect();
 
+        Tutorial.matchReady();
+
+        // A fresh match is recorded; a replay being played is not. Nor is a
+        // tutorial: its free gold is not in the turns (js/tutorial.js).
+        if (Replay.active) Replay.onMatchReady();
+        else if (!Tutorial.active) Replay.begin(info, msg.myClientID, myPlayerId);
+
         // The catch-up backlog. Empty at a fresh start; non-empty after a
         // rejoin (§4), and the drain loop below is what works through it.
         if (Array.isArray(msg.turns)) for (const t of msg.turns) Runner.addTurn(t);
@@ -440,6 +526,7 @@
         lastTurnAt = performance.now();
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('endOverlay').classList.add('hidden');
+        sendPresence();
       };
 
       // World is normally already preloaded well before this point (fetched
@@ -497,6 +584,7 @@
     inLobby = false;
     myRole = 'sp';
     stopLobbyListPolling();
+    Replay.finish();
     Transport.disconnect();
     Runner.reset();
 
@@ -529,22 +617,38 @@
   // — it is what stops singleplayer running away from itself, and what makes
   // the debug burst client-paced).
   let lastPanFrameAt = 0;
+  // Battery saver (see loop). 30 ms sits between one and two 60 Hz frames, so
+  // the cap lands on 30 fps whatever the display's refresh rate.
+  const SAVER_FRAME_MS = 30, CAM_SETTLE_MS = 250;
+  let lastDrawAt = 0, lastCamMoveAt = 0, lastCamX = 0, lastCamY = 0, lastCamScale = 0, lastPlaceHover = -1;
 
   function loop(now) {
     requestAnimationFrame(loop);
-    if (!Render.tileCanvas) return;
+    // Perf.bench drives turns and frames itself (js/perf.js).
+    if (!Render.tileCanvas || Perf.benching) return;
 
     // Clamped so a tab-switch's huge gap doesn't fling the camera on return.
     const panDt = lastPanFrameAt ? Math.min(0.1, (now - lastPanFrameAt) / 1000) : 0;
     lastPanFrameAt = now;
     Input.updateKeyPan(panDt);
 
-    const budgetEnd = performance.now() + SIM_BUDGET_MS;
-    while (Runner.pendingTurns() > 0 && performance.now() < budgetEnd) {
+    // A seeking replay refills the queue itself between turns rather than
+    // waiting on LocalServer's 5 ms pump, up to the turn it is heading for.
+    const seeking = Replay.seeking();
+    const budgetEnd = performance.now() + (seeking ? SEEK_BUDGET_MS : SIM_BUDGET_MS);
+    while (performance.now() < budgetEnd) {
+      if (Runner.pendingTurns() === 0) {
+        if (!seeking || Runner.currTurn >= Replay.seekTarget) break;
+        LocalServer.pumpNow();
+        if (Runner.pendingTurns() === 0) break;
+      }
+      const turnStart = performance.now();
       Runner.executeNextTurn();
       Transport.turnComplete();
       lastTurnAt = performance.now();
+      Perf.simTurn(lastTurnAt - turnStart);
     }
+    Replay.frame();
 
     // MP-4.1: catch-up progress. Purely a readout of what the drain loop just
     // above already did — this owns no logic of its own, only whether a
@@ -553,7 +657,25 @@
     // after this frame's budget-limited pass), but a same-tick backlog is
     // always ≤1 turn in ordinary play, so in practice this only ever shows
     // during the kind of multi-hundred-turn backlog a rejoin produces.
-    UI.updateCatchup(Runner.pendingTurns());
+    // A replay's own bar says where a seek has got to.
+    UI.updateCatchup(Replay.active ? 0 : Runner.pendingTurns());
+
+    // Battery saver: the sim moves 10 times a second, so drawing at the full
+    // display rate mostly repaints the same picture. Draw every other frame
+    // instead, except while something is following the player's hand, where
+    // the lost frames show: the camera moving, a finger or button down on the
+    // map, a build dragged off the bar, or the placement ghost being aimed.
+    if (Options.get('saveBattery')) {
+      const cam = Render.cam;
+      if (UI.barDrag || Input.pointers.size || UI.placeHover !== lastPlaceHover ||
+          cam.x !== lastCamX || cam.y !== lastCamY || cam.scale !== lastCamScale) {
+        lastCamX = cam.x; lastCamY = cam.y; lastCamScale = cam.scale;
+        lastPlaceHover = UI.placeHover;
+        lastCamMoveAt = now;
+      }
+      if (now - lastCamMoveAt > CAM_SETTLE_MS && now - lastDrawAt < SAVER_FRAME_MS) return;
+    }
+    lastDrawAt = now;
 
     // Smooth clock for animation only. Wall-clock time since the last executed
     // turn, CLAMPED TO ONE TICK: the sim's authoritative state is whatever the
@@ -564,8 +686,13 @@
     const since = (performance.now() - lastTurnAt) / 1000;
     Game.renderElapsed = Game.elapsed + Math.max(0, Math.min(Game.TICK_DT, since));
 
+    const drawStart = performance.now();
     Render.draw();
+    const drawEnd = performance.now();
     UI.update();
+    Tutorial.frame();
+    UI.updateReplayBar();
+    Perf.drawn(now, drawEnd - drawStart, performance.now() - drawEnd);
     Options.perfFrame(now);
     // Called every frame, unconditionally: checkEndGame now also has to
     // notice this client's own defeat the instant it happens, which can be
@@ -575,7 +702,35 @@
   }
 
   document.getElementById('startBtn').addEventListener('click', start);
-  document.getElementById('restartBtn').addEventListener('click', () => {
+  document.getElementById('restartBtn').addEventListener('click', backToMenu);
+
+  // Leaves the match for the main menu. Exit lives in the in-game menu
+  // (js/ui.js), which asks for a second click while a match is still undecided.
+  function leaveMatch() {
+    document.getElementById('gameMenu').classList.add('hidden');
+    Tutorial.stop();
+    Transport.disconnect();
+    Runner.reset();
+    backToMenu();
+  }
+
+  const gmExit = document.getElementById('gmExit');
+  gmExit.addEventListener('disarm', () => {
+    gmExit.classList.remove('armed');
+    gmExit.textContent = 'Exit match';
+  });
+  gmExit.addEventListener('click', () => {
+    if (Game.winnerId === null && !gmExit.classList.contains('armed')) {
+      gmExit.classList.add('armed');
+      gmExit.textContent = 'Exit match?';
+      return;
+    }
+    leaveMatch();
+  });
+
+  // From a finished match, or out of a replay, to the main menu.
+  function backToMenu() {
+    Replay.finish();
     document.getElementById('endOverlay').classList.add('hidden');
     document.getElementById('overlay').classList.remove('hidden');
     // The lobby that fed the finished match is gone; don't show its stale code.
@@ -587,7 +742,34 @@
     // which would otherwise leave the debug panel floating over this menu.
     document.getElementById('debugPanel').classList.add('hidden');
     document.getElementById('debugToggle').classList.add('hidden');
-  });
+    // The Replays tab may be the one showing, and the list has just changed.
+    UI.refreshReplayList();
+  }
+
+  // --- Singleplayer presence (server/presence.js) ------------------------------
+  //
+  // A singleplayer match never opens a socket, so the server can't see it.
+  // While one is on screen, say so every 30 s; the admin page counts the pages
+  // it has heard from lately. The id is random, made per page load and stored
+  // nowhere. Tutorials count; replays, the menu and hidden tabs don't.
+  const PRESENCE_MS = 30000;
+  const presenceID = Array.from(crypto.getRandomValues(new Uint8Array(8)),
+    (b) => b.toString(16).padStart(2, '0')).join('');
+  let presenceOff = false;
+  function sendPresence() {
+    if (presenceOff || document.hidden) return;
+    if (!Transport.connected || !Transport.isLocal || Replay.active) return;
+    if (!document.getElementById('overlay').classList.contains('hidden')) return;
+    fetch('presence', { method: 'POST', body: presenceID, credentials: 'omit', cache: 'no-store' })
+      .then((r) => {
+        // Not there at all (the static dev server): stop asking. Anything else
+        // is a server that will be back.
+        if (r.status === 404 || r.status === 405 || r.status === 501) presenceOff = true;
+      })
+      .catch(() => { /* offline, or the server is restarting */ });
+  }
+  setInterval(sendPresence, PRESENCE_MS);
+  document.addEventListener('visibilitychange', sendPresence);
 
   requestAnimationFrame(loop);
 })();

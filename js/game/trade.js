@@ -47,8 +47,8 @@ Object.assign(Game, {
   // 2000 wide. MAP_SIZES are that same World downsampled, so a route that is
   // 400 tiles there is 100 here on medium — deep in the debuff, paying ~5k
   // instead of ~91k. Every trade distance is therefore converted to
-  // World-equivalent tiles first (see docs/economy-vs-openfront.md). Same
-  // relative-reach idea as fortRange; xlarge's factor is exactly 1.
+  // World-equivalent tiles first (see docs/economy-vs-openfront.md). Large's
+  // factor is exactly 1.
   TRADE_DIST_REF_WIDTH: 2000,
 
   manhattanDist(a, b) {
@@ -211,8 +211,12 @@ Object.assign(Game, {
   portRoute(fromTile, toTile) {
     const size = GameMap.owner.length;
     const key = Math.min(fromTile, toTile) * size + Math.max(fromTile, toTile);
-    const cached = this._portRoutes.get(key);
+    let cached = this._portRoutes.get(key);
     if (cached === false) return null;
+    // Battle Royale (game/drill.js): a route found before the circle passed
+    // over part of it is searched again. Routes only ever get worse, so a
+    // cached failure above stays a failure.
+    if (cached && this.drillPathDead(cached)) { this._portRoutes.delete(key); cached = undefined; }
     if (cached) {
       if (cached[cached.length - 1] === toTile) return cached;
       const path = cached.slice(0, -1).reverse();

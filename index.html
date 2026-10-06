@@ -7,7 +7,19 @@
 <meta name="theme-color" content="#0b1220">
 <title>BorderWar</title>
 <link rel="icon" type="image/svg+xml" href="assets/logo/favicon.svg">
-<link rel="stylesheet" href="css/style.css" id="mainStyle">
+<!-- Home-screen install (js/install.js). -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/logo/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="BorderWar">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>
+  // Cache-bust every load during dev. The stylesheet is written here, in <head>,
+  // already carrying ?v=: it blocks first paint, so the page never renders
+  // unstyled. (Rewriting a static <link>'s href later in the body made the
+  // browser re-fetch it and flash the whole UI unstyled on every refresh.)
+  window.V = Date.now();
+  document.write('<link rel="stylesheet" href="css/style.css?v=' + window.V + '">');
+</script>
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -22,7 +34,9 @@
      transport, and the panel additionally stays closed until this is clicked. -->
 <div id="topBtns">
 <button id="debugToggle" class="hidden" type="button" title="Toggle debug panel">Debug ▸</button>
-<button id="pauseBtn" class="hidden" type="button" title="Pause (P)"><img class="ic" src="assets/icons/pause.svg" alt="" draggable="false"> Pause</button>
+<button id="pauseBtn" class="hidden" type="button" data-tip-title="Pause" data-tip-key="P" data-tip="Freezes the match. Singleplayer only."><img class="ic" src="assets/icons/pause.svg" alt="" draggable="false"> Pause</button>
+<button id="musicBtn" type="button" data-tip-title="Music" data-tip-key="M" data-tip="Turns the background music on or off." aria-label="Music"><img class="ic" src="assets/icons/music.svg" alt="" draggable="false"></button>
+<button id="menuBtn" type="button" aria-label="Menu"><img class="ic" src="assets/icons/menu.svg" alt="" draggable="false"></button>
 </div>
 
 <div id="debugPanel" class="hidden">
@@ -31,8 +45,10 @@
   <button data-gold="500000">+500k gold</button>
   <button data-gold="5000000">+5M gold</button>
   <button id="debugFastForward">Skip to mid-game</button>
+  <button id="debugSpeed">Speed 1x</button>
   <button id="debugNukeAtom"><img class="ic" src="assets/icons/nuke.svg" alt="" draggable="false"> Debug Nuke</button>
   <button id="debugNukeHydrogen"><img class="ic" src="assets/icons/hbomb.svg" alt="" draggable="false"> Debug H-Bomb</button>
+  <button id="debugForfeit">Forfeit</button>
   <button id="debugPeace"><img class="ic" src="assets/icons/ally.svg" alt="" draggable="false"> Debug Peace Offer</button>
 </div>
 
@@ -83,12 +99,46 @@
   <span id="catchupBannerText"></span>
 </div>
 
+<!-- Battle Royale (BR-5/BR-6): UI.updateDrillHud. The banner announces the
+     placement to everyone; #drillHud (inside #hud) is the live shrink timer. -->
+<div id="drillBanner" class="hidden"><span id="drillBannerText"></span></div>
+
+<!-- Replay playback controls (js/replay.js, docs/replays.md). UI.setupReplays
+     wires them; UI.updateReplayBar shows the bar only while a replay plays. -->
+<div id="replayBar" class="hidden">
+  <button id="replayPlay" type="button" title="Play / pause (P)"></button>
+  <button id="replaySpeed" type="button" title="Playback speed">1x</button>
+  <input id="replaySeek" type="range" min="0" max="1" step="1" value="0" aria-label="Replay position">
+  <span id="replayTime"></span>
+  <select id="replayView" class="hidden" title="Whose view to follow" aria-label="Whose view to follow"></select>
+  <label id="replayRevealRow" class="hidden" title="Show the whole map instead of what this player had discovered"><input id="replayReveal" type="checkbox" checked> Whole map</label>
+  <button id="replayExit" type="button">Exit</button>
+</div>
+
+<!-- Hover descriptions: UI.setupTips fills and places it. -->
+<div id="tip" class="hidden"></div>
+
 <div id="radial" class="hidden"><div id="radialMenu"></div></div>
 
 <div id="hud">
+  <!-- The tutorial's coach panel (js/tutorial.js); hidden in every other match. -->
+  <div id="tutorial" class="hidden">
+    <div id="tutHead">
+      <span id="tutStep"></span><span id="tutTitle"></span>
+      <button type="button" id="tutSkip" class="linkBtn">Skip step</button>
+      <button type="button" id="tutExit" class="linkBtn">Exit</button>
+    </div>
+    <div id="tutText"></div>
+    <div id="tutPaused" class="off">Paused until you make a move</div>
+    <div id="tutBtns" class="hidden">
+      <button type="button" id="tutKeep">Keep playing</button>
+      <button type="button" id="tutMenu">Main menu</button>
+    </div>
+  </div>
   <div id="nukeAlert" class="hidden"></div>
   <div id="donationAlert" class="hidden"></div>
   <div id="planeAlert" class="hidden"></div>
+  <div id="drillHud" class="hidden"><span id="drillHudText"></span><span id="drillHudTime"></span></div>
   <div id="diploBanner" class="hidden">
     <span id="diploText"></span>
     <button id="diploYes">Accept</button>
@@ -97,8 +147,8 @@
   </div>
   <div id="frontsRow" class="hidden"></div>
   <div id="statusRow">
-    <div id="growthChip"><span id="troopGrowth"></span></div>
-    <div id="popBar">
+    <div id="growthChip" data-tip-title="Troop growth" data-tip="Troops gained each second. Growth is fastest with the bar a little under half full and slows as it fills; this turns orange once you are past that point."><span id="troopGrowth"></span></div>
+    <div id="popBar" data-tip-title="Troops" data-tip="Troops at home, out of the most your nation can hold. The second segment is troops away on attacks. The mark shows where growth is fastest. More land and more Cities raise the maximum.">
       <div id="popBarFill"></div>
       <div id="popBarMarch"></div>
       <div id="popBarPeak"></div>
@@ -107,13 +157,13 @@
         <span id="troopValue">0</span><span id="popBarSep">/</span><span id="troopCap">0</span>
       </div>
     </div>
-    <div id="goldChip"><span class="hpIcon"><img class="ic" src="assets/icons/gold.svg" alt="" draggable="false"></span><span id="goldValue">0</span></div>
+    <div id="goldChip" data-tip-title="Gold" data-tip="Pays for buildings, ships and nukes. Comes in steadily, and faster with trade ships and trains."><span class="hpIcon"><img class="ic" src="assets/icons/gold.svg" alt="" draggable="false"></span><span id="goldValue">0</span></div>
   </div>
   <div id="planeBar" class="hidden">
     <span id="planeBarText"></span>
     <button id="planeCancel" type="button">Cancel</button>
   </div>
-  <div id="ratioRow">
+  <div id="ratioRow" data-tip-title="Attack ratio" data-tip="The share of your troops sent with each attack or boat. Send less to keep growing, more to hit harder.">
     <span id="ratioLabel"><span id="ratioValue">20%</span> <span id="ratioTroops"></span></span>
     <input id="ratio" type="range" min="0" max="100" step="5" value="20">
   </div>
@@ -123,7 +173,17 @@
 
 <div id="perfStats" class="hidden"></div>
 
-<button id="optionsBtn" type="button" title="Options" aria-label="Options"><img class="ic" src="assets/icons/cog.svg" alt="" draggable="false"></button>
+<div id="gameMenu" class="hidden">
+  <div class="panel optionsPanel" role="dialog" aria-label="Game menu">
+    <h2>Menu</h2>
+    <button type="button" id="gmResume" class="primaryBtn">Resume</button>
+    <button type="button" id="gmPause" class="gmBtn hidden">Pause game</button>
+    <button type="button" id="gmOptions" class="gmBtn">Options</button>
+    <button type="button" id="gmExit" class="gmBtn gmDanger">Exit match</button>
+  </div>
+</div>
+
+<button id="optionsBtn" type="button" data-tip="Options" aria-label="Options"><img class="ic" src="assets/icons/cog.svg" alt="" draggable="false"></button>
 
 <div id="optionsOverlay" class="hidden">
   <div class="panel optionsPanel" role="dialog" aria-label="Options">
@@ -131,14 +191,24 @@
     <label class="optRow" title="Draws the map at standard resolution instead of Retina/HiDPI and turns off the animated menu background. Much faster on older laptops; slightly softer text.">
       <input id="optLowGfx" type="checkbox"> <span>Low graphics<small>Faster on older computers; also turns off the menu animation</small></span>
     </label>
+    <label class="optRow" title="Draws the game at 30 frames a second instead of the display's full rate, except while the map is being moved. Uses much less battery on phones and laptops.">
+      <input id="optSaveBattery" type="checkbox"> <span>Battery saver<small>Limits the game to 30 fps; on by default on phones and tablets</small></span>
+    </label>
     <label class="optRow">
-      <input id="optShowPerf" type="checkbox"> <span>Show FPS / ping<small>Ping shows in online games</small></span>
+      <input id="optShowPerf" type="checkbox"> <span>Show FPS / ping<small>Also sim and draw time; ping shows in online games</small></span>
     </label>
     <label class="optRow">
       <input id="optHideHint" type="checkbox"> <span>Hide hint bar<small>Warnings still appear</small></span>
     </label>
     <label class="optRow">
       <input id="optInvertZoom" type="checkbox"> <span>Invert zoom direction<small>Mouse wheel</small></span>
+    </label>
+    <label class="optRow">
+      <input id="optMusicOn" type="checkbox"> <span>Music<small>Plays during matches · M toggles it in-game</small></span>
+    </label>
+    <label class="optRow">
+      <span>Music volume</span>
+      <input id="optMusicVol" type="range" min="0" max="1" step="0.05">
     </label>
     <label class="optRow">
       <span>UI scale</span>
@@ -149,16 +219,76 @@
         <option value="1.4">Extra large</option>
       </select>
     </label>
+    <button type="button" id="optCopyPerf" class="linkBtn" title="Copies frame, sim and draw timings from the current or last match, to paste into a bug report.">Copy performance report</button>
     <button type="button" id="optionsClose" class="primaryBtn">Done</button>
+  </div>
+</div>
+
+<div id="accountOverlay" class="hidden">
+  <form id="accountForm" class="panel optionsPanel" role="dialog" aria-label="Sign in" novalidate>
+    <h2 id="accountTitle">Sign in</h2>
+    <input id="accountEmail" type="email" placeholder="Email" autocomplete="username" maxlength="254" spellcheck="false">
+    <input id="accountPassword" type="password" placeholder="Password" autocomplete="current-password" maxlength="128">
+    <input id="accountConfirm" type="password" placeholder="Confirm password" autocomplete="new-password" maxlength="128" class="hidden">
+    <div id="accountNote" class="hidden">At least 8 characters. There's no password reset yet, so keep this somewhere safe.</div>
+    <label id="accountAge" class="optRow hidden"><input id="accountAgeBox" type="checkbox"> <span>I am 13 or older</span></label>
+    <div id="accountPrivacy" class="hidden">By creating an account you agree to the <a href="terms.html" target="_blank" rel="noopener">Terms of Service</a> and <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</div>
+    <div id="accountError" class="hidden"></div>
+    <button type="submit" id="accountSubmit" class="primaryBtn">Sign in</button>
+    <div id="accountLinks"><button type="button" id="accountToggle" class="linkBtn">Create account</button><button type="button" id="accountCancel" class="linkBtn">Cancel</button></div>
+  </form>
+</div>
+
+<!-- Signed-in account management: a menu of three actions, then one form whose
+     fields UI.setupManageAccount shows per action. -->
+<div id="manageOverlay" class="hidden">
+  <form id="manageForm" class="panel optionsPanel" role="dialog" aria-label="Account" novalidate>
+    <h2 id="manageTitle">Account</h2>
+    <div id="manageMenu">
+      <button type="button" data-manage="email">Change email</button>
+      <button type="button" data-manage="password">Change password</button>
+      <button type="button" data-manage="delete" class="dangerBtn">Delete account</button>
+    </div>
+    <div id="manageFields" class="hidden">
+      <input id="manageEmail" type="email" placeholder="New email" autocomplete="username" maxlength="254" spellcheck="false">
+      <input id="manageCurrent" type="password" placeholder="Current password" autocomplete="current-password" maxlength="128">
+      <input id="manageNew" type="password" placeholder="New password" autocomplete="new-password" maxlength="128">
+      <input id="manageConfirm" type="password" placeholder="Confirm new password" autocomplete="new-password" maxlength="128">
+      <div id="manageNote"></div>
+      <div id="manageError" class="hidden"></div>
+      <button type="submit" id="manageSubmit" class="primaryBtn">Save</button>
+    </div>
+    <div id="manageDone" class="hidden"></div>
+    <div id="manageLinks"><button type="button" id="manageBack" class="linkBtn hidden">‹ Back</button><button type="button" id="manageClose" class="linkBtn">Close</button></div>
+  </form>
+</div>
+
+<div id="installGuide" class="hidden">
+  <div class="panel optionsPanel" role="dialog" aria-label="Add to Home Screen">
+    <h2>Add to Home Screen</h2>
+    <p>Play BorderWar full screen, straight from your home screen:</p>
+    <ol id="installSteps"></ol>
+    <button type="button" id="installClose" class="primaryBtn">Got it</button>
   </div>
 </div>
 
 <div id="overlay">
   <div class="panel menuPanel">
     <div class="menuCol menuMain">
-    <button type="button" id="modeBack" class="linkBtn hidden">‹ Back</button>
+    <!-- A mode's screen is open: Back and that screen's title stand in for
+         the brand (UI.setupLobby fills #modeTitle). -->
+    <div id="modeHead"><button type="button" id="modeBack" class="hidden" aria-label="Back">‹</button><span id="modeTitle"></span>
+      <!-- Solo / Friends switch on the Create game screen (UI.setupLobby). -->
+      <div id="modeSeg" role="tablist"><button type="button" data-seg="sp" role="tab">Solo</button><button type="button" data-seg="friends" role="tab">Friends</button></div>
+    </div>
     <h1 class="brand"><img class="brandMark" src="assets/logo/shield.svg" alt="" draggable="false">BorderWar</h1>
-    <p>Expand across the map. Tap neutral land or an enemy nation to send troops along your border.</p>
+    <p id="menuPitch">Every border is a front line.</p>
+    <!-- Phones and tablets only; js/install.js shows it. -->
+    <button type="button" id="installBtn" class="hidden"><img class="ic" src="assets/logo/favicon.svg" alt="" draggable="false"> Add to Home Screen</button>
+
+    <!-- Optional accounts (docs/accounts-auth.md). Stays hidden unless the page
+         is served by a server with accounts; UI.renderAccount fills it. -->
+    <div id="accountStrip" class="hidden"><span id="accountStatus"></span><button type="button" id="accountSignIn" class="linkBtn">Sign in</button><button type="button" id="accountManage" class="linkBtn hidden">Account</button><button type="button" id="accountSignOut" class="linkBtn hidden">Sign out</button></div>
 
     <!-- MP-2.3: mode choice above the existing singleplayer flow, which is
          otherwise untouched below (#mapSize/#botCount/#tribeCount/#startBtn
@@ -186,7 +316,7 @@
            with a fresh random seed so the map preview can be checked without
            a server. -->
       <button type="button" id="quickJoinDebugBtn" class="linkBtn hidden">Debug: fake open game (new seed)</button>
-      <button type="button" id="quickJoinBtn" class="primaryBtn" disabled>Join Open Game</button>
+      <button type="button" id="quickJoinBtn" class="primaryBtn" disabled>Play now</button>
     </div>
     </div>
 
@@ -194,21 +324,24 @@
 
     <div class="menuCol menuModes">
 
+    <!-- The other ways to play, one row each. A .modeTab opens its screen
+         (UI.setupLobby); the tutorial row starts a guided first match
+         (js/tutorial.js). Replays is a .modeTab too, down in #menuFoot. -->
     <div id="modeTabs">
-      <button type="button" class="modeTab" data-mode="join">Join custom lobby</button>
-      <button type="button" class="modeTab" data-mode="host">Host</button>
-      <button type="button" class="modeTab" data-mode="sp">Singleplayer</button>
+      <button type="button" class="modeTab menuRow" data-mode="friends" data-title="Create game"><span class="menuRowText"><b>Play with friends</b><small>Host a lobby or enter a code</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
+      <button type="button" class="modeTab menuRow" data-mode="sp" data-title="Create game"><span class="menuRowText"><b>Solo vs bots</b><small>Pick the map and difficulty</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
+      <button type="button" id="tutorialBtn" class="menuRow"><span class="menuRowText"><b>Tutorial</b><small>New here? Learn in a guided first match</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
     </div>
 
-    <div id="spMode" class="modeBody hidden">
+    <div id="spMode" class="modeBody settingsGrid hidden">
       <div class="optRow2">
         <label>Map
           <select id="mapType">
-            <option value="world" selected>The World</option>
-            <option value="procedural">Procedural</option>
+            <option value="world">The World</option>
+            <option value="procedural" selected>Procedural</option>
           </select>
         </label>
-        <label id="mapSizeRow" class="hidden">Map Size
+        <label id="mapSizeRow">Map Size
           <select id="mapSize">
             <option value="small">Small</option>
             <option value="medium" selected>Medium</option>
@@ -217,7 +350,7 @@
         </label>
       </div>
       <!-- Procedural map options, filled by UI.setupMapGen. -->
-      <div id="mapGenBox" class="mapGen hidden"></div>
+      <div id="mapGenBox" class="mapGen"></div>
       <div class="optRow2">
         <label>Difficulty
           <select id="difficulty">
@@ -251,86 +384,28 @@
         <label>Bots <input id="botCount" type="number" min="2" max="100" value="82"></label>
         <label>Tribes <input id="tribeCount" type="number" min="0" max="400" value="400"></label>
       </div>
-      <label class="checkboxLabel" title="The map starts black and you only see what you have discovered. Hides the map preview."><input id="fogOfWar" type="checkbox"> Fog of war</label>
+      <label class="checkboxLabel" title="The map starts black and you only see what you have discovered. Hides the map preview."><input id="fogOfWar" type="checkbox" checked> Fog of war</label>
       <button id="startBtn">Start Game</button>
     </div>
 
-    <div id="hostMode" class="modeBody hidden">
-      <div class="optRow2">
-        <label>Map
-          <select id="hostMapType">
-            <option value="world" selected>The World</option>
-            <option value="procedural">Procedural</option>
-          </select>
-        </label>
-        <label id="hostMapSizeRow" class="hidden">Map Size
-          <select id="hostMapSize">
-            <option value="small">Small</option>
-            <option value="medium" selected>Medium</option>
-            <option value="large">Large</option>
-          </select>
-        </label>
-      </div>
-      <div id="hostMapGenBox" class="mapGen hidden"></div>
-      <div class="optRow2">
-        <label>Difficulty
-          <select id="hostDifficulty">
-            <option value="easy">Easy</option>
-            <option value="medium" selected>Medium</option>
-            <option value="hard">Hard</option>
-          </select>
-        </label>
-        <label>Mode
-          <select id="hostGameMode">
-            <option value="ffa" selected>Free for All</option>
-            <option value="team">Teams</option>
-          </select>
-        </label>
-      </div>
-      <label id="hostPlayerTeamsRow" class="hidden">Teams
-        <select id="hostPlayerTeams">
-          <option value="2" selected>2 teams</option>
-          <option value="3">3 teams</option>
-          <option value="4">4 teams</option>
-          <option value="5">5 teams</option>
-          <option value="6">6 teams</option>
-          <option value="7">7 teams</option>
-          <option value="Duos">Duos</option>
-          <option value="Trios">Trios</option>
-          <option value="Quads">Quads</option>
-          <option value="Humans Vs Nations">Humans vs Nations</option>
-        </select>
-      </label>
-      <div class="optRow2">
-        <label>Bots <input id="hostBotCount" type="number" min="0" max="100" value="82"></label>
-        <label>Tribes <input id="hostTribeCount" type="number" min="0" max="400" value="400"></label>
-      </div>
-      <label class="checkboxLabel" title="The map starts black and players only see what they have discovered. Hides the map preview."><input id="hostFogOfWar" type="checkbox"> Fog of war</label>
-      <label class="checkboxLabel"><input id="hostPublic" type="checkbox"> Public (visible in lobby browser)</label>
-      <button id="hostCreateBtn">Create Lobby</button>
-
-      <div id="hostLobby" class="hidden">
-        <div id="hostStatus" class="lobbyStatus"></div>
-        <div class="lobbyLabel">Join code (click to copy)</div>
-        <div id="lobbyCode" title="Copy join code"></div>
-        <div class="lobbyLabel">Players <span id="hostPlayerCount"></span></div>
-        <ul id="lobbyRoster" class="lobbyRoster"></ul>
-        <button id="hostStartBtn" class="hidden">Start Game</button>
-        <button id="hostLeaveBtn" class="lobbyLeave">Leave Lobby</button>
-      </div>
-    </div>
-
-    <div id="joinMode" class="modeBody hidden">
-      <label>Join code <input id="joinCode" type="text" maxlength="12" placeholder="ABC123"></label>
-      <button id="joinBtn">Join Lobby</button>
-
-      <div id="publicLobbyBrowser">
-        <div class="lobbyLabel">Other public lobbies <button id="lobbyListRefreshBtn" class="linkBtn">Refresh</button></div>
-        <ul id="publicLobbyList" class="lobbyRoster"></ul>
+    <!-- Play with friends: join by code, or host. Only one of the two cards
+         shows once a lobby is open (css, keyed off #hostLobby/#joinLobby). The
+         host's match settings sit inside the lobby: they are only sent with
+         Start (Transport.sendStartGame), so they can change until then. -->
+    <div id="friendsMode" class="modeBody hidden">
+    <div id="joinMode" class="menuCard">
+      <div id="joinForm">
+        <div class="menuCardTitle">Have a code?</div>
+        <div class="joinRow"><input id="joinCode" type="text" maxlength="12" placeholder="ABC123" aria-label="Join code" autocomplete="off" spellcheck="false"><button id="joinBtn">Join</button></div>
       </div>
 
       <div id="joinLobby" class="hidden">
         <div id="joinStatus" class="lobbyStatus"></div>
+        <!-- Copy of the main menu's open-game map, shown after Play now. -->
+        <div id="joinLobbyMap" class="mapPreview hidden">
+          <canvas id="joinLobbyMapCanvas" width="400" height="200"></canvas>
+          <span id="joinLobbyMapNote" class="mapPreviewNote"></span>
+        </div>
         <div class="lobbyLabel">Players <span id="joinPlayerCount"></span></div>
         <ul id="joinRoster" class="lobbyRoster"></ul>
         <div id="joinWaiting">Waiting for the host to start…</div>
@@ -338,11 +413,101 @@
       </div>
     </div>
 
+    <div id="hostMode" class="menuCard">
+      <div id="hostCreate">
+        <div class="menuCardTitle">Start your own</div>
+        <div class="menuCardNote">You get a code to share. Pick the map and rules in the lobby.</div>
+        <label class="checkboxLabel"><input id="hostPublic" type="checkbox"> Public (anyone can find it below)</label>
+        <button id="hostCreateBtn">Create lobby</button>
+      </div>
+
+      <div id="hostLobby" class="hidden">
+        <div id="hostStatus" class="lobbyStatus"></div>
+        <div class="lobbyLabel">Join code (click to copy)</div>
+        <div id="lobbyCode" title="Copy join code"></div>
+        <div class="lobbyLabel">Players <span id="hostPlayerCount"></span></div>
+        <ul id="lobbyRoster" class="lobbyRoster"></ul>
+        <div class="lobbyLabel">Match settings</div>
+        <div class="settingsGrid">
+        <div class="optRow2">
+          <label>Map
+            <select id="hostMapType">
+              <option value="world">The World</option>
+              <option value="procedural" selected>Procedural</option>
+            </select>
+          </label>
+          <label id="hostMapSizeRow">Map Size
+            <select id="hostMapSize">
+              <option value="small">Small</option>
+              <option value="medium" selected>Medium</option>
+              <option value="large">Large</option>
+            </select>
+          </label>
+        </div>
+        <div id="hostMapGenBox" class="mapGen"></div>
+        <div class="optRow2">
+          <label>Difficulty
+            <select id="hostDifficulty">
+              <option value="easy">Easy</option>
+              <option value="medium" selected>Medium</option>
+              <option value="hard">Hard</option>
+            </select>
+          </label>
+          <label>Mode
+            <select id="hostGameMode">
+              <option value="ffa" selected>Free for All</option>
+              <option value="team">Teams</option>
+            </select>
+          </label>
+        </div>
+        <label id="hostPlayerTeamsRow" class="hidden">Teams
+          <select id="hostPlayerTeams">
+            <option value="2" selected>2 teams</option>
+            <option value="3">3 teams</option>
+            <option value="4">4 teams</option>
+            <option value="5">5 teams</option>
+            <option value="6">6 teams</option>
+            <option value="7">7 teams</option>
+            <option value="Duos">Duos</option>
+            <option value="Trios">Trios</option>
+            <option value="Quads">Quads</option>
+            <option value="Humans Vs Nations">Humans vs Nations</option>
+          </select>
+        </label>
+        <div class="optRow2">
+          <label>Bots <input id="hostBotCount" type="number" min="0" max="100" value="82"></label>
+          <label>Tribes <input id="hostTribeCount" type="number" min="0" max="400" value="400"></label>
+        </div>
+        <label class="checkboxLabel" title="The map starts black and players only see what they have discovered. Hides the map preview."><input id="hostFogOfWar" type="checkbox" checked> Fog of war</label>
+        <button id="hostStartBtn" class="hidden">Start Game</button>
+        </div>
+        <button id="hostLeaveBtn" class="lobbyLeave">Leave Lobby</button>
+      </div>
+    </div>
+
+    <div id="publicLobbyBrowser" class="menuCard">
+      <div class="lobbyLabel">Public lobbies <button id="lobbyListRefreshBtn" class="linkBtn">Refresh</button></div>
+      <ul id="publicLobbyList" class="lobbyRoster"></ul>
+    </div>
+    </div>
+
+    <!-- Matches this browser recorded (js/replay.js), newest first, plus
+         loading one from a file. UI.renderReplayList fills the list. -->
+    <div id="replayMode" class="modeBody hidden">
+      <div class="lobbyLabel">Recent matches on this device</div>
+      <ul id="replayList" class="lobbyRoster"></ul>
+      <button id="replayLoadBtn" type="button" class="lobbyLeave">Load replay file…</button>
+      <input id="replayFile" type="file" accept=".json,application/json" class="hidden">
+    </div>
+
     <div id="lobbyError" class="hidden"></div>
     </div>
 
+    <div id="menuFoot"><button type="button" id="replaysLink" class="modeTab" data-mode="replay" data-title="Replays">Replays</button></div>
+
     <div id="communityLinks">
       <a href="https://www.reddit.com/r/BorderWar/" target="_blank" rel="noopener" title="r/BorderWar on Reddit" aria-label="r/BorderWar on Reddit"><img src="assets/icons/reddit.svg" alt="" draggable="false"></a>
+      <a href="https://discord.gg/X9ZEYN8Qv7" target="_blank" rel="noopener" title="BorderWar on Discord" aria-label="BorderWar on Discord"><img src="assets/icons/discord.svg" alt="" draggable="false"></a>
     </div>
 
     <div id="buildInfo"></div>
@@ -354,6 +519,8 @@
       © OpenFront and Contributors — BorderWar is a derivative work, licensed under
       <a href="LICENSE" target="_blank" rel="noopener">AGPLv3</a>.
       <a href="https://github.com/almostcertain/BorderWar" target="_blank" rel="noopener">Source</a>
+      · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a>
+      · <a href="terms.html" target="_blank" rel="noopener">Terms</a>
     </div>
   </div>
 </div>
@@ -367,20 +534,18 @@
     <h1 id="endTitle">Defeated</h1>
     <p id="endText"></p>
     <button id="restartBtn">Play Again</button>
+    <div id="endReplayRow" class="hidden"><button id="endReplayBtn" type="button" class="linkBtn">Watch replay</button><button id="endSaveBtn" type="button" class="linkBtn">Download replay</button></div>
   </div>
 </div>
 
 <script>
   // Cache-bust every load during dev — python's http.server has 1s Last-Modified
   // granularity, so quick edit-then-reload cycles can otherwise serve stale JS.
-  // The stylesheet needs the same treatment: it's the one asset in index.html
-  // that wasn't on this scheme, so a browser that had already cached it kept
-  // serving that copy through every later CSS edit regardless of reload.
-  const V = Date.now();
+  // V is set in <head> (shared with the stylesheet link there).
+  const V = window.V;
   fetch('buildinfo.json?v=' + V).then(r => r.ok ? r.json() : Promise.reject())
     .then(b => { window.BUILD_ID = b.id; document.getElementById('buildInfo').textContent = 'v' + b.version + (b.commit ? ' · ' + b.commit + (b.dirty ? '+' : '') : ''); })
     .catch(() => {});
-  document.getElementById('mainStyle').href = 'css/style.css?v=' + V;
   // Nested paths work as-is: the entry is just spliced into 'js/<name>.js'.
   // 'game/shared' defines the shared globals before 'game/core' defines Game.
   // Game domain scripts extend the singleton after core and before net/ai.
@@ -402,7 +567,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/paratroopers', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'ai', 'render', 'input', 'ui', 'radial', 'menubg', 'options', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/paratroopers', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'render', 'input', 'account', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

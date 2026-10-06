@@ -4,7 +4,10 @@
 // change.
 const Options = (function() {
   const KEY = 'borderwar_options';
-  const DEFAULTS = { lowGfx: false, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false };
+  // Battery saver starts on for phones and tablets, off where there is a mouse.
+  const touchDevice = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+  // Music starts off on a developer's own machine, on for players on the live site.
+  const DEFAULTS = { lowGfx: false, saveBattery: touchDevice, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false, musicOn: !UI.DEBUG_HOST, musicVol: 0.7 };
   const values = Object.assign({}, DEFAULTS);
 
   try {
@@ -26,11 +29,14 @@ const Options = (function() {
     document.documentElement.style.setProperty('--ui-scale', values.uiScale);
     perfEl.classList.toggle('hidden', !values.showPerf);
     if (!values.showPerf) { frames = 0; sampleStart = 0; }
+    Music.set(values.musicOn, values.musicVol);
   }
 
   function set(key, value) {
     values[key] = value;
     try { localStorage.setItem(KEY, JSON.stringify(values)); } catch (e) { /* ignore */ }
+    // Music is also toggled from outside this dialog (the in-game button, M).
+    if (boxes[key]) document.getElementById(boxes[key]).checked = value;
     apply();
   }
 
@@ -41,13 +47,15 @@ const Options = (function() {
     frames++;
     if (now - sampleStart < 500) return;
     let text = Math.round(frames * 1000 / (now - sampleStart)) + ' fps';
+    const work = Perf.hud();
+    if (work) text += ' · ' + work;
     if (Transport.rtt !== null && !Transport.isLocal) text += ' · ' + Transport.rtt + ' ms';
     perfEl.textContent = text;
     frames = 0; sampleStart = now;
   }
 
   const overlayEl = document.getElementById('optionsOverlay');
-  const boxes = { lowGfx: 'optLowGfx', showPerf: 'optShowPerf', hideHint: 'optHideHint', invertZoom: 'optInvertZoom' };
+  const boxes = { lowGfx: 'optLowGfx', saveBattery: 'optSaveBattery', showPerf: 'optShowPerf', hideHint: 'optHideHint', invertZoom: 'optInvertZoom', musicOn: 'optMusicOn' };
   for (const key in boxes) {
     const el = document.getElementById(boxes[key]);
     el.checked = values[key];
@@ -57,8 +65,30 @@ const Options = (function() {
   scaleEl.value = String(values.uiScale);
   if (scaleEl.value !== String(values.uiScale)) scaleEl.value = '1';
   scaleEl.addEventListener('change', () => set('uiScale', parseFloat(scaleEl.value)));
+  // Menus are silent, so moving the slider plays the music until the dialog
+  // closes: otherwise there would be nothing to set the volume against.
+  const volEl = document.getElementById('optMusicVol');
+  volEl.value = String(values.musicVol);
+  volEl.addEventListener('input', () => {
+    Music.preview(true);
+    set('musicVol', parseFloat(volEl.value));
+  });
 
-  const close = () => overlayEl.classList.add('hidden');
+  // Copies Perf.text() so numbers from a player's own machine can be pasted
+  // into a report. Falls back to the console where the clipboard is refused.
+  const copyEl = document.getElementById('optCopyPerf');
+  copyEl.addEventListener('click', () => {
+    const report = Perf.text();
+    const done = label => {
+      copyEl.textContent = label;
+      setTimeout(() => { copyEl.textContent = 'Copy performance report'; }, 1500);
+    };
+    console.log(report);
+    if (!navigator.clipboard) { done('Printed to console'); return; }
+    navigator.clipboard.writeText(report).then(() => done('Copied'), () => done('Printed to console'));
+  });
+
+  const close = () => { overlayEl.classList.add('hidden'); Music.preview(false); };
   document.getElementById('optionsBtn').addEventListener('click', () => overlayEl.classList.remove('hidden'));
   document.getElementById('optionsClose').addEventListener('click', close);
   overlayEl.addEventListener('click', e => { if (e.target === overlayEl) close(); });
@@ -67,5 +97,5 @@ const Options = (function() {
   });
 
   apply();
-  return { get: key => values[key], set, perfFrame };
+  return { get: key => values[key], set, perfFrame, open: () => overlayEl.classList.remove('hidden') };
 })();

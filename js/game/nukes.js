@@ -388,6 +388,7 @@ Object.assign(Game, {
         // Fog of war: a nuke hit tells the victim who launched it.
         if (this.fog) this.markMet(owner, nuke.ownerId);
       }
+      this.removeStationRails(b);
       this.buildings.delete(tile);
     }
 
@@ -423,7 +424,9 @@ Object.assign(Game, {
       // verbatim queueWaterConversion's own mg.isLand(tile) guard, which has
       // no ownership condition. `owner !== WATER` is this game's isLand
       // check (already-relinquished-to-NEUTRAL tiles above still count).
-      if (owner !== WATER) this.fallout.add(tile);
+      // Battle Royale's dead zone (game/drill.js) takes no fallout: a blast
+      // there has nothing left to do.
+      if (owner !== WATER && !this.drillDead[tile]) this.fallout.add(tile);
       this.dirtyTiles.add(tile);
     }
 

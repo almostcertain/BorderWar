@@ -87,7 +87,9 @@ Object.assign(Game, {
   nearestOwnedCoast(tile) {
     // isCoastal only means anything for land — a water tile bordering more
     // water would otherwise short-circuit here and "land" on itself.
-    if (GameMap.isLand(tile) && GameMap.isCoastal(tile)) return tile;
+    // Battle Royale's dead zone (game/drill.js) is never a landing site.
+    const dead = this.drillDead;
+    if (GameMap.isLand(tile) && GameMap.isCoastal(tile) && !dead[tile]) return tile;
     const rawOwner = GameMap.owner[tile];
     const owner = rawOwner === WATER ? NEUTRAL : rawOwner;
     const w = GameMap.width;
@@ -101,7 +103,7 @@ Object.assign(Game, {
       const i = queue[head++];
       const ix = i % w, iy = (i / w) | 0;
       const dist = Math.abs(ix - tx) + Math.abs(iy - ty);
-      if (dist < bestDist && GameMap.owner[i] === owner && GameMap.isCoastal(i)) {
+      if (dist < bestDist && GameMap.owner[i] === owner && !dead[i] && GameMap.isCoastal(i)) {
         best = i; bestDist = dist;
       }
       if (dist >= maxDist) continue;
@@ -290,6 +292,12 @@ Object.assign(Game, {
       attacker.troops += boat.troops * (1 - this.BOAT_RETREAT_MALUS);
       return;
     }
+    // The circle (game/drill.js) passed over the landing tile while the boat
+    // was crossing: nothing to land on, so it turns back with the same toll.
+    if (this.drillDead[tile]) {
+      attacker.troops += boat.troops * (1 - this.BOAT_RETREAT_MALUS);
+      return;
+    }
 
     // The landing tile itself is always taken for free — no fight, no troop
     // cost — exactly like OpenFront's unconditional conquer() on arrival.
@@ -333,7 +341,7 @@ Object.assign(Game, {
     const n = GameMap.neighbors(tile, nb);
     for (let k = 0; k < n; k++) {
       const j = nb[k];
-      if (GameMap.owner[j] === targetId) {
+      if (GameMap.owner[j] === targetId && !this.drillDead[j]) {
         a.border.add(j);
         this.heapPush(a, j, this.frontierPriority(j, a));
       }

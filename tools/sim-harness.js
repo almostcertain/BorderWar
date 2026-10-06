@@ -47,7 +47,7 @@ if (only && mode === 'neutral') {
 // NEUTRAL_ALLOWED with a reason.
 const neutralDir = path.join(root, 'tools/.neutral');
 const NEUTRAL_ALLOWED = [
-  'UNITS' // fog task 5: the table gained the Scout entry, which a fog-off match can never buy
+  'UNITS' // fog tasks 5 and 11: the table gained the Scout and Radio Tower entries, which a fog-off match can never buy
 ];
 function keyDigests(Game) {
   const omitted = new Set(Game.COSMETIC_STATE);
@@ -160,15 +160,15 @@ function fogInvariants({ Game, GameMap }, prev, where) {
   const w = GameMap.width, owner = GameMap.owner;
   const name = id => `${id} (${Game.players[id].name})`;
 
-  // Groups: none for a tribe, one per team, one each for everyone else.
-  const groupByKey = new Map();
+  // Groups: none for a tribe, one each for everyone else (teammates share
+  // through the share masks, not a common group).
+  const seenGroups = new Set();
   for (const p of Game.players) {
     const g = groupOf[p.id];
     if (p.isTribe) { if (g !== -1) fail(`tribe ${name(p.id)} has vision group ${g}`); continue; }
     if (!(g >= 0 && g < G)) fail(`${name(p.id)} has no vision group`);
-    const key = Game.teams && p.team ? `team:${p.team}` : `player:${p.id}`;
-    if (groupByKey.has(key) ? groupByKey.get(key) !== g : [...groupByKey.values()].includes(g)) fail(`vision groups do not follow teams at ${name(p.id)}`);
-    groupByKey.set(key, g);
+    if (seenGroups.has(g)) fail(`vision group ${g} is shared at ${name(p.id)}`);
+    seenGroups.add(g);
   }
 
   // Every owned tile is discovered by its owner's group, and its owner has
@@ -190,6 +190,10 @@ function fogInvariants({ Game, GameMap }, prev, where) {
     const ga = groupOf[al.a], gb = groupOf[al.b];
     if (ga >= 0 && gb >= 0 && ga !== gb) { allies[ga].push(gb); allies[gb].push(ga); }
     if (!Game.hasMet(al.a, al.b) || !Game.hasMet(al.b, al.a)) fail(`allies ${name(al.a)} and ${name(al.b)} have not met`);
+  }
+  for (const a of Game.players) for (const b of Game.players) {
+    const ga = groupOf[a.id], gb = groupOf[b.id];
+    if (ga >= 0 && gb >= 0 && Game.onSameTeam(a.id, b.id) && !allies[ga].includes(gb)) allies[ga].push(gb);
   }
   const R = Game.VISION_SIGHT_BORDER, r2 = R * R + R;
   const counts = new Array(G).fill(0);
@@ -218,7 +222,7 @@ function fogInvariants({ Game, GameMap }, prev, where) {
   // the met bit.
   for (const a of Game.players) for (const b of Game.players) {
     const g = groupOf[a.id];
-    const want = a.id === b.id || g < 0 || g === groupOf[b.id] || fogHas(met, b.id * W, g);
+    const want = a.id === b.id || g < 0 || g === groupOf[b.id] || Game.onSameTeam(a.id, b.id) || fogHas(met, b.id * W, g);
     if (Game.hasMet(a.id, b.id) !== want) fail(`hasMet(${a.id}, ${b.id}) is ${!want}`);
   }
 
@@ -422,8 +426,12 @@ function fogBotWatch(sim, name) {
 function fogBotScoutEnd(sim, name) {
   const { Game, AI } = sim;
   const fail = msg => { throw new Error(`FOG BOTS ${name}: ${msg}`); };
-  const out = { scoutNations: 0, finished: 0, writtenOff: 0, afloat: 0 };
+  const out = { scoutNations: 0, finished: 0, writtenOff: 0, afloat: 0, radioTowers: 0 };
   for (const p of Game.players) {
+    // Radio Towers (task 11): only a Nation with no ocean shore buys them.
+    const towers = Game.unitsBuilt(p, 'radio');
+    if (towers > AI.RADIO_CAP) fail(`player ${p.id} built ${towers} Radio Towers`);
+    out.radioTowers += towers;
     const st = p.aiScout;
     if (!st) continue;
     if (!p.isBot) fail(`player ${p.id}, not a Nation, has scouting state`);
@@ -534,7 +542,7 @@ function fogBotsOff() {
   const fail = msg => { throw new Error(`FOG OFF BOTS: ${msg}`); };
   Game.init(Hash._syntheticGameStartInfo(cfg), 0);
   if (!Game.chooseSpawn(Hash.firstLegalSpawn())) fail('no legal human spawn');
-  for (const name of ['fogCoast', 'fogCoastStep', 'scoutThink', 'scoutPoll', 'scoutTarget', 'scoutWriteOff', 'buyScout', 'scoutLaunchWater', 'scoutCap', 'strangerDecision']) {
+  for (const name of ['fogCoast', 'fogCoastStep', 'scoutThink', 'scoutPoll', 'scoutTarget', 'scoutWriteOff', 'buyScout', 'scoutLaunchWater', 'scoutCap', 'strangerDecision', 'buyRadio', 'radioSite', 'hasOceanCoast']) {
     if (typeof AI[name] !== 'function') fail(`AI.${name} is missing`);
     AI[name] = () => fail(`AI.${name} was reached in a fog-off match`);
   }
@@ -560,7 +568,7 @@ function fogRun(cfg, second) {
     Game[name] = function (...args) { coverage[name]++; return original.apply(this, args); };
   }
   const bots = fogBotWatch(sim, cfg.name);
-  // Right after an alliance forms the two sides have met and hold one map.
+  // Right after an alliance forms the two sides have met and each holds what the other saw itself.
   const accept = Game.acceptAlliance;
   Game.acceptAlliance = function (req) {
     const ok = accept.call(this, req);
@@ -568,7 +576,8 @@ function fogRun(cfg, second) {
     const ga = this.visionGroupOf[req.from], gb = this.visionGroupOf[req.to];
     if (!this.hasMet(req.from, req.to) || !this.hasMet(req.to, req.from)) throw new Error(`FOG INVARIANT ${cfg.name}: new allies ${req.from} and ${req.to} have not met`);
     for (let base = 0; base < this.visionCells.length; base += this.visionWords) {
-      if (fogHas(this.visionCells, base, ga) !== fogHas(this.visionCells, base, gb)) throw new Error(`FOG INVARIANT ${cfg.name}: new allies ${req.from} and ${req.to} hold different maps`);
+      if (fogHas(this.visionOwn, base, ga) && !fogHas(this.visionCells, base, gb)) throw new Error(`FOG INVARIANT ${cfg.name}: new ally ${req.to} lacks a cell ${req.from} saw itself`);
+      if (fogHas(this.visionOwn, base, gb) && !fogHas(this.visionCells, base, ga)) throw new Error(`FOG INVARIANT ${cfg.name}: new ally ${req.from} lacks a cell ${req.to} saw itself`);
     }
     return ok;
   };
@@ -737,7 +746,11 @@ function fogSpawnExpectedCells({ Game, GameMap }) {
       const cx = ((t % w) / C) | 0, cy = (((t / w) | 0) / C) | 0;
       for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
         const x = cx + dx, y = cy + dy;
-        if (dx * dx + dy * dy <= r2 && x >= 0 && y >= 0 && x < cw && y < ch) want[g][y * cw + x] = 1;
+        if (dx * dx + dy * dy <= r2 && x >= 0 && y >= 0 && x < cw && y < ch) {
+          want[g][y * cw + x] = 1;
+          // Teammates share each other's sight.
+          for (const q of Game.players) if (Game.onSameTeam(p.id, q.id)) want[Game.visionGroupOf[q.id]][y * cw + x] = 1;
+        }
       }
     }
   }
@@ -884,7 +897,9 @@ function fogSpawnMultiHuman() {
 }
 
 function fogOff() {
-  const cfg = { name: 'fog-off-small-12345', size: 'small', seed: 12345, bots: 8, tribes: 12, ticks: 6000 };
+  // Long enough for the first nukes, and the alliance one of them breaks
+  // (about tick 6400 in this match): the coverage check below needs both.
+  const cfg = { name: 'fog-off-small-12345', size: 'small', seed: 12345, bots: 8, tribes: 12, ticks: 9000 };
   const { Game, Hash } = boot(cfg);
   const check = where => {
     for (const key of ['visionGroupOf', 'visionCells', 'visionStamped', 'visionShare', 'visionMet', 'visionCount']) {
@@ -1600,6 +1615,81 @@ function fogGatingOff() {
   console.log('fog-gating off: no contact needed in a fog-off match: ok');
 }
 
+// --- `fog`: the Radio Tower (fog task 11) -----------------------------------
+// Placed through the ordinary build intent on the builder's own land. Shows
+// nothing until it finishes, then every cell of its disc at once, and is
+// refused where there is nothing left to show. Bots buy one only without an
+// ocean shore. A fog-off match can hold none.
+function fogRadio() {
+  const { Game, GameMap, Protocol: P, expect, act, nations, tileOf } = fogGatingHarness({ name: 'fog-radio', size: 'small', seed: 12345, bots: 8, tribes: 12, fogOfWar: true });
+  const AI = Game.constructor.constructor('return AI')();
+  const R = Game.VISION_SIGHT_RADIO, human = Game.players[0];
+  const def = Game.unitDef('radio');
+  expect(def && def.fogOnly && !def.action && !def.upgradable && def.hotkey === undefined, 'the Radio Tower entry is not a fogOnly, non-action, non-upgradable structure without a hotkey');
+  const count = () => Game.visionCount[Game.visionGroupOf[0]];
+  const site = tileOf(0);
+  const hidden = Game.visionHiddenAround(0, site, R);
+  expect(hidden > 0, 'the human has nothing left to uncover at the start');
+
+  human.gold = 0;
+  expect(Game.buildBlockReason(0, 'radio', site) === 'Not enough gold' && !act(0, P.intent.buildUnit('radio', site)), 'a tower was sold for no gold');
+  human.gold = 1000000;
+  const foreign = tileOf(nations().find(id => id !== 0));
+  expect(Game.buildBlockReason(0, 'radio', foreign) === 'Your own land only' && !act(0, P.intent.buildUnit('radio', foreign)), 'a tower went up on land the builder does not own');
+  expect(Game.unitCost(human, 'radio') === 50000, `the first tower costs ${Game.unitCost(human, 'radio')}`);
+
+  let before = count();
+  expect(act(0, P.intent.buildUnit('radio', site)), 'the build intent was refused');
+  const b = Game.buildings.get(site);
+  expect(b && b.type === 'radio' && !b.built && human.gold === 950000, 'the tower was not placed and paid for');
+  expect(count() === before && Game.visionHiddenAround(0, site, R) === hidden, 'a tower under construction revealed something');
+  expect(Game.unitCost(human, 'radio') === 100000, 'the second tower is not priced on the linear curve');
+  for (let i = 0; i < def.buildTime * Game.TICKS_PER_SEC + 5 && !b.built; i++) Game.tick();
+  expect(b.built && GameMap.owner[site] === 0, 'the tower did not finish while the human held it');
+  expect(Game.visionHiddenAround(0, site, R) === 0, 'the finished tower left part of its disc undiscovered');
+  expect(count() - before >= hidden, `the tower uncovered ${count() - before} cells, fewer than the ${hidden} that were hidden`);
+  expect(Game.unitsOwned(human, 'radio') === 1 && Game.unitsPending(human, 'radio') === 0, 'the tower is not counted as built');
+  // It does not stand on: the record is gone, the tile is free again, and the next one still costs more.
+  expect(!Game.buildings.has(site) && !Game.structureTooClose(site), 'the finished tower is still on the map');
+  expect(Game.unitCost(human, 'radio') === 100000, 'the price fell back once the tower was gone');
+
+  // Nothing left to show from here, so a second one is refused and costs nothing.
+  let spare = -1;
+  for (const t of human.tiles) if (!Game.buildings.has(t) && Game.visionHiddenAround(0, t, R) === 0) { spare = t; break; }
+  expect(spare >= 0, 'no free tile inside the uncovered disc');
+  const gold = human.gold;
+  expect(Game.buildBlockReason(0, 'radio', spare) === 'Nothing left to uncover here' && !act(0, P.intent.buildUnit('radio', spare)) && human.gold === gold, 'a tower that would show nothing was sold');
+  expect(!Game.canUpgrade(0, site), 'a Radio Tower can be upgraded');
+
+  // Bots: a Nation on the ocean leaves towers alone; one with no ocean shore
+  // builds one on its border, one at a time, and draws nothing from the rng.
+  const bot = Game.players.find(p => p.isBot && !p.isTribe && p.alive && p.tiles.size > 0 && AI.hasOceanCoast(p) && AI.radioSite(p) >= 0);
+  expect(!!bot, 'no coastal Nation with somewhere to put a tower');
+  bot.gold = 1000000;
+  const rng = Game.rng;
+  Game.rng = () => { throw new Error('FOG GATING: buyRadio drew from Game.rng'); };
+  AI.buyRadio(bot);
+  expect(Game.unitsPending(bot, 'radio') === 0, 'a Nation on the ocean bought a Radio Tower');
+  const realCoast = AI.hasOceanCoast;
+  AI.hasOceanCoast = () => false;
+  AI.buyRadio(bot);
+  let tower = null;
+  for (const x of Game.buildings.values()) if (x.type === 'radio' && GameMap.owner[x.tile] === bot.id) tower = x;
+  expect(tower && Game.unitsPending(bot, 'radio') === 1 && bot.borderTiles.has(tower.tile), 'a landlocked Nation did not put a tower on its border');
+  expect(Game.visionHiddenAround(bot.id, tower.tile, R) >= AI.RADIO_MIN_CELLS, 'the tower the Nation built uncovers too little');
+  AI.buyRadio(bot);
+  expect(Game.unitsPending(bot, 'radio') === 1, 'a Nation started a second tower before the first was finished');
+  AI.hasOceanCoast = realCoast;
+  Game.rng = rng;
+  console.log(`fog-radio: gold, own land, linear price, nothing shown until built, whole disc on completion (${hidden} cells), refused where nothing is left, bots only when landlocked: ok`);
+
+  const off = fogGatingHarness({ name: 'fog-radio-off', size: 'small', seed: 12345, bots: 8, tribes: 12 });
+  off.Game.players[0].gold = 1000000;
+  off.expect(off.Game.buildBlockReason(0, 'radio', off.tileOf(0)) === 'Fog of war matches only' && !off.act(0, off.Protocol.intent.buildUnit('radio', off.tileOf(0))), 'a fog-off match sold a Radio Tower');
+  off.expect(off.Game.visionHiddenAround(0, off.tileOf(0), R) === 0, 'visionHiddenAround answers in a fog-off match');
+  console.log('fog-radio off: refused in a fog-off match: ok');
+}
+
 function fogGating() {
   fogGatingDiplomacy();
   fogGatingDonate();
@@ -1613,6 +1703,7 @@ function runFog() {
   fogOff();
   fogRules();
   fogGating();
+  fogRadio();
   fogSpawnControl();
   fogSpawnMultiHuman();
   fogScoutsOff();

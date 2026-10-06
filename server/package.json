@@ -6,7 +6,8 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test \"accounts/*.test.js\""
   },
   "dependencies": {
     "ws": "8.21.3"

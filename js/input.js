@@ -82,25 +82,12 @@ const Input = {
     // for the ghost instead of inspecting whoever owns it. Preferring a nearby
     // same-type structure over the exact tile under the cursor keeps the
     // ghost/hint preview honest about what a tap will actually do — see
-    // UI.onTap, which resolves upgrades through the same buffered search.
+    // UI.placeTileAt.
     if (UI.placing && e.pointerType === 'mouse') {
       if (e.type === 'pointerleave') {
         UI.placeHover = -1;
       } else {
-        const near = Render.findStructureNear(e.clientX, e.clientY, UI.placing);
-        if (near) {
-          UI.placeHover = near.tile;
-        } else {
-          const railSnap = UI.placing === 'city' ? Render.findRailSnapTile(e.clientX, e.clientY) : -1;
-          const coastSnap = UI.placing === 'port'
-            ? Game.nearestOwnedCoastNear(Game.me, Render.screenToTile(e.clientX, e.clientY), Game.PORT_SNAP_MAX_DIST) : -1;
-          // Warship placement has no click-time snap at all — a click can
-          // land anywhere on the map (Game.resolveWarshipLaunch snaps it to
-          // the nearest open water and picks a launching Port on its own).
-          // UI.placeHover just tracks the raw hovered tile, same as any tile
-          // that isn't near a rail/coast for city/port.
-          UI.placeHover = railSnap >= 0 ? railSnap : coastSnap >= 0 ? coastSnap : Render.screenToTile(e.clientX, e.clientY);
-        }
+        UI.placeHover = UI.placeTileAt(e.clientX, e.clientY);
       }
       UI.hideHoverPanel();
       return;

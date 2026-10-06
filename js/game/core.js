@@ -255,8 +255,8 @@ const Game = {
   // measured ~700ms one-time cost; per-tick simulation cost is driven by
   // player/attack count, not tile count, so it stays flat regardless of size.
   MAP_SIZES: {
-    small:  { width:  500, height: 250 },   // OpenFront's World, map16x
-    medium: { width: 1000, height: 500 },   // OpenFront's World, map4x
+    small:  { width: 1000, height: 500 },   // was 500x250 (OpenFront's map16x)
+    medium: { width: 1500, height: 750 },   // was 1000x500 (OpenFront's map4x)
     large:  { width: 2000, height: 1000 }   // OpenFront's World, full resolution
   },
 
@@ -507,6 +507,8 @@ const Game = {
     this.initScouts();
     // Planes and anti-air (game/paratroopers.js): empty every match.
     this.initPlanes();
+    // Battle Royale (game/drill.js): no Drill until someone places one.
+    this.initDrill();
 
     // Spawn-pick phase: every Nation/Tribe claims a provisional starting disc
     // immediately, then keeps re-rolling it to a new nearby spot every
@@ -612,7 +614,22 @@ const Game = {
     // "already claimed" by themselves, not worth special-casing.
     if (this.players[id].tiles.size > 0) this.unclaimAll(id);
     this.claimStart(tile, id);
+    // A solo player has nobody to wait for: the match starts the moment they
+    // place their capital, no countdown.
+    if (this.humanCount === 1) this.endSpawnPhase();
     return true;
+  },
+
+  // Deadline auto-placement for anyone who never picked, then the match goes
+  // live. No explicit NPC "freeze" needed: the instant spawning is false,
+  // tick()'s own top guard means tickSpawnPhase (and jumpSpawnPreview) is
+  // simply never called again.
+  endSpawnPhase() {
+    for (let p = 0; p < this.humanCount; p++) {
+      if (this.players[p].tiles.size === 0) this.claimStart(this.humanReserveTiles[p], p);
+    }
+    this.spawning = false;
+    this.running = true;
   },
 
   // How often, in seconds, an NPC's provisional spawn disc jumps to a new
@@ -690,14 +707,7 @@ const Game = {
       // Deadline hit: anyone who never sent (or whose intent never arrived)
       // a spawn is auto-placed at their reserved tile from init(). A human
       // who already placed is untouched — tiles.size > 0 skips them.
-      for (let p = 0; p < this.humanCount; p++) {
-        if (this.players[p].tiles.size === 0) this.claimStart(this.humanReserveTiles[p], p);
-      }
-      this.spawning = false;
-      this.running = true;
-      // No explicit NPC "freeze" needed: the instant spawning is false,
-      // tick()'s own top guard means tickSpawnPhase (and jumpSpawnPreview)
-      // is simply never called again.
+      this.endSpawnPhase();
     }
   },
 
@@ -983,6 +993,9 @@ const Game = {
     // check gets a chance to detonate the same object.
     this.stepSAMs();
     this.stepNukes();
+    // Battle Royale's closing circle (game/drill.js). Before the elimination
+    // sweep and win check, so land the circle takes settles both this tick.
+    this.stepDrill();
 
     for (const p of this.players) {
       if (p.alive && p.tiles.size === 0 && p.troops < 20) this.eliminatePlayer(p);
@@ -1002,7 +1015,10 @@ const Game = {
     // survivor or a legitimate blocker of someone else's 95% threshold,
     // exactly as if they were still playing.
     // Team games win per team instead — see checkTeamWin in game/teams.js.
+    // With a Drill (Battle Royale) neither mode uses the land share — see
+    // checkDrillWin in game/teams.js.
     if (this.teams) this.checkTeamWin();
+    else if (this.drill) { if (this.winnerId === null) this.checkDrillWin(); }
     else if (this.winnerId === null) {
       // Counted in a loop rather than collected with filter(): this runs on
       // every tick of every match, and the array it used to build was thrown

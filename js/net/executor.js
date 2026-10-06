@@ -273,6 +273,10 @@ const Executor = {
       if (it.unit === 'mirv') {
         return Game.launchMirv(playerId, it.tile);
       }
+      // The Drill (Battle Royale, game/drill.js): placed on the builder's own
+      // land, instantly, never in Game.buildings. drillBlockReason holds the
+      // one-per-match rule, so a second placement by anyone is refused here.
+      if (it.unit === 'drill') return Game.placeDrill(playerId, it.tile);
       // Everything else is an ordinary territory-bound structure.
       return Game.build(playerId, it.unit, it.tile);
     },

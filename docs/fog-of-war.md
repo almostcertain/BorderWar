@@ -1,8 +1,7 @@
 # Fog of war (design)
 
-Status: **built on the `feature/fog-of-war` branch, not yet playtested by a
-person.** Tasks 1 to 10 are done; 11 (Radio Tower) is a follow-up and not
-started. No ticket numbers. Where the build differs from the
+Status: **built and on `main`, not yet playtested by a person.** Tasks 1 to
+11 are done (11, the Radio Tower, was added afterwards). No ticket numbers. Where the build differs from the
 design below, "As built" near the end says how.
 
 A match option. When it is on, the map starts black, each nation sees only what
@@ -20,7 +19,7 @@ off, the game plays exactly as it does today.
 | Spawning | Random and fixed when fog is on. Nobody picks a spawn. The countdown is 5 seconds. |
 | Nukes | Can be fired into undiscovered areas. The blast reveals nothing. |
 | Bots | Bound by the same fog as humans. |
-| Radio Tower | Planned follow-up: a cheap building that reveals an area around it, mainly for landlocked nations. Until it exists, a landlocked nation cannot explore beyond its border; that is accepted for the first version. |
+| Radio Tower | A cheap building that reveals a wide area around it once, when it finishes, and then disappears. Mainly for landlocked nations, which cannot launch Scouts. 50k for the first, 50k more for each one after, capped at 250k. |
 | Shared vision | Teammates always share. Allies share while allied and keep what they learned. |
 | Contact | One-sided. Meeting a nation does not make it meet you. Allies share the map but not their contacts. |
 | Trade | Ports only trade between two nations that have both met each other. Rail income inside your own network is unaffected. |
@@ -38,11 +37,10 @@ permanent.
 ### What reveals the map
 
 - **Your territory**, plus a sight radius beyond your border. Expanding on land
-  reveals land. This is the only source a landlocked nation has until the
-  Radio Tower exists.
+  reveals land.
 - **Scouts**, in a radius around the scout as it sails.
 - **Warships**, in a smaller radius around the warship as it sails.
-- **Radio Towers** (follow-up), in a larger radius around the tower, once, when
+- **Radio Towers**, in a larger radius around the tower, once, when
   construction finishes.
 - **Allies and teammates**, as above.
 
@@ -155,8 +153,6 @@ anyone.
   a weaker early economy than fog-off ones. Rail income from your own cities
   and factories still works from the start. Trade ships are still not drawn
   in the fog.
-- **Landlocked nations cannot explore** beyond their border sight until the
-  Radio Tower follow-up exists.
 - **Scouts know the way.** A scout's route is computed on the real map, so it
   steers around continents the player has not seen. The player only learns
   what is revealed along the route.
@@ -191,8 +187,10 @@ it goes in the desync hash.
   "already stamped", so the cost after the first tile in a cell is one test.
 - **Reveal from scouts and warships.** Stamp a disc each time one enters a
   new cell. The warship stamp is in `stepWarships` and gated on `Game.fog`.
-- **Sharing.** When an alliance forms, OR each side's cells into the other.
-  While it lasts, each stamp is applied to allied groups too.
+- **Sharing.** When an alliance forms, OR each side's *own-sighted* cells
+  (`visionOwn`: stamped by its own border, scouts, ships or radio, not shown
+  by an ally) into the other. While it lasts, each stamp is applied to allied
+  groups too. Vision is direct only: an ally's ally's sight never reaches you.
 - **Met.** Per player, a bitmask of groups that have met them. Updated in two
   places: when a cell is revealed (scan its 64 tiles for owners), and in
   `setOwner` (`cellGroups[cell] & ~metBy[newOwner]`, a few word operations).
@@ -210,10 +208,10 @@ All state is top-level on `Game`, `null`/`0` in a fog-off match, and only
 
 | Field | Shape | Meaning |
 |---|---|---|
-| `visionGroupOf` | `Int16Array[players]` | Player id to group id, `-1` for tribes. Teams take the first ids in `Game.teams` order; everyone else follows in player-id order, so in a free-for-all a nation's group is its player id. |
+| `visionGroupOf` | `Int16Array[players]` | Player id to group id, `-1` for tribes. Everyone but tribes gets their own group, in player-id order (teammates share through `visionShare`, not a common group). |
 | `visionCells` | `Uint32Array[cells * visionWords]` | Groups that have discovered each cell. |
 | `visionStamped` | same | Groups that have already stamped border sight from a tile in the cell. |
-| `visionShare` | `Uint32Array[groups * visionWords]` | The bits a group's stamp sets: its own plus its current allies'. Rebuilt from `Game.alliances` whenever one forms or ends. |
+| `visionShare` | `Uint32Array[groups * visionWords]` | The bits a group's stamp sets: its own, its teammates' and its current allies' (an ally of a teammate is not included). Rebuilt from `Game.alliances` whenever one forms or ends. |
 | `visionMet` | `Uint32Array[players * visionWords]` | Groups that have met each player. |
 | `visionCount` | `Uint32Array[groups]` | Cells each group has discovered. Changes exactly when the group's discovered set does, so render uses it as a revision counter. |
 | `visionCellsW`, `visionCellsH`, `visionGroups`, `visionWords` | numbers | Grid size, group count, words per bitmask. |
@@ -362,13 +360,14 @@ Much of the bot logic is already border-based (`borderTargets`, `think`,
   remains, up to the cap.
 - New scout routine: pick the nearest undiscovered `coastSample` to the home
   coast, with ties broken by `Game.rng`.
-- Later: build Radio Towers when landlocked.
+- Build Radio Towers when landlocked (see "Radio Tower (task 11)").
 
-### Radio Tower (follow-up)
+### Radio Tower
 
 `UNITS` entry `radio`, placed on owned land through the ordinary `build` path.
 Cheap, not upgradable, only in fog matches. On completion it stamps one large
-disc. Discovery survives the tower being captured or destroyed.
+disc, plays a short scan animation and is removed from the map. Discovery is
+permanent.
 
 ## As built
 
@@ -436,15 +435,23 @@ notes are under "Vision state".
 - The fog colour is the canvas backdrop (`FOG_COLOR`, `#060a14`), so the map
   edge does not show as an outline.
 - In fog matches labels, badges, front numbers and popups are drawn over the
-  fog and culled by their anchor tile. A nation is named on the map only once
-  its label anchor (the centre of its largest landmass) is discovered.
+  fog and culled by their anchor tile. A nation's label (name and troops) is
+  anchored and sized by its largest *discovered* stretch of land, so a
+  neighbour mostly in the black is still named on the strip that shows
+  (changed 2026-10-05: it used to wait for the centre of the whole nation to
+  be discovered, which left a phone, with no hover, unable to read a
+  neighbour's troops). A strip too thin for the normal sizing rule is
+  lettered at the minimum size once it is big enough on screen
+  (`FOG_LABEL_MIN_SPAN`); the label gives no hint of the hidden land's size.
 - The placement ghost is drawn over the fog, since nukes and scouts aim
   blind. A warship ghost is refused unless the hovered tile and its
   destination are both discovered.
 - Blasts and SAM flashes are culled on their centre. The incoming-nuke target
   ring is always drawn. "Own" missiles means the viewer's, not teammates'.
-- **Spectators and replays do not exist in the game today.** A client that is
-  not on the roster is treated as player 0 and gets that player's fog.
+- **There is no spectator mode.** A client that is not on the roster is
+  treated as player 0 and gets that player's fog. Replays were added later
+  (`docs/replays.md`): a replay shows the whole map unless the viewer asks
+  for one player's fog (`Replay.revealAll`).
 
 ### UI (tasks 6 and 8)
 
@@ -554,6 +561,48 @@ Not checked: real Firefox, a rejoin during a fog match, a real touch device,
 and a bot launching a nuke in a two-client match (bot nukes were covered by
 the dual run, 111 launches a run).
 
+### Radio Tower (task 11)
+
+- `UNITS` entry `radio`, last in the table, marked `fogOnly` but not `action`:
+  it goes through the ordinary `build` intent and sits in `Game.buildings`.
+  Hotkey R, fog matches only.
+- **Price.** Linear like the Fort: 50k, 100k, 150k, 200k, then 250k. Builds
+  in 5 seconds. Not upgradable.
+- **The reveal** is one `revealAround` with `VISION_SIGHT_RADIO` (12 cells,
+  about 100 tiles) in `updateConstruction`, when the tower finishes. It goes
+  to whoever owns the tile at that moment, so a tower overrun while it is
+  being built reveals for its captor. A finished tower that is captured
+  changes hands like a City and reveals nothing more. Allies get the reveal
+  through the usual sharing.
+- **Refused where it would show nothing.** `buildBlockReason` returns
+  "Nothing left to uncover here" when every cell of the disc is already
+  discovered (`Game.visionHiddenAround`). The answer depends only on the
+  builder's own discovered area, so it leaks nothing. With fog off the reason
+  is "Fog of war matches only".
+- **Placement ghost.** A dashed ring shows the disc the tower would uncover.
+  It is centred on the vision cell, not the tile, because discovery is per
+  cell.
+- **Bots** (`AI.buyRadio`). Only a nation with no shore on the ocean buys
+  towers; the rest explore by Scout. One at a time, at most 3 a match, not
+  held back by the savings reserve. The site is the best of about 8 border
+  tiles spread round the border, and nothing is bought unless it uncovers at
+  least 60 cells. No rng is drawn. The generic build loop skips `fogOnly`
+  entries, so a fog-off match never reaches any of this.
+- **Checks.** `sim-harness.js fog` has a `fog-radio` test (price, own land,
+  nothing shown until built, the whole disc on completion, the refusal, bots
+  only when landlocked, refused with fog off), and each scenario reports how
+  many towers bots built. `neutral` still passes.
+- **Gone once built.** A tower has no use after its reveal, so
+  `updateConstruction` deletes it from `Game.buildings` the tick it finishes
+  and the tile is free to build on again. `units.radio` is not decremented,
+  so it counts towers used and the linear price keeps climbing. In its place
+  the client plays a 2-second scan (`Fx.radioScan`, `Render.drawRadioScans`):
+  the tower's icon shrinking away while two rings sweep out to the edge of
+  the disc. Because of this, the paragraph above about a finished tower being
+  captured no longer applies; only a tower still under construction can
+  change hands.
+  It keeps its tile and can be captured.
+
 ## Tasks
 
 | # | Task | Files | Depends on |
@@ -568,7 +617,7 @@ the dual run, 111 launches a run).
 | 8 | Hide unmet nations in leaderboard (top 3 always shown), hover, radial, alerts; "Unknown nation" senders; full map for eliminated players | `ui.js`, `radial.js`, `render.js` | 2, 4 |
 | 9 | Bots respect fog and use scouts | `ai.js` | 5, 7 |
 | 10 | Verification: fog-off neutrality, two-client determinism with fog on, large-map performance | `tools/`, `hash.js` | all |
-| 11 | Radio Tower (follow-up) | `structures.js`, `vision.js`, `ui.js`, `render.js`, `ai.js` | 2, 4 |
+| 11 | Radio Tower | `structures.js`, `vision.js`, `protocol.js`, `ui.js`, `render.js`, `ai.js` | 2, 4 |
 
 After tasks 1 and 2, three tracks can run side by side: display (4, 8),
 scouts (5, 6) and rules and bots (7, 9). Tasks 2 and 3 both edit `core.js`,
