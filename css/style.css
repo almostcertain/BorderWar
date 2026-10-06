@@ -1790,3 +1790,47 @@ body.noHint #hint:not(.warn) { display: none; }
 }
 #installGuide p { margin: 4px 0 0; font-size: 14px; opacity: 0.85; }
 #installSteps { margin: 0; padding-left: 22px; font-size: 14px; line-height: 1.6; }
+
+/* --- Create game screen: Solo / Friends switch, map options accordion,
+   two panes on PC ----------------------------------------------------------- */
+#modeSeg { display: none; margin-left: auto; padding: 2px; gap: 2px; border-radius: 8px; background: #131c2e; border: 1px solid rgba(255, 255, 255, 0.15); }
+#overlay.modeOpen:is([data-mode="sp"], [data-mode="friends"]) #modeSeg { display: flex; }
+.menuPanel:has(:is(#hostLobby, #joinLobby):not(.hidden)) #modeSeg { display: none; }
+.panel #modeSeg button { padding: 5px 14px; font-size: 13px; font-weight: 400; border-radius: 6px; background: transparent; color: #8ea0bd; }
+.panel #modeSeg button.active { background: #2d6cdf; color: #fff; }
+
+/* The knobs sit in a collapsed "Map options"; the box itself stops being a
+   card so the preview and the accordion lay out as the form's own items. */
+.mapGen { display: contents; }
+.mapGen .mapPreview { order: -1; }
+.mapOpts {
+  display: flex; flex-direction: column; gap: 8px; text-align: left;
+  padding: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.mapOpts[open] { padding-bottom: 10px; }
+.mapOpts > :not(summary) { margin: 0 10px; }
+.mapOpts > summary { padding: 9px 10px; cursor: pointer; font-size: 14px; list-style: none; display: flex; align-items: center; }
+.mapOpts > summary::-webkit-details-marker { display: none; }
+.mapOpts > summary::after { content: '▾'; margin-left: auto; opacity: 0.6; }
+.mapOpts[open] > summary::after { content: '▴'; }
+.mapOptsSummary { margin-left: 8px; font-size: 12px; opacity: 0.55; }
+.mapOpts .optRow2 > label { font-size: 13px; }
+.mapOpts .linkBtn { align-self: flex-end; background: transparent; padding: 0; font-size: 12px; color: #6b9bff; }
+.settingsGrid .mapGen.hidden { display: none; }
+
+/* PC: settings on the left, map preview on the right. */
+@media (min-width: 900px) {
+  #overlay.modeOpen[data-mode="sp"] .menuPanel,
+  .menuPanel:has(#hostLobby:not(.hidden)) { max-width: 820px; }
+  .settingsGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; align-items: start; }
+  .settingsGrid > * { grid-column: 1; }
+  .settingsGrid .mapPreview { grid-column: 2; grid-row: 1 / span 6; order: 0; }
+  .settingsGrid > :is(#startBtn, #hostStartBtn) { grid-column: 1 / -1; }
+  .settingsGrid > .checkboxLabel { text-align: left; }
+}
+
+/* Phones: Start stays pinned to the bottom of the screen. */
+@media (max-width: 899px) {
+  .settingsGrid > :is(#startBtn, #hostStartBtn) { position: sticky; bottom: 0; z-index: 2; box-shadow: 0 0 0 8px rgba(56, 80, 104, 1); }
+}
+@media (max-width: 599px) { #overlay.modeOpen #modeHead { padding-right: 40px; } }

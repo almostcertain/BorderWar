@@ -260,7 +260,10 @@
     <div class="menuCol menuMain">
     <!-- A mode's screen is open: Back and that screen's title stand in for
          the brand (UI.setupLobby fills #modeTitle). -->
-    <div id="modeHead"><button type="button" id="modeBack" class="hidden" aria-label="Back">‹</button><span id="modeTitle"></span></div>
+    <div id="modeHead"><button type="button" id="modeBack" class="hidden" aria-label="Back">‹</button><span id="modeTitle"></span>
+      <!-- Solo / Friends switch on the Create game screen (UI.setupLobby). -->
+      <div id="modeSeg" role="tablist"><button type="button" data-seg="sp" role="tab">Solo</button><button type="button" data-seg="friends" role="tab">Friends</button></div>
+    </div>
     <h1 class="brand"><img class="brandMark" src="assets/logo/shield.svg" alt="" draggable="false">BorderWar</h1>
     <p id="menuPitch">Every border is a front line.</p>
     <!-- Phones and tablets only; js/install.js shows it. -->
@@ -308,12 +311,12 @@
          (UI.setupLobby); the tutorial row starts a guided first match
          (js/tutorial.js). Replays is a .modeTab too, down in #menuFoot. -->
     <div id="modeTabs">
-      <button type="button" class="modeTab menuRow" data-mode="friends" data-title="Play with friends"><span class="menuRowText"><b>Play with friends</b><small>Host a lobby or enter a code</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
-      <button type="button" class="modeTab menuRow" data-mode="sp" data-title="Solo vs bots"><span class="menuRowText"><b>Solo vs bots</b><small>Pick the map and difficulty</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
+      <button type="button" class="modeTab menuRow" data-mode="friends" data-title="Create game"><span class="menuRowText"><b>Play with friends</b><small>Host a lobby or enter a code</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
+      <button type="button" class="modeTab menuRow" data-mode="sp" data-title="Create game"><span class="menuRowText"><b>Solo vs bots</b><small>Pick the map and difficulty</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
       <button type="button" id="tutorialBtn" class="menuRow"><span class="menuRowText"><b>Tutorial</b><small>New here? Learn in a guided first match</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
     </div>
 
-    <div id="spMode" class="modeBody hidden">
+    <div id="spMode" class="modeBody settingsGrid hidden">
       <div class="optRow2">
         <label>Map
           <select id="mapType">
@@ -408,6 +411,7 @@
         <div class="lobbyLabel">Players <span id="hostPlayerCount"></span></div>
         <ul id="lobbyRoster" class="lobbyRoster"></ul>
         <div class="lobbyLabel">Match settings</div>
+        <div class="settingsGrid">
         <div class="optRow2">
           <label>Map
             <select id="hostMapType">
@@ -459,6 +463,7 @@
         </div>
         <label class="checkboxLabel" title="The map starts black and players only see what they have discovered. Hides the map preview."><input id="hostFogOfWar" type="checkbox" checked> Fog of war</label>
         <button id="hostStartBtn" class="hidden">Start Game</button>
+        </div>
         <button id="hostLeaveBtn" class="lobbyLeave">Leave Lobby</button>
       </div>
     </div>

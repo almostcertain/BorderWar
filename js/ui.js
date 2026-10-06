@@ -2253,9 +2253,16 @@ const UI = {
     const overlay = document.getElementById('overlay');
     const back = document.getElementById('modeBack');
     const title = document.getElementById('modeTitle');
+    // Solo / Friends switch in the header: forwards to the matching mode row.
+    const segs = Array.prototype.slice.call(document.querySelectorAll('#modeSeg button'));
+    segs.forEach((b) => b.addEventListener('click', () => {
+      const tab = tabs.find((t) => t.dataset.mode === b.dataset.seg);
+      if (tab) tab.click();
+    }));
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         tabs.forEach((t) => t.classList.toggle('active', t === tab));
+        segs.forEach((b) => b.classList.toggle('active', b.dataset.seg === tab.dataset.mode));
         for (const key in bodies) bodies[key].classList.toggle('hidden', key !== tab.dataset.mode);
         overlay.classList.add('modeOpen');
         overlay.dataset.mode = tab.dataset.mode;
@@ -2749,9 +2756,9 @@ const UI = {
       const opts = Protocol.MAP_GEN[key].map(v => '<option value="' + v + '">' + names[v] + '</option>').join('');
       return '<label>' + label + '<select id="' + this.mapGenId(prefix, 'gen_' + key) + '">' + opts + '</select></label>';
     };
+    // The preview comes first (the wide layout puts it in the right pane, the
+    // narrow one on top); the five knobs sit in a collapsed "Map options".
     box.innerHTML =
-      '<div class="optRow2">' + select('landform') + select('land') + '</div>' +
-      '<div class="optRow2">' + select('terrain') + select('rivers') + select('coast') + '</div>' +
       '<div class="mapPreview" id="' + this.mapGenId(prefix, 'mapPreviewBlock') + '">' +
         '<canvas id="' + this.mapGenId(prefix, 'mapPreview') + '" width="' + this.MAP_PREVIEW_W +
           '" height="' + this.MAP_PREVIEW_H + '"></canvas>' +
@@ -2760,14 +2767,28 @@ const UI = {
           '<label>Seed <input id="' + this.mapGenId(prefix, 'mapSeed') + '" type="number" min="0" max="4294967295"></label>' +
           '<button type="button" id="' + this.mapGenId(prefix, 'mapReroll') + '">New map</button>' +
         '</div>' +
-      '</div>';
+      '</div>' +
+      '<details class="mapOpts" id="' + this.mapGenId(prefix, 'mapOpts') + '">' +
+        '<summary>Map options <span class="mapOptsSummary" id="' + this.mapGenId(prefix, 'mapOptsSummary') + '"></span></summary>' +
+        '<div class="optRow2">' + select('landform') + select('land') + '</div>' +
+        '<div class="optRow2">' + select('terrain') + select('rivers') + select('coast') + '</div>' +
+        '<button type="button" class="linkBtn" id="' + this.mapGenId(prefix, 'mapOptsReset') + '">Reset</button>' +
+      '</details>';
 
     const seedInput = document.getElementById(this.mapGenId(prefix, 'mapSeed'));
     seedInput.value = String(Math.floor(Math.random() * 1e9));
     for (const key of Object.keys(Protocol.MAP_GEN)) {
       document.getElementById(this.mapGenId(prefix, 'gen_' + key))
-        .addEventListener('change', () => this.refreshMapPreview(prefix));
+        .addEventListener('change', () => { this.updateMapOptsSummary(prefix); this.refreshMapPreview(prefix); });
     }
+    document.getElementById(this.mapGenId(prefix, 'mapOptsReset')).addEventListener('click', () => {
+      for (const key of Object.keys(Protocol.MAP_GEN)) {
+        document.getElementById(this.mapGenId(prefix, 'gen_' + key)).selectedIndex = 0;
+      }
+      this.updateMapOptsSummary(prefix);
+      this.refreshMapPreview(prefix);
+    });
+    this.updateMapOptsSummary(prefix);
     seedInput.addEventListener('change', () => this.refreshMapPreview(prefix));
     document.getElementById(this.mapGenId(prefix, 'mapReroll')).addEventListener('click', () => {
       seedInput.value = String(Math.floor(Math.random() * 1e9));
@@ -2780,6 +2801,19 @@ const UI = {
       const canvas = document.getElementById(this.mapGenId(prefix, 'mapPreview'));
       new ResizeObserver(() => { if (canvas.clientWidth > 0) this.refreshMapPreview(prefix); }).observe(canvas);
     }
+  },
+
+  // The closed "Map options" header's one-liner: the landform, plus how many
+  // of the other knobs are off their default (the first option of each).
+  updateMapOptsSummary(prefix) {
+    const sel = (key) => document.getElementById(this.mapGenId(prefix, 'gen_' + key));
+    const landform = sel('landform');
+    let changed = 0;
+    for (const key of Object.keys(Protocol.MAP_GEN)) {
+      if (key !== 'landform' && sel(key).selectedIndex !== 0) changed++;
+    }
+    document.getElementById(this.mapGenId(prefix, 'mapOptsSummary')).textContent =
+      landform.options[landform.selectedIndex].text + (changed ? ' · ' + changed + ' changed' : '');
   },
 
   // {mapGen, seed} for gameStartInfo.config. An empty or invalid seed box
