@@ -133,7 +133,7 @@ const AI = {
       // a cheap map scan, so it doesn't get to think on land's cadence.
       p.nextNavalThink -= Game.TICK_DT;
       if (p.nextNavalThink <= 0) {
-        p.nextNavalThink = (15 + Game.rng() * 10) * prof.navalMult;
+        p.nextNavalThink = (7.5 + Game.rng() * 5) * prof.navalMult;
         this.navalThink(p);
       }
     }
@@ -2148,6 +2148,13 @@ const AI = {
     const fog = Game.fog;
     if (fog) this.scoutThink(p, homeCoast);
 
+    // OpenFront's maybeAttack: free land the nation touches is taken first and
+    // ends the turn, so a bot with room to expand at home doesn't boat. Then a
+    // 1-in-5 roll (1-in-10 with a land enemy next door) gates each launch.
+    const touching = this.borderTargets(p);
+    if (touching.has(NEUTRAL)) return;
+    if (!this.chance(touching.size === 0 ? 5 : 10)) return;
+
     const hostiles = this.hostiles(p, null);
     const reserve = hostiles.size > 0 ? this.NAVAL_RESERVE_UNDER_ATTACK : this.NAVAL_RESERVE;
     if (p.troops < Game.maxTroops(p) * reserve) return;
@@ -2448,7 +2455,7 @@ const AI = {
   //   bought   Scouts bought so far; lastBuy, the tick of the last purchase
   //   done     nothing left to find, or nobody left to look: stop thinking
   //
-  // Cost. scoutThink runs on navalThink's beat (once a nation every 15-25 s)
+  // Cost. scoutThink runs on navalThink's beat (once a nation every 7.5-12.5 s)
   // and again when a voyage ends. Each run scans the sample beaches, under a
   // thousand tiles on The World; the vision grid itself is never walked.
   // scoutPoll and buyScout, on economy's beat, are a few comparisons.
