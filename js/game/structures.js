@@ -215,6 +215,9 @@ Object.assign(Game, {
     // kind.
     const types = def.costGroup || [type];
     let n = 0;
+    // Radio Tower: no standing building, so no units.radio to count — the
+    // lifetime unitsBuilt (bumped the moment gold is committed) is the count.
+    if (type === 'radio') return Math.min(def.maxCost, (this.unitsBuilt(p, type) + 1) * def.baseCost);
     for (const t of types) {
       const committed = this.unitsOwned(p, t) + this.unitsPending(p, t);
       n += Math.min(committed, this.unitsBuilt(p, t));
@@ -460,7 +463,7 @@ Object.assign(Game, {
         }
         const p = this.players[owner];
         p.unitsPending[b.type] = Math.max(0, this.unitsPending(p, b.type) - 1);
-        p.units[b.type] = this.unitsOwned(p, b.type) + 1;
+        if (b.type !== 'radio') p.units[b.type] = this.unitsOwned(p, b.type) + 1;
         // Joining the rail network is a one-time event on first completion —
         // see the "Rail network & trains" section. An upgrade (the branch
         // below) never re-triggers it.
@@ -469,9 +472,8 @@ Object.assign(Game, {
         // tile now — a tower overrun mid-build finishes, and reveals, under
         // its new owner. That is all it ever does, so it does not stand on:
         // the record goes the moment it finishes, the tile is free to build
-        // on again, and Fx plays the scan in its place. units.radio keeps the
-        // += 1 above for good — with no building left to lose, it is a count
-        // of towers used, which is what keeps the linear price climbing.
+        // on again, and Fx plays the scan in its place. No units.radio is
+        // kept; unitCost prices off the lifetime unitsBuilt instead.
         if (b.type === 'radio') {
           this.revealAround(owner, b.tile, this.VISION_SIGHT_RADIO);
           Fx.radioScan(b.tile, owner);
