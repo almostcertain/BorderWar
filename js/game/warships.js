@@ -3,52 +3,29 @@
 // former js/game.js; see docs/game-split-plan.md.
 Object.assign(Game, {
   // --- Warships ----------------------------------------------------------
-  // Ported against OpenFront's actual WarshipExecution/MoveWarshipExecution/
-  // ShellExecution source (github.com/openfrontio/OpenFrontIO), not guessed
-  // — see feedback-openfront-source-porting memory for the fetch approach.
-  // Deliberately narrowed scope, matching how every other structure in this
-  // file was ported (see the UNITS/rail-network comments above): no
-  // port-docking/repair retreat, no passive healing, no veterancy. A
-  // Warship spawns at full health, fights until it sinks, and is gone —
-  // simpler than the real source's health-management state machine, and not
-  // something the user asked for. Everything actually requested — visual
-  // presence, stealing unfriendly trade ships, shooting down invasion boats,
-  // shift-drag select + click-to-relocate, patrolling an assigned area,
-  // health, and warship-vs-warship combat — is ported for real. Purchase
-  // placement itself is a deliberate, explicit divergence from OpenFront
-  // (whose own Warship is territory-bound like any other structure, no Port
-  // required) — see resolveWarshipLaunch's own comment.
+  // A Warship spawns at full health, fights until it sinks, and is gone: no
+  // docking, repair, healing or veterancy. It steals unfriendly trade ships,
+  // shoots down invasion boats, fights other warships and patrols an
+  // assigned area. It is bought from a Port (see resolveWarshipLaunch).
   //
-  // Movement reuses seaPath (the same weighted A* boats/trade ships already
-  // use) rather than a new pathfinder: seaPath's sourceTiles/targetTile
-  // arguments only ever need each endpoint's own water neighbours, which
-  // works identically whether the endpoint is a coastal land tile (boats)
-  // or open water (a warship roaming free) — see its own comment. A warship
-  // is stored the same shape a boat/trade ship already is — {path, pos} — so
-  // Game.pathPos below reads all three uniformly.
+  // Movement reuses seaPath. A warship is stored as {path, pos}, the shape a
+  // boat or trade ship has, so Game.pathPos reads all three.
   WARSHIP_MAX_HEALTH: 1000,               // Config.ts UnitType.Warship.maxHealth
   WARSHIP_TARGET_RANGE: 65,               // half of warshipTargettingRange() — engagement/detection radius
   WARSHIP_PATROL_RANGE: 50,               // half of warshipPatrolRange() — wander radius around patrolTile
   WARSHIP_SHELL_COOLDOWN: 2,              // warshipShellAttackRate()=20 ticks @ 10 ticks/sec
-  // No OpenFront equivalent — its ShellExecution resolves damage the instant
-  // it fires. Slowed well below the "one shell in flight" pace (130/75≈1.73s)
-  // so shells read as a travel-time projectile rather than a fast hit-scan;
-  // a target can now have more than one shell in flight toward it at once.
-  // Tiles/sec a shell closes on its target's live position each tick (see
-  // stepShells) — not a fixed straight-line speed to a snapshot point, so a
-  // moving boat/warship can't dodge by having moved on since the shot fired.
+  // Tiles/sec a shell closes on its target's LIVE position each tick (see
+  // stepShells), so a moving target can't dodge. Slow enough that a shell
+  // reads as a projectile; several can be in flight at one target.
   WARSHIP_SHELL_SPEED: 25,
   WARSHIP_CAPTURE_DIST: 5,                // huntDownTradeShip's manhattan capture distance
   // BOAT_SPEED's own comment: 10 ticks/sec, 1 tile/tick is the ported rate
   // for every ship type in this file, warships included — OpenFront has no
   // separate, slower warshipSpeed of its own.
   WARSHIP_SPEED: 10,
-  // No OpenFront equivalent. A trade ship also moves at BOAT_SPEED === 10,
-  // so a warship at plain WARSHIP_SPEED can only ever match it tile-for-tile
-  // — any route that isn't perfectly direct (coastline detour, chase
-  // starting off-axis) means it never actually closes the gap and follows
-  // forever. Applied only in warshipChaseTradeShip, not patrol, so patrol
-  // wandering keeps its original pace.
+  // A trade ship moves at BOAT_SPEED, so a warship at plain WARSHIP_SPEED
+  // could never close the gap on any indirect route. Applied only in
+  // warshipChaseTradeShip, not patrol.
   WARSHIP_CHASE_SPEED_MULT: 1.5,
   WARSHIP_REPATH_INTERVAL: 5,             // seconds between patrol-wander waypoint picks
   WARSHIP_CHASE_REPATH: 1.5,              // seconds between trade-ship-chase path refreshes
@@ -77,14 +54,10 @@ Object.assign(Game, {
     return { x: ax + (cx - ax) * frac, y: ay + (cy - ay) * frac };
   },
 
-  // Terrain-agnostic BFS from `fromTile` out to the nearest actual WATER
-  // tile — no ownership requirement, unlike nearestOwnedCoastNear/Port's own
-  // coast snap, since a warship's destination can be anywhere at sea, not
-  // just water touching the player's own territory. A click already on
-  // water returns unchanged. Reuses NEAREST_COAST_MAX_DIST as the search cap
-  // — the same "a target snapping a good distance to the nearest usable spot
-  // still makes sense" reasoning that constant's own comment already gives
-  // for the boat-landing-tile case.
+  // Terrain-agnostic BFS from `fromTile` to the nearest WATER tile, with no
+  // ownership requirement: a warship's destination can be anywhere at sea.
+  // A click already on water returns unchanged. Capped at
+  // NEAREST_COAST_MAX_DIST.
   nearestWaterNear(fromTile, maxDist) {
     if (fromTile < 0) return -1;
     if (GameMap.owner[fromTile] === WATER) return fromTile;
@@ -144,30 +117,20 @@ Object.assign(Game, {
     return best;
   },
 
-  // How many of a player's own Ports (nearest-first, by straight-line
-  // distance to the destination — the same cheap metric OpenFront's own
-  // WarshipExecution.findNearestPort uses) to try a real seaPath from before
-  // giving up on a launch order. More than one matters because the single
-  // nearest Port in a straight line can sit on a different, landlocked body
-  // of water from the clicked destination.
+  // How many of a player's own Ports (nearest first, by straight-line
+  // distance to the destination) to try a real seaPath from before giving
+  // up. More than one, because the nearest Port can sit on a different,
+  // landlocked body of water.
   WARSHIP_LAUNCH_PORT_ATTEMPTS: 4,
 
-  // Resolves what a Warship purchase click actually means: which of the
-  // player's own Ports it launches from, and the route it sails to get to
-  // wherever was clicked — explicit user design request (2026-08-19): "you
-  // should not have to click on the coast," a Warship "can only be
-  // purchased if a port exists, period," and it "should spawn from the
-  // nearest available port that you own" and "pathfind to the location that
-  // you click on." Not an OpenFront port — their own Warship placement is
-  // territory-bound like every other structure, with no Port requirement —
-  // this is a deliberate divergence, same category as the Fort-capture-
-  // destroys-outright change noted elsewhere in project memory.
+  // Resolves a Warship purchase click: which of the player's Ports it
+  // launches from and the route to wherever was clicked. Design rules: no
+  // need to click on the coast, a Port is required, it spawns from the
+  // nearest available owned Port and pathfinds to the click.
   //
   // Returns { ok:false, reason } or { ok:true, port, dest, path }. Shared by
-  // warshipBlockReason (a dry run for the UI) and buildWarship (which
-  // re-runs it rather than threading the result through, matching how
-  // canBuild/build already double up on buildBlockReason elsewhere in this
-  // file — a single discrete click is cheap enough to check twice).
+  // warshipBlockReason (a dry run for the UI) and buildWarship, which
+  // re-runs it.
   resolveWarshipLaunch(playerId, clickTile) {
     const p = this.players[playerId];
     if (!p || !p.alive) return { ok: false, reason: 'Nation defeated' };
@@ -197,14 +160,10 @@ Object.assign(Game, {
     return { ok: false, reason: 'No sea route there' };
   },
 
-  // Finds `playerId`'s own nearest built Port reachable by sea from
-  // `fromTile` — same nearest-first-then-verify-with-seaPath approach as
-  // resolveWarshipLaunch just above, reused here for TradeShipExecution's
-  // wasCaptured redirect (see warshipChaseTradeShip): a freshly captured
-  // trade ship reroutes to the capturing player's own nearest tradeable Port
-  // instead of finishing its old voyage to an enemy/neutral one. Returns
-  // null if that player owns no Port, or none of the nearest few connect by
-  // sea from here.
+  // `playerId`'s nearest built Port reachable by sea from `fromTile`
+  // (nearest first, verified with seaPath). Used to reroute a captured
+  // trade ship (see warshipChaseTradeShip). Null if that player owns no
+  // Port, or none of the nearest few connect by sea.
   nearestOwnedPortRoute(playerId, fromTile) {
     const ports = [];
     for (const b of this.buildings.values()) {
@@ -254,20 +213,13 @@ Object.assign(Game, {
     return true;
   },
 
-  // Player-issued relocation (UI's shift-drag select, then a plain click) —
-  // MoveWarshipExecution's real job, minus the water-component connectivity
-  // check (this game has no such precomputed labelling; a failed seaPath
-  // below does the same job for an unreachable body of water). A click that
-  // isn't already water snaps to the nearest one, same leniency
-  // resolveWarshipLaunch gives a purchase click and for the same reason —
-  // the player shouldn't need to land exactly on water pixel-for-pixel.
-  // Also becomes the new patrol center once it arrives, exactly like
-  // OpenFront's own patrolTile field — see warshipPatrol.
-  // `playerId` — whose fleet this order is — defaults to this.me for the
-  // existing ui.js call site, for the same reason chooseSpawn's does: the
-  // ownership check below is a real rule of the sim, and a rule may not be
-  // decided by which client is looking. MP-1.2's Executor passes the actor
-  // resolved from the intent's stamped clientID.
+  // Player-issued relocation. A click that isn't water snaps to the nearest
+  // water, as a purchase click does; an unreachable body of water shows up
+  // as a failed seaPath. The destination becomes the new patrol centre (see
+  // warshipPatrol).
+  // `playerId` defaults to this.me only for local callers; the Executor
+  // passes the actor resolved from the intent's stamped clientID, since the
+  // ownership check is a sim rule.
   moveWarships(list, clickTile, playerId) {
     const owner = playerId === undefined ? this.me : playerId;
     // Fog of war: same rule as resolveWarshipLaunch — discovered water only.
@@ -341,21 +293,11 @@ Object.assign(Game, {
   },
 
   // Priority 1/2 targets (boat, warship): the warship holds its ground and
-  // fires on cooldown rather than closing in — matches real WarshipExecution,
-  // which never moves toward either, only toward a trade ship (priority 3).
-  // Unlike the real ShellExecution (which resolves damage the instant it
-  // fires), this spawns a travelling shell (see the "Shells" section below)
-  // and defers the actual effect to its impact — render.js draws it as a
-  // blinking dot so a kill is visibly earned, not instant. A boat has no
-  // health of its own in this game (see the "Naval invasions" section), so
-  // its shell simply sinks it outright on arrival, same as a target that
-  // "can't be oneshotted" being skipped in the real ShellExecution — there's
-  // no partial-damage state to track. A warship target keeps taking shell
-  // damage every cooldown until it sinks (stepWarships removes it at 0 hp).
-  // w.target/targetKind are left alone here — warshipTick's own validity
-  // check next tick (arr.includes + health>0) naturally clears them once the
-  // shell actually lands and the target is gone, so there's nothing to do
-  // for the firing warship itself until then.
+  // fires on cooldown; it only ever moves toward a trade ship. A shot spawns
+  // a travelling shell and the effect lands on impact. A boat has no health,
+  // so a shell sinks it outright; a warship takes damage until it sinks
+  // (stepWarships removes it at 0 hp). w.target/targetKind are left alone:
+  // warshipTick's validity check clears them once the target is gone.
   warshipShootAt(w) {
     if (this.elapsed - w.lastShellAt < this.WARSHIP_SHELL_COOLDOWN) return;
     w.lastShellAt = this.elapsed;
@@ -370,21 +312,12 @@ Object.assign(Game, {
     });
   },
 
-  // Priority 3 (huntDownTradeShip): the only target type a warship actually
-  // chases. Repathed on a cooldown rather than every tick — a full seaPath
-  // call per warship per tick would be far too expensive with a real fleet
-  // in play (see the class comment on why patrol wandering does the same).
-  // "Capture" is OpenFront's real PlayerImpl.captureUnit plus
-  // TradeShipExecution's wasCaptured branch: unit.setOwner(this) — the trade
-  // ship now flies the capturing player's colours (see render.js's
-  // drawTradeShips, which colours strictly off `ship.owner`) — and then
-  // reroutes to the capturing player's own nearest tradeable Port
-  // (nearestOwnedPortRoute) instead of finishing its old voyage, so the
-  // payout on arrival (stepTradeShips) lands with its new owner rather than
-  // whoever it was originally sailing toward. If that player owns no
-  // reachable Port (e.g. captured by a warship whose last Port has since
-  // fallen), it just keeps its old route/destination under new colours,
-  // same as before this redirect existed.
+  // Priority 3: the only target a warship chases. Repathed on a cooldown,
+  // since a seaPath per warship per tick is far too expensive. On capture
+  // the trade ship changes owner (and colour) and reroutes to the capturing
+  // player's nearest tradeable Port (nearestOwnedPortRoute), so the payout
+  // on arrival goes to the new owner. With no reachable Port it keeps its
+  // old route under new colours.
   warshipChaseTradeShip(w, curTile) {
     const target = w.target;
     const tIdx = Math.min(target.path.length - 1, Math.floor(target.pos));
@@ -646,17 +579,11 @@ Object.assign(Game, {
     return true;
   },
 
-  // Advances every in-flight shell (see warshipShootAt) by re-homing on its
-  // target's live position every tick — a moving boat/warship can't simply
-  // outrun the fixed point it was fired at — and resolves impact the instant
-  // it closes to within one tick's travel of that position: a boat target is
-  // spliced from this.boats outright, a warship target takes the shell's
-  // precomputed damage (its own 0-hp sinking is handled by stepWarships
-  // below, same as before this deferral existed). If the target is already
-  // gone by this tick — sunk by a different shell, or (boat) already spent
-  // invading — the shell fizzles and is removed immediately rather than
-  // coasting on toward empty water. render.js's drawShells reads shell.x/y/
-  // born directly to draw + blink the projectile; nothing here owns that.
+  // Advances every in-flight shell by re-homing on its target's live
+  // position, and resolves impact once it is within one tick's travel: a
+  // boat is spliced from this.boats, a warship takes the shell's damage. If
+  // the target is already gone, the shell is removed at once. render.js's
+  // drawShells reads shell.x/y/born.
   stepShells() {
     const step = this.WARSHIP_SHELL_SPEED * this.TICK_DT;
     for (let i = this.shells.length - 1; i >= 0; i--) {
@@ -703,12 +630,10 @@ Object.assign(Game, {
   },
 
   // Fog of war (docs/fog-of-war.md): a warship uncovers VISION_SIGHT_WARSHIP
-  // cells around itself, for its owner and its owner's allies. Called when it
-  // is launched and after each of its ticks, and stamps only when the ship is
-  // in a different vision cell from the one it last stamped from — which
-  // covers a relocation or a repath putting it on a new tile as well as plain
-  // sailing. `visionCell` exists only on warships in fog matches; nothing
-  // reaches this with fog off.
+  // cells around itself, for its owner and its owner's allies. Called at
+  // launch and after each of its ticks; stamps only when the ship is in a
+  // different vision cell from the last stamp. `visionCell` exists only on
+  // warships in fog matches.
   warshipReveal(w) {
     const tile = w.path[Math.min(w.path.length - 1, Math.floor(w.pos))];
     const cell = this.visionCellOf(tile);

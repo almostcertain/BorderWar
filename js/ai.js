@@ -4,44 +4,36 @@
 // The thresholds below are their MEDIUM column; PROFILES carries the few that
 // the Easy and Hard tiers move, and profile() picks the row for the match.
 const AI = {
-  // What a difficulty changes about how a Nation *plays*. The other half — how
-  // many troops it starts with, how high its cap and growth run — is
-  // Game.NATION_DIFFICULTY in game/economy.js. Tribes ignore both.
+  // What a difficulty changes about how a Nation *plays*. Troop start, cap
+  // and growth are Game.NATION_DIFFICULTY in game/economy.js. Tribes ignore
+  // both.
   //
-  // MEDIUM MUST STAY THE BASELINE: every value in that row is the constant it
-  // replaced, so a Medium match plays exactly as it did before difficulty
-  // existed (the sim goldens pin this). Tune Easy and Hard around it.
+  // MEDIUM MUST STAY THE BASELINE (the sim goldens pin it). Tune Easy and
+  // Hard around it.
   //
-  //   thinkMult / navalMult  scale the gap between land / naval decisions —
-  //                          Easy reacts slowly, Hard reacts quickly.
-  //   (How much a strike commits is not a difficulty knob: like OpenFront,
-  //   every nation waits for its rolled trigger fill and sends everything
-  //   above its rolled reserve — see rollTraits.)
-  //   confusion              1-in-n chance an alliance answer is a coin flip
-  //                          instead of a decision; 0 = never confused.
+  //   thinkMult / navalMult  scale the gap between land / naval decisions.
+  //   confusion              1-in-n chance an alliance answer is a coin flip;
+  //                          0 = never.
   //   betrayHelpless         betray an ally whose army is under 1/n of ours.
   //   betrayOpportunist      also betray a traitor who can't punish it, or the
   //                          last neighbour on the map.
   //   nukes                  whether it builds Silos and fires warheads at all.
   //   nukeChance / hydrogenChance  1-in-n roll per economy cycle to fire, and
   //                          to make that warhead a Hydrogen Bomb.
-  //   mirvChance             1-in-n roll, on top of an already-Hydrogen-
-  //                          worthy strike (see maybeNuke), to reach for a
-  //                          MIRV instead — gated by MIRV's own much larger
-  //                          treasury requirement, so this mostly matters
-  //                          for a bot that has been sitting on a ready Silo
-  //                          for a long time. 0 = never.
+  //   mirvChance             1-in-n roll, on a Hydrogen-worthy strike (see
+  //                          maybeNuke), to use a MIRV instead. 0 = never.
   //   retaliateChance        1-in-n roll per economy cycle to nuke a nation
-  //                          that is actively eating our land (maybeRetaliate);
+  //                          actively eating our land (maybeRetaliate);
   //                          0 = never.
-  //   salvo                  the most Atom Bombs it will fire as one strike to
-  //                          get a warhead past SAM cover (see nukeTarget).
-  //                          1 = single shots only, never into cover.
+  //   salvo                  the most Atom Bombs it fires as one strike to get
+  //                          past SAM cover (see nukeTarget). 1 = single shots
+  //                          only, never into cover.
   //   embargoLiftAt          relation at which a nation lifts an embargo it
-  //                          placed on someone it came to hate. OpenFront:
-  //                          Neutral, but Hard holds out for Friendly.
+  //                          placed.
   //   scouts                 fog of war only: how many Scouts it keeps afloat
-  //                          (see scoutThink). Never read with fog off.
+  //                          (see scoutThink).
+  //
+  // How much a strike commits is not a difficulty knob: see rollTraits.
   PROFILES: {
     easy: {
       thinkMult: 1.6, navalMult: 1.6,
@@ -231,18 +223,9 @@ const AI = {
     }
   },
 
-  // AiAttackBehavior.donateTroops. Upstream only donates in team
-  // games ("Only donate in team games" / "Don't donate in public games (To
-  // balance HvN)"), and so does this game (Game.donateBlockReason): a
-  // Nation reinforcing a teammate or ally that's actively fighting. No
-  // OpenFront equivalent asks allies *for* help (see diplomacy.js's donate
-  // section and this ticket's report) — donation here is one-directional,
-  // exactly as upstream.
-  //
-  // Difficulty gating ported verbatim from AiAttackBehavior: Easy never
-  // donates, Medium 1-in-4, Hard 1-in-2 (upstream's Impossible tier, always,
-  // has no row in this game's three-tier PROFILES — Hard already reacts
-  // fastest and it lacks a fourth tier to reuse, so it stops at 1-in-2).
+  // Troop donations, team games only (Game.donateBlockReason): a Nation
+  // reinforcing a teammate or ally that is actively fighting. One-directional;
+  // nobody asks for help. 1-in-n per check; 0 = never (Easy).
   DONATE_CHANCE: { easy: 0, medium: 14, hard: 8 },
   // After giving, a nation sits out this many seconds (rolled per gift), and
   // it hands over only a random slice of its spare troops, so a push doesn't
@@ -380,64 +363,33 @@ const AI = {
     }
   },
 
-  // Bots have to spend, or the human is the only nation on the map whose cap
-  // ever grows and the build menu is a straight handout. Buy whenever it is
-  // affordable: the price doubling with each one owned is already the rate
-  // limiter, and nothing else competes for the money yet. When it does — a silo
-  // is worth saving for in a way a fourth city is not — this becomes a choice
-  // rather than a reflex.
+  // Bots have to spend, or only the human's cap ever grows. Buy whenever
+  // affordable: the price doubling per unit owned is the rate limiter.
   //
-  // Cost-pooled types (Port/Factory share one price — see their UNITS entry)
-  // need special handling here: a straight walk over Game.UNITS tries one
-  // member of the pool before the other every single cycle, and building it
-  // immediately doubles the shared price for the rest of this same call.
-  // Bots therefore pick ONE member of the pool per cycle — see economy() and
-  // PORTS_PER_FACTORY for which.
+  // Cost-pooled types (Port/Factory share one price) need care: building one
+  // doubles the price of the other within the same call. Bots pick ONE member
+  // of the pool per cycle (see economy() and PORTS_PER_FACTORY).
 
-  // How many separate SAM Launchers to plant for territorial coverage before
-  // further spend switches to leveling up the weakest one instead — see
-  // economy()'s own comment on why charges (per-structure) matter more past
-  // that point than range (which barely moves per level anyway). Not an
-  // OpenFront difficulty column port — their AI files weren't scoped for
-  // this session, same disclaimer as TRIBE_PRIORITY_BONUS/maybeNuke above —
-  // just a number small enough to spread a couple of launchers across a
-  // nation's coastline/border before committing to upgrades.
+  // How many SAM Launchers to plant for coverage before further spend goes
+  // into levelling up the weakest one (see economy()).
   SAM_COVERAGE_TARGET: 2,
 
   // --- Strategic savings ---------------------------------------------------
-  // economy() below buys whatever it can afford as it walks Game.UNITS, and
-  // that alone is enough to put the entire Silo/nuke/SAM half of the tech
-  // tree permanently out of a bot's reach. Fort is the culprit: its price is
-  // LINEAR and capped at 250k (see its UNITS entry), and fortSite() finds a
-  // fresh border tile essentially forever, so a mature nation buys another
-  // Fort every time its treasury crosses 250k and never climbs past it.
-  // Without a cap, mature bots spent most of their gold on Forts and never
-  // reached a Silo, SAM Launcher or nuke.
+  // economy() buys whatever it can afford, which alone would keep the
+  // Silo/nuke/SAM half of the tech tree out of reach: a Fort's price is
+  // linear and capped, and fortSite() always finds another border tile, so
+  // a mature nation would sink every 250k into Forts.
   //
-  // Two fixes, both here rather than in the cost table (prices are ported
-  // from OpenFront's Config.ts and shouldn't be retuned to paper over an AI
-  // problem):
+  //   (a) FORT_CAP_BASE bounds the Fort sink.
+  //   (b) savingsGoal()/savingsReserve() give the bot ONE big-ticket item to
+  //       save for and stop cheaper purchases eating into that reserve.
   //
-  //   (a) FORT_CAP_BASE below bounds the Fort sink, so a treasury can grow.
-  //   (b) savingsGoal()/savingsReserve() give the bot ONE big-ticket item it
-  //       is currently saving for and forbid every cheaper purchase from
-  //       eating into that reserve — the "when it does [compete for the
-  //       money], this becomes a choice rather than a reflex" the economy()
-  //       comment above has been anticipating.
-  //
-  // Forts protect what a nation has built, so their cap scales with what
-  // there is to protect rather than with raw territory: a bot may hold this
-  // many Forts plus one per City it owns. Generous enough that a big nation
-  // still fortifies a real front (a 9-city nation gets 11), tight enough that
-  // Fort stops being an infinite hole in the budget.
+  // A bot may hold this many Forts plus one per City it owns.
   FORT_CAP_BASE: 2,
 
-  // Don't start hoarding for a 1M Silo out of a two-city economy — the pause
-  // in City/Factory/Port growth would cost more than the missile is worth,
-  // and maxTroops keys off City level, so a bot that stops developing stops
-  // being able to fight at all. Three cities is roughly where a bot's income
-  // (flat GOLD_PER_SEC plus train/trade-ship lumps) can refill a reserve
-  // without freezing everything else for the rest of the match.
+  // Don't hoard for a Silo out of a small economy: maxTroops keys off City
+  // level, so a bot that stops developing stops being able to fight. Three
+  // cities is roughly where income can refill a reserve.
   SILO_MIN_CITIES: 3,
 
   // How many Ports, and separately how many Warships, a nation may buy even
@@ -447,32 +399,19 @@ const AI = {
   // purchase.
   NAVY_EXEMPT_COUNT: 1,
 
-  // Which single big-ticket purchase this bot is currently banking toward, or
-  // null for "nothing — spend freely." Strictly ordered, one goal at a time:
-  // a bot that tried to save for a Silo and a SAM at once would reserve 2.5M
-  // and never buy either.
+  // Which single big-ticket purchase this bot is banking toward, or null
+  // for 'spend freely'. One goal at a time, in this order:
   //
-  //   1. Silo first. Without one, no nuke of any kind can ever be launched
-  //      (resolveNukeLaunch rejects outright), and it's the gate on the whole
-  //      branch.
-  //   2. Then SAM cover, but only once somebody else's Silo actually exists
-  //      to defend against — a launcher bought before anyone can nuke you is
-  //      1.5M spent on nothing. Capped at SAM_COVERAGE_TARGET, matching the
-  //      coverage-then-upgrade rule economy() already applies.
-  //   3. Otherwise keep an Atom Bomb's price in the bank permanently, so a
-  //      built Silo is an armed Silo. Without this the bot buys the Silo,
-  //      immediately spends the next 250k it sees on a Fort, and the launcher
-  //      sits empty — which is exactly the failure this whole block exists to
-  //      stop, one rung further up the ladder. When the last strike it
-  //      weighed needed a salvo to get through SAM cover (p.aiSalvo, see
-  //      maybeNuke), it banks that many bombs, and first builds the Silo
+  //   1. Silo: no nuke can be launched without one.
+  //   2. SAM cover, once somebody else's Silo exists, up to
+  //      SAM_COVERAGE_TARGET.
+  //   3. Otherwise keep an Atom Bomb's price banked, so a built Silo is an
+  //      armed one. If the last strike weighed needed a salvo (p.aiSalvo,
+  //      see maybeNuke), bank that many bombs and first build the Silo
   //      slots to fire them together.
   //
-  // All three counts come off ONE walk of Game.buildings rather than the two
-  // countBuilt() calls plus a separate rival scan the obvious spelling would
-  // make: this runs per bot per economy() cycle, and countBuilt is already a
-  // whole-map walk on its own. The rival count includes the human's Silos —
-  // "who can nuke me" has nothing to do with who is a bot.
+  // All counts come off ONE walk of Game.buildings (this runs per bot per
+  // economy cycle). The rival count includes the human's Silos.
   savingsGoal(p) {
     // Battle Royale (BR-8): in a stalled match a non-leading nation banks for
     // the Drill ahead of everything else — see drillStalled.
@@ -508,22 +447,16 @@ const AI = {
     return goal ? Game.unitCost(p, goal) : 0;
   },
 
-  // --- The Drill (Battle Royale, BR-7, tuned in BR-8) -----------------------
+  // --- The Drill (Battle Royale) ---------------------------------------------
   // A bot goes for the Drill only once the match has stalled (drillStalled):
-  // DRILL_STALL_AFTER seconds of match time have passed, no nation holds more
-  // than DRILL_STALL_SHARE of the land (so nobody is about to win normally),
-  // and the bot is not the land leader — the Drill is a way out for the
-  // nations stuck behind the leader, not for the leader itself.
+  // DRILL_STALL_AFTER seconds have passed, no nation holds more than
+  // DRILL_STALL_SHARE of the land, and the bot is not the land leader.
   //
-  // From then on the Drill is the bot's savings goal (savingsGoal), so it
-  // banks DRILL_COST + DRILL_RESERVE instead of spending on structures: BR-8
-  // found that without this no bot ever got past ~1.6M, so none ever built
-  // one, even in an hour-long three-way stalemate. Once it has the gold it
-  // still has to win a 1-in-DRILL_CHANCE roll per economy cycle, so several
-  // flush bots don't all fire on the same think. Derived from live state
-  // only (no history); the roll is drawn only when every other gate passes,
-  // so pre-stall matches consume no extra rng. Never runs once Game.drill
-  // exists.
+  // The Drill then becomes its savings goal (DRILL_COST + DRILL_RESERVE);
+  // without that no bot ever saves enough. With the gold in hand it must
+  // still win a 1-in-DRILL_CHANCE roll per economy cycle. Derived from live
+  // state only; the roll is drawn only when every other gate passes, so
+  // pre-stall matches consume no extra rng. Never runs once Game.drill exists.
   DRILL_STALL_AFTER: 1500,    // 25 minutes of match time
   // BR-8: was 0.5. Two bot matches froze for 30-65 minutes with the leader
   // at ~77% (short of the 90% win), and nobody could go for the Drill.
@@ -592,15 +525,11 @@ const AI = {
 
     const consideredTypes = new Set();
     for (const u of Game.UNITS) {
-      // Warship/AtomBomb/HydrogenBomb (see their own UNITS entries'
-      // `action: true`) never land on a land tile via buildBlockReason/
-      // build — each gets its own dedicated purchase call below instead.
-      // Silo has no flag: it's an ordinary territory-bound structure like
-      // City/Factory/Port/Fort, so it rides this generic loop and
-      // buildSite(p) (the ternary below's fallback) same as they do.
-      // fogOnly (the Radio Tower; the Scout is `action` as well) has its own
-      // purchase call too — buyRadio, below — and with fog off must not even
-      // reach buildSite, which draws from Game.rng.
+      // `action` units (Warship, bombs, Scout) never go through
+      // buildBlockReason/build; each has its own purchase call below. Silo
+      // is an ordinary structure and rides this loop. fogOnly (the Radio
+      // Tower) has buyRadio, and with fog off must not even reach
+      // buildSite, which draws from Game.rng.
       if (u.action || u.fogOnly) continue;
       if (consideredTypes.has(u.type)) continue;
       const pool = u.costGroup || [u.type];
@@ -608,13 +537,11 @@ const AI = {
 
       let type = pool[0];
       if (pool.length > 1) {
-        // Factory or Port: PORTS_PER_FACTORY Ports to each Factory, since a
-        // trade ship pays several times what a train does (see the "Trade
-        // network" section). The Port leads, so a coastal nation's first
-        // Port comes before any Factory: the two share one price curve, so a
-        // Factory bought first makes the Port twice as dear, and while saving
-        // for a Silo only the (reserve-exempt) Port is affordable at all.
-        // Whichever has no site worth its price gives way to the other below.
+        // Factory or Port: PORTS_PER_FACTORY Ports per Factory, since a
+        // trade ship pays several times what a train does. The Port leads:
+        // the two share one price curve, and while saving for a Silo only
+        // the (reserve-exempt) Port is affordable. Whichever has no site
+        // worth its price gives way to the other below.
         const owned = t => Game.unitsOwned(p, t) + Game.unitsPending(p, t);
         type = owned('port') < this.PORTS_PER_FACTORY * (owned('factory') + 1) ? 'port' : 'factory';
       }
@@ -639,18 +566,11 @@ const AI = {
       if (spendable(type) < Game.unitCost(p, type) &&
           (pool.length < 2 || spendable('port') < Game.unitCost(p, 'port'))) continue;
 
-      // SAM's real payoff past its first couple of launchers is charges, not
-      // range: samRange(level) asymptotes almost immediately (level 1→2 gains
-      // barely a tile), but a SAM's samQueue cap IS its level — a level-2 SAM
-      // can shoot down two converging nukes without waiting on SAM_COOLDOWN,
-      // a level-1 one can't (see stepSAMs/dynamicSamRange). buildSite alone
-      // never surfaces that: on any nation past a trivial size it keeps
-      // finding a fresh tile every cycle, so bots would scatter unlimited
-      // lone level-1 SAMs and never once upgrade one — real coverage, but
-      // no nation ever gets a SAM that can actually stop a two-nuke strike.
-      // Once SAM_COVERAGE_TARGET launchers already give the territory
-      // spread, further SAM spend concentrates on leveling up the weakest
-      // one instead of planting yet another single-charge launcher.
+      // A SAM's payoff past the first couple of launchers is charges, not
+      // range: its samQueue cap is its level, so a level-2 SAM can stop
+      // two converging nukes. buildSite would keep finding fresh tiles
+      // and scatter level-1 SAMs forever, so once SAM_COVERAGE_TARGET
+      // launchers exist, further spend upgrades the weakest one.
       if (type === 'sam' && this.countBuilt(p, 'sam') >= this.SAM_COVERAGE_TARGET) {
         // Unconditional continue, even when nothing is upgradable THIS cycle
         // (every SAM already mid-upgrade) — falling through to buildSite
@@ -687,14 +607,9 @@ const AI = {
       }
     }
 
-    // Warship/AtomBomb/HydrogenBomb are `action: true` (see the loop's own
-    // comment above) — none of them land in Game.buildings, so each needs
-    // its own site/target selection and its own purchase call rather than
-    // the generic build() the loop above uses. A Port is a hard requirement
-    // for Warship (per Game.resolveWarshipLaunch's own comment — a
-    // deliberate user design request, not an OpenFront fidelity thing),
-    // checked here too so a bot without one skips straight past instead of
-    // wasting a coastalTiles scan on a purchase that's going to fail anyway.
+    // `action` units need their own site/target selection and purchase
+    // call. A Warship needs a Port (Game.resolveWarshipLaunch); checked here
+    // to skip a coastalTiles scan for a purchase that would fail.
     if (Game.unitsOwned(p, 'port') >= 1 && spendable('warship') >= Game.unitCost(p, 'warship')) {
       const site = this.warshipSite(p);
       if (site >= 0) Game.buildWarship(p.id, site);
@@ -709,18 +624,13 @@ const AI = {
 
   // --- Fog of war: Radio Towers (docs/fog-of-war.md) -------------------------
   // economy()'s hook, fog matches only. A nation with no shore on the ocean
-  // can launch no Scout, so its border sight is all it ever sees; a Radio
-  // Tower is its way past that. Nations that do reach the ocean leave towers
-  // alone and explore by Scout.
+  // can launch no Scout, so a Radio Tower is its way to see past its border.
+  // Nations that reach the ocean explore by Scout instead.
   //
-  // One tower at a time, RADIO_CAP in a match. The site is whichever of up to
-  // RADIO_SITE_SAMPLES border tiles, spread evenly round the border, has the
-  // most undiscovered cells in the tower's disc — the border because that is
-  // where the disc reaches furthest into the black, and it does not matter
-  // that a border tower is soon overrun: what it showed is kept. Nothing is
-  // bought unless that best site uncovers at least RADIO_MIN_CELLS. Like the
-  // Scout it is not held back by the savings reserve: it is a twentieth of a
-  // Silo, and a nation banking for one would otherwise stay blind all match.
+  // One tower at a time, RADIO_CAP in a match. The site is whichever of up
+  // to RADIO_SITE_SAMPLES border tiles, spread evenly round the border, has
+  // the most undiscovered cells in the tower's disc; nothing is bought unless
+  // it uncovers at least RADIO_MIN_CELLS. Not held back by the savings reserve.
   //
   // Draws nothing from Game.rng: p.borderTiles is walked in its insertion
   // order, which every client shares.
@@ -759,47 +669,22 @@ const AI = {
   },
 
   // A bot with a ready Silo and a warhead's worth of gold banked (see
-  // savingsGoal — keeping that gold banked is what makes this reachable at
-  // all) occasionally fires an Atom Bomb at whichever rival it currently
-  // borders/fights the most, using the same `contact` signal think() already
-  // computes via borderTargets. Tribes and neutral land are skipped: a
-  // Tribe's whole army is already Fort/Warship-tier cheap to just walk over,
-  // and nuking unclaimed land destroys nothing worth destroying. Gated at
-  // 1-in-8 per economy() cycle (which itself runs every 2-5s per bot) so a
-  // bot with a ready Silo doesn't nuke on literally the first opportunity
-  // every time.
+  // savingsGoal) occasionally fires an Atom Bomb at the rival it borders or
+  // fights the most (the `contact` signal from borderTargets). Tribes and
+  // neutral land are skipped. Rolled 1-in-nukeChance per economy() cycle.
+  // nukeTarget() aims at the target's structures.
   //
-  // Still not a port of OpenFront's own nuke-targeting AI (Config.ts/the bot
-  // behaviour files have real troop-cluster alertness scoring for this that
-  // wasn't part of this session's scope), but no longer a blind random tile
-  // either — nukeTarget() below aims at the target's own hardware, which is
-  // the part that actually made a strike feel deliberate rather than random
-  // when watched.
-  //
-  // Hydrogen Bomb chance, on top of the base 1-in-8: it's 6.67x the Atom
-  // Bomb's price (5M vs 750k) for 3.3x the outer blast radius (see
-  // NUKE_MAGNITUDES), so it only pays for itself against a rival with enough
-  // territory/troops for that radius to actually land on something —
-  // dropped on a nation the size of a Tribe it would mostly detonate over
-  // empty conquered dirt. HYDROGEN_WORTHY below gates on the target
-  // outweighing the bot itself; this chance then further rations it so a
-  // flush bot doesn't reach for the biggest bomb every single time the
-  // worthy-target condition holds.
-  // (1-in-n; the per-difficulty value lives in PROFILES.hydrogenChance.)
+  // A Hydrogen Bomb costs far more for a much wider blast, so it only pays
+  // against a large rival: HYDROGEN_WORTHY gates on the target outweighing
+  // the bot, and PROFILES.hydrogenChance rations it further.
   maybeNuke(p) {
     const prof = this.profile();
     if (!prof.nukeChance) return;
     if (p.gold < Game.unitCost(p, 'atombomb')) return;
-    // hasReadySilo() rather than the cheaper unitsOwned(p, 'silo') check this
-    // replaced, for two reasons. It tests SILO_COOLDOWN as well as ownership,
-    // so a reloading Silo doesn't burn the 1-in-8 roll below on a
-    // launchNuke() that can only return false. And it reads the real
-    // buildings map instead of the p.units running total, which is observably
-    // capable of going NEGATIVE (seen headless: a bot ending a match at
-    // units.silo === -1 while still holding land) — an unrelated bookkeeping
-    // bug in setOwner's capture/destroy accounting, but one that would
-    // silently disarm a bot's Silo for the rest of the match if this gate
-    // depended on that counter.
+    // hasReadySilo(), not unitsOwned(p, 'silo'): it also tests
+    // SILO_COOLDOWN, and it reads the real buildings map. The p.units
+    // running total has been seen to go negative, which would disarm the
+    // bot for the rest of the match.
     if (!this.hasReadySilo(p)) return;
     if (!this.chance(prof.nukeChance)) return;
 
@@ -841,33 +726,29 @@ const AI = {
 
   // --- Nukes against SAM cover -------------------------------------------------
   // A SAM destroys any hostile nuke inside its range the tick it has a free
-  // charge (Game.stepSAMs), and a charge takes SAM_COOLDOWN to come back. So
-  // one bomb fired at a covered target is 750k thrown away, and bots used to
-  // do exactly that: with SAMs on the map nearly every warhead was shot down.
-  // A nation now works out what a strike will meet before paying for it:
+  // charge (Game.stepSAMs), and a charge takes SAM_COOLDOWN to come back, so
+  // one bomb at a covered target is wasted. A nation works out what a strike
+  // will meet before paying for it:
   //
   //   - predictSalvo flies the bombs ahead of time against every SAM the
-  //     nation knows of, charges and reloads included. Third parties count:
-  //     a neutral nation's SAM under the flight path shoots too.
+  //     nation knows of, charges and reloads included. Third parties count.
   //   - nukeTarget weighs each aim point by what it destroys per bomb, so an
   //     open City can beat a covered Silo, and a SAM is worth a salvo because
   //     it uncovers everything behind it.
   //   - a blast destroys every structure inside its outer radius, so a bomb
-  //     can land short of its target. standoff pulls the aim point back
-  //     toward the Silo until the flight stays outside the cover: one bomb
-  //     instead of a salvo. A Hydrogen Bomb's blast is wider than a low-level
-  //     SAM's range, so it can take the SAM itself out that way.
+  //     can land short. standoff pulls the aim point back toward the Silo
+  //     until the flight stays outside the cover: one bomb instead of a
+  //     salvo. A Hydrogen Bomb's blast is wider than a low-level SAM's range.
   //   - otherwise a covered target gets one bomb more than the cover has
   //     charges, all launched the same tick (fireSalvo), up to the tier's
-  //     `salvo`. Short of gold or Silo slots, it saves up (p.aiSalvo) rather
-  //     than fire. A Hydrogen Bomb is too dear to be a decoy, and SAMs pick
-  //     it first: it flies alone or not at all.
-  //   - a strike that does not destroy what it was aimed at was shot down by
-  //     something the prediction missed. The nation remembers that as cover
-  //     over the spot (p.aiCover) and sends one bomb more next time.
+  //     `salvo`. Short of gold or Silo slots, it saves up (p.aiSalvo). A
+  //     Hydrogen Bomb flies alone or not at all.
+  //   - a strike that fails was shot down by something the prediction
+  //     missed. The nation remembers that as cover over the spot (p.aiCover)
+  //     and sends one bomb more next time.
   //
-  // Fog of war: a SAM the nation has not discovered is not in the prediction.
-  // It still shoots, which is what the last point is for.
+  // Fog of war: an undiscovered SAM is not in the prediction. It still
+  // shoots, which is what the last point is for.
   //
   // predictSalvo draws nothing from Game.rng and writes nothing.
 
@@ -1012,16 +893,12 @@ const AI = {
     return true;
   },
 
-  // An aim point from which ONE `type` bomb both lands and destroys whatever
-  // stands on `tile`, or -1. Each entry of STANDOFF is how far to pull the
-  // aim back from the structure toward the Silo that would fire; a blast
-  // takes every structure inside its outer radius (Game.detonateNuke), so all
-  // of them are close enough. The first whose flight gets through wins. A
-  // pulled-back point has to be the target's own discovered land, so the
-  // strike stays on the nation it was meant for, and the blast has to stay
-  // off p's side (blastSafe). A Hydrogen Bomb is held to that even at 0: at
-  // 100 tiles across it is the one bomb that reaches home from a neighbour's
-  // border.
+  // An aim point from which ONE `type` bomb both lands and destroys
+  // whatever stands on `tile`, or -1. Each STANDOFF entry is how far to
+  // pull the aim back from the structure toward the firing Silo; the first
+  // whose flight gets through wins. A pulled-back point must be the
+  // target's own discovered land, and the blast must stay off p's side
+  // (blastSafe), which a Hydrogen Bomb is held to even at 0.
   STANDOFF: { atombomb: [12, 24], hydrogenbomb: [0, 30, 60, 90] },
 
   standoff(p, target, tile, type) {
@@ -1081,14 +958,12 @@ const AI = {
     return mine <= owned * this.BLAST_OWN_LIMIT;
   },
 
-  // Learning from a strike that failed. noteStrike records where a strike of
-  // `n` bombs was aimed; once the last of them is due, reviewStrike checks it
-  // against p.nukeLoss, the sim's own record of p's bombs shot down
-  // (Game.noteNukeShot). All `n` lost means cover the prediction did not have
-  // (a SAM in the fog, one built or upgraded mid-flight, charges it took for
-  // spent). That becomes p.aiCover, `n` charges over the spot for
-  // COVER_MEMORY seconds, and coverAt adds them to whatever is planned within
-  // SAM range of it. One strike and one patch of cover at a time: the latest.
+  // Learning from a failed strike. noteStrike records where `n` bombs were
+  // aimed; once the last is due, reviewStrike checks p.nukeLoss, the sim's
+  // record of p's bombs shot down (Game.noteNukeShot). All `n` lost means
+  // unpredicted cover: it becomes p.aiCover, `n` charges over the spot for
+  // COVER_MEMORY seconds, which coverAt adds to later plans within SAM
+  // range. One strike and one patch of cover at a time: the latest.
   COVER_MEMORY: 180,
 
   noteStrike(p, tile, n) {
@@ -1125,18 +1000,14 @@ const AI = {
     return false;
   },
 
-  // Last-ditch retaliation. maybeNuke above is opportunistic and often fires
-  // at a quiet neighbour or a City far behind the lines, so a bot being pushed
-  // down rarely answered its attacker.
+  // Last-ditch retaliation; maybeNuke alone rarely answers an attacker.
   //
   // Triggers when the bot lost at least RETALIATE_LOSS_FRAC of its land
-  // (RETALIATE_MIN_LOSS tiles minimum) since its previous economy cycle while
-  // a non-Tribe nation has a live attack on it. The target is whichever
-  // attacker has the most troops committed against us — same rule think()
-  // uses for its land counter-attack. The warhead goes onto the attacker's
-  // own land just behind the front (retaliationTarget): that kills their
-  // troops and attack columns per tile destroyed, and leaves a fallout belt
-  // that is slow and costly to cross, which is what actually blunts a push.
+  // (RETALIATE_MIN_LOSS tiles minimum) since its previous economy cycle
+  // while a non-Tribe nation has a live attack on it. The target is the
+  // attacker with the most troops committed against us. The warhead goes on
+  // the attacker's land just behind the front (retaliationTarget), killing
+  // troops and leaving a fallout belt across the push.
   RETALIATE_LOSS_FRAC: 0.005,
   RETALIATE_MIN_LOSS: 5,
 
@@ -1177,28 +1048,22 @@ const AI = {
     return tile >= 0 && this.fireSalvo(p, tile, this.salvo);
   },
 
-  // Candidate aim points: from a sample of the front tiles the attack is
-  // eating (a.border holds OUR tiles next to their land), step across into
-  // the attacker's territory at a few depths. Plus their structures, so a
-  // Silo/City sitting near the front is preferred when it is in reach. Each
-  // candidate is scored on a coarse grid over the blast's outer circle:
-  // attacker land counts for it, our land against it (and rejects it past
-  // RETALIATE_OWN_LIMIT), and any ally land or structure — or any structure of
-  // ours — rejects it outright, since maybeBreakNukeAlliances would fire on
-  // either. Returns -1 when no candidate is clean enough; the bot then holds
-  // fire rather than crater itself.
+  // Candidate aim points: from a sample of the front tiles under attack
+  // (a.border holds OUR tiles next to their land), step into the attacker's
+  // territory at a few depths; plus their structures. Each is scored on a
+  // coarse grid over the blast's outer circle: attacker land counts for it,
+  // our land against it (rejected past RETALIATE_OWN_LIMIT), and any ally
+  // land or structure, or any structure of ours, rejects it outright
+  // (maybeBreakNukeAlliances would fire). Returns -1 when no candidate is
+  // clean enough.
   //
-  // SAM cover (see "Nukes against SAM cover"): an aim point is scored per
-  // bomb it takes to land one there, with the gold and ready Silo slots p has
-  // right now (plus any unseen cover it has learned of, coverAt), and dropped
-  // if that is more than it can fire. The count for the point returned is
-  // left in this.salvo. A Hydrogen Bomb goes alone or not at all.
+  // SAM cover: an aim point is scored per bomb it takes to land one there
+  // with the gold and ready Silo slots p has now (plus learned cover,
+  // coverAt), and dropped if p cannot fire that many. The count for the
+  // point returned is left in this.salvo. A Hydrogen Bomb goes alone.
   //
-  // Fog of war: p aims only at what it has discovered. An aim point, a
-  // structure or a tile of the blast that lies in the black is not there as
-  // far as p knows, so it is neither a candidate nor counted in a score. p's
-  // own land and its allies' is always discovered, so the checks that keep
-  // the blast off them lose nothing.
+  // Fog of war: p aims only at what it has discovered. Its own land and its
+  // allies' is always discovered, so the safety checks lose nothing.
   RETALIATE_FRONT_SAMPLES: 12,
   RETALIATE_OWN_LIMIT: 0.1,
 
@@ -1280,35 +1145,24 @@ const AI = {
     return best;
   },
 
-  // Where to actually put the warhead. A nuke's whole value is what the blast
-  // destroys — structures change hands with the ground and die with it — so
-  // aim at the target's own hardware rather than a uniformly random tile of a
-  // nation that may be 90% empty conquered dirt. Ranked by what hurts most to
-  // lose: their Silo first (it's the only thing that can nuke back), then
-  // their SAM cover (removing it clears the way for the next strike), then
-  // the economy. Jittered so a nation under repeated fire doesn't eat every
-  // warhead on the same tile — and deliberately NOT a full scoring pass over
-  // blast-radius contents, which is the OpenFront-fidelity version this still
-  // isn't.
+  // Where to put the warhead. Aim at the target's structures, ranked by
+  // what hurts most to lose: Silo, then SAM cover, then the economy.
+  // Jittered so repeated strikes don't land on one tile. Falls back to a
+  // random owned tile when the target has nothing built.
   //
-  // Falls back to a random owned tile when the target has nothing built,
-  // which is also the pre-existing behaviour for every target.
+  // SAM cover: the best NUKE_AIM_CANDIDATES structures are each priced in
+  // Atom Bombs (the salvo needed to land one), and the pick is the most
+  // priority per bomb. If none can be reached, any lesser structure one bomb
+  // gets to will do, then up to NUKE_LAND_TRIES random tiles of open ground.
+  // this.salvo holds the count for the tile returned; 0 means everything is
+  // covered past the tier's `salvo`, and the tile is then just the top
+  // structure (a MIRV can still use it). The count assumes Silo slots p may
+  // not have yet: maybeNuke saves up for the difference. The tile is the
+  // structure's own, or a standoff point short of it; this.salvoWatch is the
+  // structure either way.
   //
-  // SAM cover (see "Nukes against SAM cover"): the best NUKE_AIM_CANDIDATES
-  // structures are each priced in Atom Bombs, the salvo it takes to land one
-  // there, and the pick is the most priority per bomb. If none of those can
-  // be reached, any lesser structure a single bomb gets to will do, and then
-  // up to NUKE_LAND_TRIES random tiles of open ground. this.salvo is left
-  // holding the count for the tile returned; 0 means everything is covered
-  // past the tier's `salvo`, and the tile is then just the top structure (a
-  // MIRV can still use it). The count assumes Silo slots p may not have yet:
-  // maybeNuke saves up for the difference. The tile is the structure's own,
-  // or a standoff point short of it when one bomb from there does the job;
-  // this.salvoWatch is the structure either way.
-  //
-  // Fog of war: `p`, the nation firing, aims only at what it has discovered:
-  // a structure it can see or, failing that, a tile of the target's it can
-  // see. -1 when it can see none of the target's land.
+  // Fog of war: p aims only at a structure or tile of the target's it has
+  // discovered. -1 when it can see none of the target's land.
   NUKE_TARGET_PRIORITY: { silo: 4, sam: 3, city: 2, factory: 1, port: 1 },
   NUKE_AIM_CANDIDATES: 6,
   NUKE_LAND_TRIES: 4,
@@ -1426,24 +1280,15 @@ const AI = {
     return fallback;
   },
 
-  // Fort placed exactly on the front line was found to die for free: the
-  // instant the enemy took a single tile it stood on, it was destroyed
-  // before its protection bonus ever mattered (a fort is destroyed, not
-  // captured, when its tile changes hands — see Game.setOwner's fort
-  // branch). Set back fortBorderBuffer() tiles from
-  // the border/coast instead — still border-adjacent by preference (the
-  // opposite of buildSite's interior bias) so it covers contested ground
-  // with its protection radius, just no longer the literal first tile lost.
-  // The defense/speed bonus doesn't stack (Game.fortInRange is a boolean
-  // "any fort in range", not a count), so a second fort inside an existing
-  // one's radius buys nothing but wastes gold and a build slot — skip
-  // any candidate tile already covered, built or still under construction.
+  // A Fort on the literal front line dies for free (it is destroyed when
+  // its tile changes hands), so it is set back fortBorderBuffer() tiles
+  // from the border or coast: still border-adjacent, to cover contested
+  // ground. The bonus doesn't stack (Game.fortInRange is a boolean), so a
+  // candidate already covered by a fort, built or under construction, is
+  // skipped.
   //
-  // The setback is a FRACTION of the protection radius rather than a flat
-  // tile count. Those two numbers are the same knob read twice: the buffer
-  // buys survivability by trading away forward coverage, and 4/30 is the
-  // ratio that was tuned (4 tiles back when the radius was 30). At the
-  // current flat radius of 25 it comes to 3 tiles on every map size.
+  // The setback is a FRACTION of the protection radius, since it trades
+  // forward coverage for survivability.
   FORT_BUFFER_RATIO: 4 / 30,
 
   fortBorderBuffer() {
@@ -1471,24 +1316,18 @@ const AI = {
   },
 
   // --- Trade network ----------------------------------------------------------
-  // Where Cities, Factories and Ports go decides what they earn, and bots
-  // used to place them blind: a City or Factory on a random tile, a Port on
-  // the first stretch of coast in the tile list. Most Cities ended up outside
-  // every Factory's range and never saw a train, some Factories linked to
-  // nothing, and Ports went up on lakes or next door to their only partner.
+  // Where Cities, Factories and Ports go decides what they earn.
   //
   //   Rail (game/rail.js): only a Factory starts trains, and it links the
   //   Cities and Ports within TRAIN_STATION_MAX_RANGE that a straight or
   //   one-bend track can reach. So a Factory goes where it links the most
   //   stop value (railValue), never where it links nothing; a City goes
-  //   inside a Factory's reach, or failing that beside another City so one
-  //   Factory can later serve both.
+  //   inside a Factory's reach, or failing that beside another City.
   //
-  //   Sea (game/trade.js): a trade ship pays by the length of its route, a
-  //   few thousand for a short hop and 90k and up for a long one, and only
-  //   sails to another nation's Port on the same body of water. So a Port
-  //   goes on the coast whose partners are furthest off (portSite), and not
-  //   at all on water with nobody to trade with and no room for anyone.
+  //   Sea (game/trade.js): a trade ship pays by the length of its route and
+  //   only sails to another nation's Port on the same body of water. So a
+  //   Port goes on the coast whose partners are furthest off (portSite), and
+  //   not at all on water with nobody to trade with.
   //
   // A ship pays both ends several times what a train stop does, so the shared
   // Factory/Port budget buys PORTS_PER_FACTORY Ports per Factory (economy).
@@ -1595,16 +1434,14 @@ const AI = {
     return ws;
   },
 
-  // Coastal by requirement: a Port only ever succeeds on a tile that touches
-  // water (Game.buildBlockReason). Up to PORT_SITE_SAMPLES of p's coastal
-  // tiles, spread evenly round its border, each scored by the gold a ship
-  // from there would average: every Port p could trade with on the same body
-  // of water, weighted by level as Game.tradingPorts weights its pick, at
-  // Game.tradeShipGold for the straight-line distance (the sea route is at
-  // least that long). A Factory in reach adds a little, since the Port then
-  // takes trains too; hostile land close by takes some away. Before anyone
-  // else has a Port the biggest body of water wins. -1 when no stretch of p's
-  // coast is worth one (see PORT_MIN_WATER).
+  // A Port must touch water (Game.buildBlockReason). Up to
+  // PORT_SITE_SAMPLES of p's coastal tiles, spread evenly round its border,
+  // are each scored by the gold a ship from there would average: every Port
+  // p could trade with on the same body of water, weighted by level as
+  // Game.tradingPorts does, at Game.tradeShipGold for the straight-line
+  // distance. A Factory in reach adds a little; hostile land close by takes
+  // some away. Before anyone else has a Port the biggest body of water wins.
+  // -1 when no stretch of coast is worth one (see PORT_MIN_WATER).
   //
   // Draws nothing from Game.rng: p.borderTiles is walked in its insertion
   // order, which every client shares.
@@ -1658,13 +1495,9 @@ const AI = {
     return best;
   },
 
-  // Picks a sensible coastal destination to send a new Warship toward — not
-  // where it launches from any more (Game.resolveWarshipLaunch always picks
-  // the nearest owned Port for that part). Reuses the same real
-  // coastalTiles() scan portSite does (blind random sampling misses the
-  // coast too often on a large empire, per that function's own comment),
-  // then snaps each candidate shore tile out onto the nearest actual open
-  // water touching it.
+  // Picks a coastal destination to send a new Warship toward (the launch
+  // Port is Game.resolveWarshipLaunch's choice). Uses the coastalTiles()
+  // scan, then snaps each candidate shore tile onto open water touching it.
   warshipSite(p) {
     for (const t of this.coastalTiles(p)) {
       const water = Game.nearestOwnedWaterNear(p.id, t, Game.WARSHIP_SNAP_MAX_DIST);
@@ -1721,12 +1554,8 @@ const AI = {
   },
 
   // Ring-by-ring BFS out from `tile`, counting how many full rings stay
-  // entirely owned by `p` before hitting a non-owned tile or the map edge
-  // (fortSite's border/coast signal), capped at `cap` since callers only
-  // care up to their required buffer depth. Distinct from isInterior above
-  // (a single-ring yes/no used by buildSite) — fortSite needs the actual
-  // depth so it can still rank a too-small nation's best-available site
-  // instead of only ever getting a hard yes/no at one fixed radius.
+  // entirely owned by `p`, capped at `cap`. fortSite needs the depth (not
+  // isInterior's yes/no) so it can rank a small nation's best site.
   interiorDepth(p, tile, cap) {
     const nb = Game.abuf;
     let ring = [tile];
@@ -1761,19 +1590,14 @@ const AI = {
   NEUTRAL_SKIRMISH_RATIO: 0.2,
 
   // --- Cutting losses ------------------------------------------------------
-  // A human can retreat a failing push and get 75% of the committed troops
+  // A human can retreat a failing push and get most of the committed troops
   // home (Game.ATTACK_RETREAT_MALUS); reviewAttacks gives bots the same out.
   //
-  // "Failing" is deliberately two conditions, not one: the front is down to
-  // RETREAT_REMAINING of the most troops it has ever held, AND the defender's
-  // pool still exceeds what is left of it by RETREAT_DEFENDER_EDGE. Losing most
-  // of a stack is normal in a push that is winning ground, so the loss alone
-  // proves nothing — it is the defender still standing well above the remainder
-  // that says the rest would be thrown away. Cost per tile also climbs as an
-  // attack shrinks (tileCost's strength/attackTroops ratio), so waiting only
-  // makes the same retreat more expensive. Tribes are skipped — their defence
-  // is engineered weak (BOT_DEFENDER_LOSS_MULT) — as is a defender close to
-  // handleDeadDefender's collapse threshold, where staying in is the win.
+  // 'Failing' is two conditions: the front is down to RETREAT_REMAINING of
+  // the most troops it ever held, AND the defender's pool exceeds what is
+  // left by RETREAT_DEFENDER_EDGE. Losing most of a stack is normal in a
+  // winning push, so the loss alone proves nothing. Tribes are skipped, as
+  // is a defender close to handleDeadDefender's collapse threshold.
   RETREAT_REMAINING: 0.35,
   RETREAT_DEFENDER_EDGE: 1.5,
   // After retreating from someone, think()/navalScore treat them as a much
@@ -1784,15 +1608,10 @@ const AI = {
   RETREAT_PENALTY: 0.15,
 
   // --- Weighing a new enemy -------------------------------------------------
-  // Score alone (contact x density) made every soft neighbour a target no
-  // matter who they were friends with or what else was going on, so bots picked
-  // fights "willy-nilly". provocation() prices the diplomatic side of a fight —
-  // the returned multiplier goes straight into the target's score, and a fresh
-  // enemy priced below RISK_FLOOR is simply not attacked at all.
-  //
-  // It only bites on a *fresh* enemy. Someone already at war with us, or who
-  // hates us, is a feud we're already in: no new cost, and a small bonus for
-  // hitting back.
+  // provocation() prices the diplomatic side of a fight: its multiplier goes
+  // into the target's score, and a fresh enemy priced below RISK_FLOOR is
+  // not attacked at all. It only bites on a *fresh* enemy; someone already
+  // at war with us, or who hates us, costs nothing new and gets a small bonus.
   RISK_FLOOR: 0.2,
   FEUD_BONUS: 1.25,
   // What a target's coalition may weigh, relative to ours, before it starts to
@@ -1915,20 +1734,18 @@ const AI = {
   },
 
   // --- Battle Royale: converging on the Drill --------------------------------
-  // An attack is aimed at a nation, not a place, so a bot heads for the Drill
-  // by choosing WHO to fight: drillPull scores each neighbour by the share of
-  // the shared border where their side is nearer the Drill than ours.
-  // DRILL_PULL_OUT for a neighbour wholly behind us (their land dies before
-  // ours does), DRILL_PULL_IN for one wholly in the way, DRILL_CENTRE_BONUS
-  // on top for whoever holds the Drill's own tile. Null without a Drill, and
-  // for the nation holding the Drill tile — it is already where it needs to
-  // be, and fights as usual.
+  // An attack is aimed at a nation, not a place, so a bot heads for the
+  // Drill by choosing WHO to fight: drillPull scores each neighbour by the
+  // share of the shared border where their side is nearer the Drill than
+  // ours. DRILL_PULL_OUT for a neighbour wholly behind us, DRILL_PULL_IN for
+  // one wholly in the way, DRILL_CENTRE_BONUS on top for whoever holds the
+  // Drill's tile. Null without a Drill, and for the nation holding the Drill
+  // tile.
   //
-  // With a pull in play, think() also drops the diplomatic caution
-  // (provocation) and the full-trigger wait, and will open a front on an
-  // inward nation while another war is still running: the ground behind is
-  // going regardless. allianceDecision, maybeBetray, navalThink and buildSite
-  // carry the rest. Nothing here draws rng or runs without a Drill.
+  // With a pull in play, think() also drops provocation and the full-trigger
+  // wait, and will open a front on an inward nation during another war.
+  // allianceDecision, maybeBetray, navalThink and buildSite carry the rest.
+  // Nothing here draws rng or runs without a Drill.
   DRILL_PULL_IN: 3,
   DRILL_PULL_OUT: 0.3,
   DRILL_CENTRE_BONUS: 2,
@@ -2042,16 +1859,13 @@ const AI = {
     if (n >= 1) Game.launchAttack(p.id, best, n);
   },
 
-  // AiAttackBehavior.assistAllies: an ally has marked a target
-  // (Game.targetPlayer), so go hit it. Upstream only answers an ally it still
-  // feels Friendly toward, and each answer costs 20 of that goodwill. A
-  // teammate skips the relation gate (teammates are permanent here, and team
-  // relations would otherwise decay out of Friendly within ~2 minutes).
+  // An ally has marked a target (Game.targetPlayer), so go hit it. Only
+  // answers an ally it still feels Friendly toward, and each answer costs
+  // some of that goodwill. A teammate skips the relation gate.
   //
-  // Deliberately ahead of the scoring loop, and ignoring both provocation()
-  // and freshFrontLocked(): piling onto one enemy is the whole point of a
-  // mark. Upstream's sendAttack would boat to a target that doesn't border
-  // us; this only answers a mark on a land neighbour.
+  // Runs ahead of the scoring loop and ignores provocation() and
+  // freshFrontLocked(): piling on is the point of a mark. Only answers a
+  // mark on a land neighbour.
   ASSIST_RELATION_COST: -20,
 
   assistAllies(p, targets, myAttacks) {
@@ -2074,30 +1888,15 @@ const AI = {
     return false;
   },
 
-  // Naval counterpart to think(): same weak-neighbour / neutral-bonus /
-  // traitor-bonus scoring, but there's no "border contact count" for a beach
-  // reachable only by sea, so a landmass's total size stands in for it —
-  // both are a proxy for how much is worth having, and this keeps a big
-  // island preferred over a speck without inventing a second scoring model.
+  // Naval counterpart to think(): the same weak-neighbour, neutral and
+  // traitor scoring, with a landmass's total size standing in for border
+  // contact.
   //
-  // Checked against OpenFront's actual AiAttackBehavior.ts: its own overseas
-  // targeting (findNearestIslandEnemy) explicitly sorts candidates by
-  // distance from the player's centre and picks the nearest one almost every
-  // time — only a 33% chance to fall back to the 2nd-nearest of the first two
-  // REACHABLE candidates, never further. It never just takes the single
-  // highest-value target on the whole map regardless of range. This game's
-  // opportunity/density scoring originally had no distance term at all, so a
-  // big weak landmass clear across the map always beat an equally-good one
-  // next door — the "boats to seemingly random distant lands" behaviour.
-  // navalDistanceFactor fixes that by discounting a candidate's score the
-  // farther its beach is from any of the player's own coastal tiles; see
-  // navalScore. It's a soft bias rather than a hard cutoff (real OpenFront
-  // isn't a hard cutoff either), so a bot with nothing worthwhile nearby can
-  // still cross open ocean for a genuinely good target.
+  // navalDistanceFactor discounts a candidate the farther its beach is from
+  // the player's own coast (see navalScore). A soft bias, not a cutoff, so a
+  // bot with nothing nearby can still cross open ocean.
   //
-  // Only the top NAVAL_CANDIDATES beaches (by that opportunity score) get the
-  // actual sea-path BFS, since that's the expensive part and most bots have
-  // several landmasses in view at once.
+  // Only the top NAVAL_CANDIDATES beaches get the expensive sea-path search.
   NAVAL_CANDIDATES: 3,
 
   // Ranking-time distance is straight-line (see nearestDist), not a real sea
@@ -2107,21 +1906,15 @@ const AI = {
   // pick the exact launch point (launchNavalInvasion does that separately).
   NAVAL_COAST_SAMPLE_CAP: 40,
 
-  // A real sea route can be far longer than straight-line distance suggests
-  // — hugging around a peninsula or the whole far side of a continent to
-  // reach a beach that looked close on the map. isRouteTooIndirect catches
-  // that case (the actual "wraps around the continent" symptom) by comparing
-  // the real seaPath length against the straight-line estimate that ranked
-  // it, after distance-scoring already filtered the field down to a handful
-  // of plausible candidates.
+  // A real sea route can be far longer than the straight line that ranked
+  // it (around a peninsula or a continent). isRouteTooIndirect compares
+  // the two.
   NAVAL_MAX_DETOUR: 2.5,
 
   // How long (ticks) a bot leaves a landmass alone after failing to find a
-  // sea route to it. Failed searches are the expensive ones — they run the
-  // whole node guard, ~50 ms each on Extra Large — and before this about
-  // half of them were a bot re-asking for a route it had just failed to
-  // find. Only real failures count; a search skipped by the per-tick
-  // budget says nothing about the route.
+  // sea route to it. Failed searches are the expensive ones (they run the
+  // whole node guard). Only real failures count; a search skipped by the
+  // per-tick budget says nothing about the route.
   NAVAL_NO_ROUTE_TICKS: 600,
 
   // Reserve fraction of maxTroops required before shipping any troops
@@ -2211,13 +2004,11 @@ const AI = {
     const tier = c => (c.target === NEUTRAL && c.dist <= neutralRange ? 1 : 0);
     candidates.sort((a, b) => (tier(b) - tier(a)) || (b.score - a.score));
 
-    // OpenFront's boatAttackAmount default — a flat 20% of current troops,
-    // used consistently for both neutral and enemy targets (its AI's own
-    // attackWithRandomBoat/sendBoatAttack both compute troops/5 verbatim).
+    // A boat carries a flat 20% of current troops, for neutral and
+    // enemy targets alike.
     //
-    // At most one failed route search per think: several in a row stacked
-    // into 100+ ms ticks on Extra Large. The failure is remembered
-    // (navalNoRoute), so the next think moves on to the other candidates.
+    // At most one failed route search per think. The failure is
+    // remembered (navalNoRoute), so the next think tries other candidates.
     const troops = Math.floor(p.troops / 5);
     for (const [lm, until] of p.navalNoRoute) if (until <= Game.ticks) p.navalNoRoute.delete(lm);
     let tried = 0;
@@ -2256,16 +2047,10 @@ const AI = {
     return score * risk * distFactor * this.retreatPenalty(p, targetId);
   },
 
-  // 1 at dist=0, fading to 0.25 at "comfortable raiding range" (scaled off
-  // the current map's own dimensions, so the bias means the same thing on a
-  // 250-wide small map as a 2000-wide xlarge one) and asymptoting toward 0
-  // well beyond that — a soft discount, not a hard range cap, matching how
-  // real OpenFront's own overseas targeting stays nearest-biased without
-  // ever being strictly forbidden from a long crossing. Squared rather than
-  // linear: a linear falloff (0.5 at comfort range) still let a merely
-  // bigger or softer landmass clear across the map consistently outscore a
-  // decent one nearby, which read as "AI boats keep going to the far side of
-  // the map" — the squared curve keeps that possible but no longer typical.
+  // 1 at dist=0, fading to 0.25 at 'comfortable raiding range' (scaled off
+  // the map's dimensions) and toward 0 beyond: a soft discount, not a range
+  // cap. Squared, because a linear falloff still let a bigger landmass
+  // across the map routinely outscore a decent one nearby.
   navalDistanceFactor(dist) {
     const comfort = this.navalComfortDist();
     const f = comfort / (comfort + dist);
@@ -2292,12 +2077,10 @@ const AI = {
     return best;
   },
 
-  // True when the real crossing is a bad detour, or when no route within
-  // the detour limit exists at all. The search itself is capped at that
-  // limit, so a target only reachable the long way round fails fast rather
-  // than walking the whole ocean first. A route it does find is memoised
-  // for the tick (see Game.nearestCoastPath), so the launch that follows
-  // reuses it instead of searching again.
+  // True when the real crossing is a bad detour, or no route within the
+  // detour limit exists. The search is capped at that limit, so it fails
+  // fast. A route it finds is memoised for the tick (see
+  // Game.nearestCoastPath) and reused by the launch that follows.
   isRouteTooIndirect(p, homeCoast, targetTile) {
     const straight = this.nearestDist(homeCoast, targetTile);
     if (straight < 8) return false; // too short for the ratio to mean anything
@@ -2329,29 +2112,21 @@ const AI = {
   },
 
   // --- Fog of war: beaches (docs/fog-of-war.md) ------------------------------
-  // With the whole map in view navalThink ranks landmasses by a few sample
-  // tiles each, GameMap's coastSample: the first twelve coastal tiles in scan
-  // order, which is one landmass's northern tip. Under fog a nation may only
-  // weigh a beach it has discovered, and those twelve are the wrong sample
-  // for that: it could see the whole southern shore of the island next door
-  // and still have nothing to send a boat to. So a fog match samples the
-  // coast its own way, all the way round every landmass: one coastal tile
-  // for each vision cell (game/vision.js, the unit discovery is counted in)
-  // the coast runs through, thinned evenly to FOG_BEACH_CAP a landmass. A
-  // beach is somewhere to land a boat once it is discovered, and somewhere to
-  // send a Scout until then.
+  // With fog off navalThink ranks landmasses by GameMap's coastSample (the
+  // first twelve coastal tiles in scan order). Under fog a nation may only
+  // weigh a beach it has discovered, so a fog match samples the coast all
+  // the way round every landmass: one coastal tile for each vision cell
+  // (game/vision.js) the coast runs through, thinned evenly to FOG_BEACH_CAP
+  // a landmass. A beach is somewhere to land a boat once discovered, and
+  // somewhere to send a Scout until then.
   //
-  // Only coast on the ocean, the largest body of water, is sampled. A lake
-  // shore is no use to a nation that is not already on that lake, and a beach
-  // no Scout or boat can sail to would keep being picked and never reached.
+  // Only coast on the ocean, the largest body of water, is sampled.
   //
-  // The table is fixed geography, worked out from the map alone, so it is the
-  // same on every client and is not sim state: it lives here on AI, not on
-  // Game, and nothing hashes it. The scan behind it reads every tile once
-  // (about 20 ms on a 2000x1000 map). update() runs it a slice a tick from
-  // the start of a fog match, so it is long finished by the first navalThink;
-  // fogCoast() finishes whatever is left before it answers, so what a caller
-  // gets never depends on how the slices fell.
+  // The table is fixed geography, worked out from the map alone, so it is
+  // the same on every client and is not sim state: it lives on AI and
+  // nothing hashes it. update() builds it a slice a tick from the start of a
+  // fog match; fogCoast() finishes whatever is left before it answers, so a
+  // caller's result never depends on how the slices fell.
   FOG_BEACH_CAP: 24,
   FOG_COAST_TICKS: 20,
   _fogCoast: null,
@@ -2421,28 +2196,20 @@ const AI = {
   },
 
   // --- Fog of war: scouting (docs/fog-of-war.md) -----------------------------
-  // Border sight alone shows a nation very little coast, so a nation with a
-  // Port on the ocean keeps Scouts (game/scouts.js) at sea. Each is sent one
-  // voyage at a time to the beach the nation most wants to see: the
-  // undiscovered one nearest its own coast, by the same straight-line
-  // distance navalThink ranks beaches with. Everything the Scout passes on
-  // the way is revealed too, which is where most of a nation's contacts with
-  // other nations come from.
+  // A nation with a Port on the ocean keeps Scouts (game/scouts.js) at sea.
+  // Each is sent one voyage at a time to the undiscovered beach nearest the
+  // nation's own coast (straight-line, as navalThink ranks beaches).
   //
-  // What a nation knows going in is where the sample beaches are (fogCoast),
-  // never what is on them: nothing about an undiscovered tile is read here
-  // but its position. Whether a voyage worked is judged the way a player
-  // would judge it, by looking at the map afterwards:
+  // A nation knows where the sample beaches are (fogCoast), never what is on
+  // them: nothing about an undiscovered tile is read here but its position.
+  // A voyage is judged by looking at the map afterwards:
   //   - the beach is discovered: good, on to the next;
   //   - the Scout has stopped and the beach is still black: it could not get
   //     there, and that beach is written off (`tried`);
-  //   - the Scout is gone: the way there is watched, and every beach within
-  //     SCOUT_LOSS_RADIUS of the one it was sailing for is written off, so
-  //     the replacement is not sent after it.
-  // A Scout that fails SCOUT_MAX_FAILS voyages running has run out of coast
-  // it can get to (a Scout's route search gives up on the far side of a big
-  // continent) and is left where it is. Each failure costs a full route
-  // search, so the limit is also what bounds that.
+  //   - the Scout is gone: every beach within SCOUT_LOSS_RADIUS of the one
+  //     it was sailing for is written off.
+  // A Scout that fails SCOUT_MAX_FAILS voyages running is left where it is,
+  // which also bounds the route searches spent on it.
   //
   // All of it is per nation, on `p.aiScout`, which only a nation with a Port
   // in a fog match ever gets:
@@ -2455,14 +2222,11 @@ const AI = {
   //   bought   Scouts bought so far; lastBuy, the tick of the last purchase
   //   done     nothing left to find, or nobody left to look: stop thinking
   //
-  // Cost. scoutThink runs on navalThink's beat (once a nation every 7.5-12.5 s)
-  // and again when a voyage ends. Each run scans the sample beaches, under a
-  // thousand tiles on The World; the vision grid itself is never walked.
-  // scoutPoll and buyScout, on economy's beat, are a few comparisons.
+  // scoutThink runs on navalThink's beat and again when a voyage ends; each
+  // run scans only the sample beaches, never the vision grid.
   //
   // A replacement for a lost Scout waits SCOUT_REPLACE_TICKS after the last
-  // purchase, so a nation whose Scouts keep being sunk pays for one every two
-  // minutes at most.
+  // purchase.
   SCOUT_REPLACE_TICKS: 1200,
   SCOUT_MAX_FAILS: 3,
   SCOUT_LOSS_RADIUS: 80,
@@ -2582,16 +2346,12 @@ const AI = {
   },
 
   // economy()'s hook, fog matches only: buys the Scout scoutThink asked for.
-  // Not held back by the savings reserve, for the reason the first Port and
-  // Warship are not (NAVY_EXEMPT_COUNT): at 25k it is a fortieth of a Silo.
+  // Not held back by the savings reserve (see NAVY_EXEMPT_COUNT).
   //
-  // Bought toward the water beside one of p's own Ports on the ocean, and
-  // given its real order straight afterwards. Game.buildScout launches from
-  // the Port nearest the tile it is given, and a Scout launched into a lake
-  // would never leave it; given discovered water, it launches onto that body
-  // of water. The order comes from scoutThink rather than from `want`
-  // because the launch itself reveals the sea round the Port, which can be
-  // enough to show the beach that was wanted.
+  // Bought toward the water beside one of p's own Ports on the ocean (a
+  // Scout launched into a lake would never leave it), and given its real
+  // order straight afterwards. The order comes from scoutThink, not `want`,
+  // because the launch itself reveals the sea round the Port.
   buyScout(p) {
     const st = p.aiScout;
     if (!st || st.want < 0) return;
@@ -2650,27 +2410,20 @@ const AI = {
     return counts;
   },
 
-  // Annexes every fully-enclosed pocket of targetId's land for free — the
-  // bot/tribe equivalent of a human noticing a surrounded nation and tapping
-  // it, taking the whole scatter in one go exactly as that tap now does (see
-  // UI.onTap). Without this, only the human ever benefits from encirclement
-  // and tribes only ever die to a human's click. Game.enclosedPocketsOf scans
-  // just the contact points along p's border, so it doesn't add real cost to
-  // a think() cycle that already walks the same border for borderTargets.
+  // Annexes every fully-enclosed pocket of targetId's land for free, the
+  // bot equivalent of a human tapping a surrounded nation (see UI.onTap).
+  // Game.enclosedPocketsOf scans only the contact points along p's border.
   annexIfEnclosed(p, targetId) {
     if (targetId < 0) return false; // NEUTRAL land can't be annexed
     return Game.annexEnclosedPockets(targetId, p.id) > 0;
   }
 };
 
-// Tribe behaviour, ported from OpenFront's TribeExecution + AiAttackBehavior
-// (the wiki's "bots spend 5% of their troops" is the old attackAmount, which the
-// tribe code no longer calls). A tribe is still the "simple Bot" type — no
-// diplomacy(), no economy(), no navalThink() — but it is NOT timid per attack:
-// on a fixed 4-8s beat it commits everything above a reserve, and unclaimed
-// land only has to clear the small `expand` reserve. What keeps tribes weak is
-// their small cap and slow growth (TRIBE_TROOP_CAP_MULT / TRIBE_GROWTH_MULT in
-// economy.js), which bound how much any one of those attacks can carry.
+// Tribe behaviour. A tribe has no diplomacy(), economy() or navalThink(),
+// but it is not timid per attack: on a fixed 4-8s beat it commits
+// everything above a reserve, and unclaimed land only has to clear the
+// small `expand` reserve. Tribes are kept weak by their small cap and slow
+// growth (TRIBE_TROOP_CAP_MULT / TRIBE_GROWTH_MULT in economy.js).
 const TribeAI = {
   // TribeExecution's constructor rolls, per tribe. Drawn once at init.
   rollTraits() {

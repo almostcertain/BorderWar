@@ -1,46 +1,23 @@
-// Wire protocol — the one file the browser client and the Node server both load
-// (Task MP-1.1, docs/multiplayer-architecture.md §4).
+// Wire protocol: the one file the browser client and the Node server both
+// load (docs/multiplayer-architecture.md §4). Only intents and turns cross
+// the wire, so their shapes live here, once.
 //
-// Under deterministic lockstep the server never simulates: it buckets *intents*
-// into a Turn every TURN_INTERVAL_MS and broadcasts it, and every client runs
-// the identical simulation over the identical turn stream. Nothing else crosses
-// the wire. That makes the message and intent shapes the single interface
-// between the two halves of the system, and the cheapest possible place to be
-// wrong. So they live here, once, and both sides read the same definitions
-// rather than two copies that drift.
-//
-// PURITY CONTRACT — this file must reference no game state and no browser.
-// No Game, no GameMap, no Render, no UI, no Fx, no DOM, no window, no timers,
-// no Math.random, no Date. It is data plus pure functions over its arguments.
-// That is precisely what lets `require()` pull it into the server process
-// unchanged (§3: "written to work under both a browser global and
-// module.exports"). It is also the property most likely to be broken by
-// accident, because "just check the tile is actually land" always looks like a
-// helpful addition here. It is not. See validateIntent's comment on scope.
-//
-// Nothing uses this module yet. MP-1.2 (Executor), MP-1.3 (GameRunner) and
-// MP-1.4 (Transport/LocalServer) are its consumers; MP-1.1 is definitions only.
+// PURITY CONTRACT: this file must reference no game state and no browser.
+// No Game, GameMap, Render, UI, Fx, DOM, window, timers, Math.random or
+// Date. It is data plus pure functions, which is what lets the server
+// `require()` it unchanged. Do not add legality checks (see the SCOPE note
+// above the validators).
 const Protocol = {
 
   // --- Shared constants ------------------------------------------------------
 
-  // One turn per 100 ms, from OpenFront's Config.msPerTick() === 100.
-  //
-  // This is not an independent knob: it is Game.TICK_DT (0.1 s, fixed in
-  // MP-0.1) expressed in milliseconds, because in lockstep one turn is exactly
-  // one Game.tick() call. §1: "They are the same number — one turn is exactly
-  // one existing Game.tick(0.1) call." If one ever moves, the other must move
-  // with it or the sim's internal clock stops matching the wire's.
-  //
-  // Deliberately not asserted against Game.TICK_DT here — that would mean
-  // touching Game, and the purity contract above forbids it. The check belongs
-  // in the Runner (MP-1.3), which legitimately sees both.
+  // One turn per 100 ms. This is Game.TICK_DT (0.1 s) in milliseconds: one
+  // turn is exactly one Game.tick() call, so the two must move together.
+  // Not asserted here, because that would mean touching Game.
   TURN_INTERVAL_MS: 100,
 
-  // Turns between client hash reports, per MP-4.2. The client digests its own
-  // state with Hash.compute() every HASH_INTERVAL turns and sends it up; the
-  // server tallies turn T-10's hashes every 10 turns and flags the minority.
-  // 10 turns = 1 s of game time at the interval above.
+  // Turns between client hash reports (Hash.compute()). The server tallies
+  // turn T-10's hashes every 10 turns and flags the minority.
   HASH_INTERVAL: 10,
 
   // GameServer's phases, from OpenFront's GameServer.ts. Carried here rather
@@ -48,31 +25,22 @@ const Protocol = {
   // the strings.
   GAME_PHASE: { LOBBY: 'LOBBY', ACTIVE: 'ACTIVE', FINISHED: 'FINISHED' },
 
-  // NEUTRAL from map.js, repeated as a literal because importing it would mean
-  // depending on the game. An `attack` may legally target unclaimed land, and
-  // this is the sentinel that says so on the wire. OpenFront's
-  // AttackIntentSchema uses a nullable id for the same purpose; a numeric
-  // sentinel is the right port here because this game's player ids are already
-  // numeric indices into Game.players and NEUTRAL is already -1.
+  // NEUTRAL from map.js, repeated as a literal because importing it would
+  // mean depending on the game. An `attack` may target unclaimed land.
   NEUTRAL_TARGET: -1,
 
-  // Grammar sanity ceilings. These are NOT game rules — they exist so a
-  // garbled or hostile message is rejected at the schema boundary (MP-4.3)
-  // instead of reaching the sim as a 2^40-tile index. Every one is far above
-  // anything the game can actually produce: xlarge is 2,000,000 tiles, the
-  // player roster tops out near 120 (31 bots + 80 tribes + humans), and a
-  // late-game treasury of troops is in the millions.
+  // Grammar sanity ceilings, NOT game rules: they reject a garbled or
+  // hostile message at the schema boundary. Each is far above anything the
+  // game can produce.
   MAX_TILE_INDEX: 1 << 24,      // 16.7M — 8x the largest map
   MAX_PLAYER_ID: 4095,
   MAX_TROOPS: 1e12,
   MAX_UNIT_IDS: 1024,           // cap on move_warship's unitIds[]
   MAX_STRING: 256,              // usernames, ids, error text
 
-  // Structure types Game.build/buildWarship/launchNuke accept, in the order
-  // they appear in game/structures.js's build menu. `build_unit` is one intent covering
-  // all three call sites (§4 lists ui.js:403/426/492 against it) because on
-  // the wire they are the same act: "spend gold to put <unit> at <tile>".
-  // Which Game.* method that becomes is the Executor's business (MP-1.2).
+  // Unit types `build_unit` accepts, in build-menu order. One intent for
+  // all of them: 'spend gold to put <unit> at <tile>'. The Executor picks
+  // the Game.* method.
   UNIT_TYPES: [
     'city', 'factory', 'port', 'fort', 'warship',
     'silo', 'atombomb', 'hydrogenbomb', 'sam', 'mirv', 'scout', 'drill', 'radio'
@@ -105,11 +73,8 @@ const Protocol = {
   // --- Field type vocabulary -------------------------------------------------
   //
   // Each entry is a pure predicate returning null (valid) or a fragment of an
-  // error message, which validate() prefixes with the field name. Keeping the
-  // vocabulary this small is deliberate: every intent field in §4 is a tile
-  // index, a player id, an entity id, a troop count, a unit name or a boolean,
-  // and a table that cannot express more than that cannot quietly grow game
-  // rules into it.
+  // error message, which validate() prefixes with the field name. Kept small
+  // on purpose, so the table cannot grow game rules.
   FIELD_TYPES: {
     // Tile index into GameMap.owner.
     tile(v, P) {
@@ -135,14 +100,8 @@ const Protocol = {
       return null;
     },
 
-    // Id of a live sim entity — an attack, a boat, a warship.
-    //
-    // NOTE for MP-1.2: attacks, boats and warships do not carry ids in the sim
-    // today (Game.retreatAttack takes the attack *object*, moveWarships takes a
-    // list of warship objects). §4 specifies ids on the wire because object
-    // references cannot cross it and must be identical on every client. Minting
-    // those ids deterministically is the Executor's task, not this file's; the
-    // shape is fixed here so that work has something to aim at.
+    // Id of a live sim entity: an attack, a boat, a warship. Ids, because
+    // object references cannot cross the wire.
     entityId(v, P) {
       if (!Number.isInteger(v)) return 'must be an integer entity id';
       if (v < 0) return 'must be a non-negative entity id';
@@ -150,11 +109,8 @@ const Protocol = {
       return null;
     },
 
-    // Absolute troop count. OpenFront sends absolute counts, not a ratio —
-    // §4: the troop-ratio slider stays client-local and its value travels
-    // inside attack.troops. Non-integer is allowed: Game.players[].troops is a
-    // float and ui.js floors it at the call site, so the wire does not need to
-    // care which side of that floor a value is on.
+    // Absolute troop count; the ratio slider stays client-local (§4).
+    // Non-integer is allowed: troops is a float in the sim.
     troops(v, P) {
       if (typeof v !== 'number' || !Number.isFinite(v)) return 'must be a finite number';
       if (v < 0) return 'must be non-negative';
@@ -216,11 +172,8 @@ const Protocol = {
       return null;
     },
 
-    // A structured payload whose interior shape is owned elsewhere —
-    // gameStartInfo (§4, built by GameServer.start) and lobby (built by the
-    // lobby broadcast). Checked as "a plain JSON object" and no further, on
-    // purpose: those shapes are the server's to define in MP-2.2, and
-    // re-declaring them here would create a second authority to keep in sync.
+    // A structured payload whose shape is owned elsewhere (gameStartInfo,
+    // lobby). Checked only as 'a plain JSON object'; the server defines the rest.
     obj(v) {
       if (v === null || typeof v !== 'object' || Array.isArray(v)) return 'must be an object';
       return null;
@@ -229,32 +182,18 @@ const Protocol = {
 
   // --- Intents ---------------------------------------------------------------
   //
-  // The fifteen intents of §4, plus embargo/embargo_all (ticket #14). Every
-  // one already exists as a direct Game.* call from ui.js / radial.js; the mapping is 1:1, and `from` records the
-  // call site so MP-1.5's rewiring has a checklist.
+  // Every intent maps 1:1 to a Game.* call; `from` records the original call
+  // site.
   //
-  // Wire names are OpenFront's own wherever OpenFront has the intent
-  // (src/core/Schemas.ts). That is why the table mixes snake_case
-  // (`cancel_attack`, `build_unit`, `move_warship`) with camelCase
-  // (`allianceRequest`, `breakAlliance`) — the inconsistency is upstream's and
-  // is kept deliberately so a future reader diffing against OpenFront source
-  // finds the same strings. Do not tidy it. `annex_region` is the one intent
-  // with no OpenFront equivalent: it is this game's own mechanic, and it is
-  // named in the snake_case house style of the majority.
+  // Wire names mix snake_case (`cancel_attack`, `build_unit`) with camelCase
+  // (`allianceRequest`, `breakAlliance`). The inconsistency is deliberate and
+  // on the wire. Do not tidy it.
   //
-  // Deliberately absent, per §4: emoji, quick_chat, delete_unit,
-  // kick_player, toggle_pause, update_game_config. None has a mechanic in
-  // this game. fastForward and the debug gold/nuke buttons are
-  // singleplayer-only and are hard disabled in multiplayer rather than
-  // converted to intents.
+  // fastForward and the debug gold/nuke buttons are singleplayer-only and are
+  // hard disabled in multiplayer rather than converted to intents.
   //
-  // donate_gold / donate_troops (ticket #29) send an absolute amount, not
-  // null-for-default like OpenFront's DonateGoldIntentSchema/
-  // DonateTroopIntentSchema allow — same reasoning as `attack`'s troops
-  // field above: the amount is resolved client-side (from the ratio slider
-  // or a default) before it ever reaches the wire, so every client applies
-  // the same number instead of each recomputing its own "third of my gold"
-  // from state that could in principle disagree.
+  // donate_gold / donate_troops send an absolute amount, resolved client-side,
+  // so every client applies the same number.
   INTENTS: {
     spawn: {
       fields: { tile: 'tile' },
@@ -262,13 +201,9 @@ const Protocol = {
       openfront: 'SpawnIntentSchema'
     },
     attack: {
-      // targetID may be NEUTRAL_TARGET for unclaimed land, matching
-      // Game.launchAttack's own contract ("targetId may be NEUTRAL").
-      // `tile` is a deliberate deviation from OpenFront's own AttackIntentSchema
-      // (which carries no tile): it is the tapped tile, there so the sim can
-      // scope the attack to the landmass actually touched rather than every
-      // border the attacker shares with targetID across the whole map — see
-      // Game.launchAttack's landmassId comment for why.
+      // targetID may be NEUTRAL_TARGET for unclaimed land. `tile` is the
+      // tapped tile, so the sim can scope the attack to the landmass touched
+      // (see Game.launchAttack's landmassId comment).
       fields: { targetID: 'targetId', troops: 'troops', tile: 'tile' },
       from: 'ui.js:530 Game.launchAttack',
       openfront: 'AttackIntentSchema (targetID nullable there; -1 here; no tile field there)'
@@ -307,10 +242,8 @@ const Protocol = {
         + 'this game shift-selects a fleet and moves it as one order)'
     },
     move_scout: {
-      // Ours (fog of war, docs/fog-of-war.md). The same shape as move_warship
-      // and a separate intent on purpose: a Scout may be sent to any tile,
-      // a warship may not, and one intent with two sets of rules would have
-      // to ask what each id is before it knew which applied.
+      // Fog of war (docs/fog-of-war.md). Same shape as move_warship but a
+      // separate intent: a Scout may be sent to any tile, a warship may not.
       fields: { unitIds: 'entityIdList', tile: 'tile' },
       from: 'Game.moveScouts',
       openfront: null
@@ -381,31 +314,24 @@ const Protocol = {
       openfront: 'TargetPlayerIntentSchema'
     },
     mark_disconnected: {
-      // New — no current call site. Paired with the server's 30 s lastPing
-      // timeout (MP-4.1/§9 Phase 4): a disconnected player's nation keeps
-      // existing in the sim, and every client has to learn that on the same
-      // tick, so it travels as an intent like anything else.
+      // Server-authored. A disconnected player's nation stays in the sim, and
+      // every client has to learn of it on the same tick.
       fields: { isDisconnected: 'bool' },
       from: null,
       openfront: 'MarkDisconnectedIntentSchema'
     }
   },
 
-  // Fields every intent may carry beyond its own, and their types.
-  //
-  // clientID is server-stamped, never client-sent: GameServer.handleIntent does
-  // `const stamped = { ...intent, clientID: actor.clientID }` (§4). It is
-  // optional here rather than required because the same validator runs on both
-  // sides of that stamping — the client validates before sending (no clientID)
-  // and the Executor validates what came back in a Turn (clientID present).
+  // Fields every intent may carry beyond its own. clientID is
+  // server-stamped, never client-sent. Optional here because the same
+  // validator runs before stamping (client) and after (Executor).
   INTENT_COMMON: { type: 'str', clientID: 'str' },
 
   // --- Messages --------------------------------------------------------------
   //
-  // §4's two tables in one map, keyed by wire type, with `dir` recording the
-  // direction. `ping` appears in both directions with no payload, which is why
-  // one table works at all; validateMessage takes an optional direction so a
-  // side that cares can still reject a message travelling the wrong way.
+  // §4's two tables in one map, keyed by wire type; `dir` is the direction.
+  // `ping` goes both ways. validateMessage takes an optional direction to
+  // reject a message travelling the wrong way.
   MESSAGES: {
     // Client -> Server
     join: {
@@ -503,14 +429,9 @@ const Protocol = {
 
   // --- Constructors ----------------------------------------------------------
   //
-  // Small factories producing plain, JSON-safe object literals — no classes, no
-  // prototypes, no undefined values (JSON.stringify silently drops those, so an
-  // optional field is *omitted* rather than set to undefined; that is what makes
-  // every constructed object survive a JSON round trip unchanged).
-  //
-  // They exist so call sites read as intent names rather than object literals,
-  // and so a typo'd field name is a missing function instead of a message that
-  // validates as "unknown field".
+  // Small factories producing plain, JSON-safe object literals. An optional
+  // field is omitted, never set to undefined, so every object survives a JSON
+  // round trip unchanged.
   intent: {
     spawn(tile) { return { type: 'spawn', tile: tile }; },
     attack(targetID, troops, tile) { return { type: 'attack', targetID: targetID, troops: troops, tile: tile }; },
@@ -592,11 +513,8 @@ const Protocol = {
     return t;
   },
 
-  // Server-side stamping, from GameServer.handleIntent:
-  //   const stamped = { ...intent, clientID: actor.clientID }
-  // A copy, never a mutation — the caller's intent may already be referenced by
-  // something else, and an intent that changes identity after validation is a
-  // whole class of bug this avoids for one allocation.
+  // Server-side stamping. A copy, never a mutation: the caller's intent
+  // may be referenced elsewhere.
   stamp(intent, clientID) {
     const out = {};
     for (const k in intent) if (Object.prototype.hasOwnProperty.call(intent, k)) out[k] = intent[k];
@@ -606,31 +524,20 @@ const Protocol = {
 
   // --- Validation ------------------------------------------------------------
   //
-  // SCOPE — read this before adding anything.
+  // SCOPE: these validators check SHAPE AND GRAMMAR ONLY (known type,
+  // required fields, JS types, finite numbers in sane ranges, no unexpected
+  // fields).
   //
-  // These validators check SHAPE AND GRAMMAR ONLY: the type is known, required
-  // fields are present, their JS types are right, numbers are finite and inside
-  // sane ranges, non-empty arrays are non-empty, and no unexpected field rode
-  // along. That is the whole job.
+  // They must NOT judge whether a move is LEGAL IN THE CURRENT GAME. That
+  // belongs to the Executor, which runs the Game.*BlockReason validators
+  // inside the simulation:
   //
-  // They must NOT judge whether a move is LEGAL IN THE CURRENT GAME — whether
-  // the tile is yours, whether you can afford the city, whether a peace deal
-  // blocks the attack. That belongs to MP-1.2's Executor, which re-runs the
-  // existing Game.*BlockReason validators inside the simulation, where the
-  // state actually is and where every client reaches the same verdict on the
-  // same tick. Two reasons the split matters:
+  //   1. Legality checks need Game, and one `Game.` reference here crashes
+  //      the server on require.
+  //   2. The rules already exist, once, in js/game/. A second copy would drift.
   //
-  //   1. Legality checks need Game, and this file must stay pure so the server
-  //      can load it (see the header). One `Game.` reference here and the
-  //      server crashes on require.
-  //   2. Those rules already exist, once, in js/game/. A second copy here would
-  //      drift from the first, and the version that disagreed with the sim
-  //      would be the one rejecting the player's legitimate click.
-  //
-  // Grammar failure means the message is malformed or hostile: drop it at the
-  // boundary (MP-4.3). Legality failure means the player asked for something
-  // the game state does not allow: drop it silently in the Executor, on every
-  // client identically. Different failures, different places.
+  // Grammar failure: drop at the boundary. Legality failure: drop silently in
+  // the Executor, on every client identically.
 
   // Shared shape checker. `spec` is { fields, optional }; `common` names fields
   // allowed on anything of this kind (e.g. `type`). Returns null or a string.
@@ -657,10 +564,8 @@ const Protocol = {
       if (err) return err;
     }
 
-    // No unexpected extras. Strictness here is cheap insurance: an intent that
-    // carries a field nobody reads is either a version mismatch between the two
-    // halves of this file's consumers or a client trying something, and both are
-    // better as a loud rejection than as a field that silently does nothing.
+    // No unexpected extras: an unread field is a version mismatch or a
+    // client trying something, and is better rejected loudly.
     for (const name in obj) {
       if (!Object.prototype.hasOwnProperty.call(obj, name)) continue;
       if (Object.prototype.hasOwnProperty.call(fields, name)) continue;
@@ -725,13 +630,7 @@ const Protocol = {
   },
 
   // Returns null when `turn` matches { turnNumber, intents[], hash? }.
-  // Every intent inside must itself be well-formed and carry its stamped
-  // clientID — a turn is what the server produced, not what a client proposed.
-  //
-  // Checked longhand rather than through _validateShape because `intents` is an
-  // array of things validated by a different function, and adding a schema type
-  // for "array of stamped intents" that only this one call site uses would buy
-  // nothing but indirection.
+  // Every intent inside must be well-formed and carry its stamped clientID.
   validateTurn(turn) {
     if (turn === null || typeof turn !== 'object' || Array.isArray(turn)) return 'turn must be an object';
 
@@ -775,14 +674,9 @@ const Protocol = {
   }
 };
 
-// Dual export. This file is loaded two ways and must work under both:
-//   - the browser, via index.html's document.write loader, where the top-level
-//     `const Protocol` above is the global the rest of js/ reaches for, exactly
-//     like Game / GameMap / Hash;
-//   - Node, via `require('../js/net/protocol.js')` from server/, where that
-//     const is module-scoped and this line is the only way out.
-// Guarded on `module` so the browser, which has no such binding, does not throw
-// on the reference. §3 specifies this shape; it is the first file in the
-// codebase to use it, so later net/ modules shared with the server should copy
-// this pattern verbatim rather than inventing another.
+// Dual export. Loaded two ways:
+//   - the browser, via index.html's loader, where `const Protocol` is a global;
+//   - Node, via `require('../js/net/protocol.js')` from server/.
+// Guarded on `module` so the browser does not throw. Other net/ modules
+// copy this pattern.
 if (typeof module !== 'undefined' && module.exports) module.exports = Protocol;

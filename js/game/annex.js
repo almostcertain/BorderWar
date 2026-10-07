@@ -9,14 +9,12 @@ let annexStamp = null, annexRun = 0;
 let pieceStamp = null, pieceRun = 0;   // largestLandPiece's visited marks
 let openStamp = null, openRun = 0;     // openGroundSealed's visited marks
 
-// One annexation sweep's memory of which enemy components have already been
+// One annexation sweep's memory of which enemy components have been
 // walked. Whether a same-owner component is enclosed depends only on the
-// ownership map, so while no tile changes hands every bordering player can
-// reuse the first walk's verdict instead of flooding the whole component
-// again — on a 50-nation Extra Large map that repeat flooding of big
-// landlocked mainlands was a 200+ ms hitch every sweep. Any annexation
-// invalidates its verdicts (reset), since that rewrites ownership; a
-// cached mainland size only goes stale for the two players involved.
+// ownership map, so while no tile changes hands every bordering player
+// reuses the first walk's verdict (re-flooding big landlocked mainlands
+// was a 200+ ms hitch per sweep). Any annexation resets it; a cached
+// mainland size only goes stale for the two players involved.
 function AnnexSweep() {
   if (!annexStamp || annexStamp.length !== GameMap.owner.length) {
     annexStamp = new Int32Array(GameMap.owner.length);
@@ -53,14 +51,10 @@ Object.assign(Game, {
   },
 
   // True when `playerId` already holds any land on the same landmass as
-  // `tile` — the right test for "is this a normal land attack, not a naval
-  // one," regardless of exactly which tile got clicked. A per-tile
-  // touchesPlayer check is too strict here: attacking neutral or enemy land
-  // has always worked by clicking anywhere on it, with the whole contiguous
-  // border expanding from wherever the attacker actually touches it — not
-  // just the one pixel that happens to be tapped. That matters most right at
-  // the start of a match, when a nation is a ~49-tile dot easy to miss by a
-  // tile at the default whole-map zoom.
+  // `tile`: the test for 'a land attack, not a naval one', whichever tile
+  // was clicked. A per-tile touchesPlayer check is too strict: an attack
+  // expands from wherever the attacker touches the target, and a small
+  // nation is easy to miss by a tile.
   onSameLandmass(playerId, tile) {
     const p = this.players[playerId];
     if (!p) return false;
@@ -70,42 +64,25 @@ Object.assign(Game, {
   },
 
   // Flood-fills the connected component of same-owner tiles containing
-  // `startTile` and tests whether it is enclosed by OTHER players' territory.
-  // Ported against OpenFront's PlayerExecution (isSurrounded, isEnclosed,
-  // surroundedBySamePlayer; github.com/openfrontio/OpenFrontIO), re-read
-  // 2026-10-05 for #39. Water or the map edge next to the piece is always a
-  // gap. Unclaimed land is not: it is a hole rather than a way out (a nuke
-  // crater, say), so the piece still counts as enclosed as long as that open
-  // ground is itself sealed in — see openGroundSealed. The earlier port
-  // rejected any unclaimed neighbour outright, which is OpenFront's rule for
-  // a nation's mainland only, and left the survivors of a nuke standing in
-  // their own fallout. Returns {tiles, wallCounts, open} or null (not
+  // `startTile` and tests whether it is enclosed by OTHER players'
+  // territory. Water or the map edge next to the piece is always a gap.
+  // Unclaimed land is not: it is a hole (a nuke crater, say), so the piece
+  // still counts as enclosed if that open ground is itself sealed in (see
+  // openGroundSealed). Returns {tiles, wallCounts, open} or null (not
   // enclosed); `open` says the piece touches unclaimed land, which the
-  // mainland rule (mainlandHolds) still cares about.
+  // mainland rule (mainlandHolds) cares about.
   //
-  // The wall no longer has to be a single owner (2026-09-09 fix, see
-  // capturingPlayer below) — the original version took a `byPlayerId` and
-  // rejected the whole walk the instant it touched any OTHER real player,
-  // which matched real OpenFront for a besieger who walls a pocket alone but
-  // silently refused every pocket ringed by a MIX of nations (a tribe or a
-  // second bot contributing even one tile of the wall was enough to block
-  // it forever, not just for the periodic sweep but for a human's own tap
-  // too) — an easy thing to hit on a map seeded with dozens of tribes. Real
-  // OpenFront hands a mixed-wall pocket to whichever bordering nation
-  // "attacks it hardest" (owns the most of its border) instead of refusing
-  // it, so this now tallies contact tiles per bordering owner in
-  // `wallCounts` and leaves picking a winner to the caller.
+  // The wall may be a mix of owners: contact tiles are tallied per
+  // bordering owner in `wallCounts`, and the caller picks a winner.
   //
-  // `seen`/`run` are how enclosedPocketsOf below walks many pockets in one
-  // sweep without paying for the same ground twice: `seen` maps a tile to the
-  // id of the walk that reached it, so every tile is expanded at most once
-  // across the whole sweep. Meeting a tile stamped by an *earlier* walk means
-  // this pocket has already been walked from another contact point and
-  // rejected there — an accepted pocket is a whole connected component, so it
-  // can never be touching this one — and this walk fails with it.
+  // `seen`/`run` let enclosedPocketsOf walk many pockets in one sweep
+  // without paying for the same ground twice: `seen` maps a tile to the id
+  // of the walk that reached it. Meeting a tile stamped by an *earlier* walk
+  // means this pocket was already walked from another contact point and
+  // rejected, so this walk fails with it.
   //
-  // `stamp`/`base` (sweep use only) swap `seen` for a typed array of run ids,
-  // where anything <= base counts as unvisited. Same rules otherwise.
+  // `stamp`/`base` (sweep use only) swap `seen` for a typed array of run
+  // ids, where anything <= base counts as unvisited.
   enclosedRegion(startTile, seen, run, stamp, base) {
     const target = GameMap.owner[startTile];
     if (target < 0) return null;
@@ -154,12 +131,11 @@ Object.assign(Game, {
   },
 
   // enclosedRegion's second stage, for a piece that touches unclaimed land.
-  // Both of OpenFront's tests for that case: the other players' tiles around
-  // the piece must reach at least as far as it does in all four directions
-  // (isSurrounded's bounding-box test, which is what stops a tip poking out
-  // into open ground from falling), and walking on from the unclaimed land,
-  // through more of it and through any more of the same nation's land, must
-  // never reach water or the map edge (isEnclosed).
+  // Two tests: the other players' tiles around the piece must reach at
+  // least as far as it does in all four directions (so a tip poking into
+  // open ground does not fall), and walking on from the unclaimed land,
+  // through more of it and more of the same nation's land, must never reach
+  // water or the map edge.
   openGroundSealed(region, open, target) {
     const size = GameMap.owner.length, w = GameMap.width, owner = GameMap.owner, nb = this.abuf;
     if (!openStamp || openStamp.length !== size) { openStamp = new Int32Array(size); openRun = 0; }
@@ -208,17 +184,11 @@ Object.assign(Game, {
   },
 
   // Which bordering nation an enclosed pocket of `targetId` falls to when
-  // nobody tapped it: OpenFront's getCapturingPlayer. Only nations that are
-  // not friendly to the owner can take it. Among those, whoever has the
-  // largest attack running against the owner; with no attack, whoever
-  // contributes the most wall-tile contact, tie-broken by lowest player id so
-  // every client agrees regardless of Map insertion order. Returns -1 when
-  // every nation on the wall is the owner's friend.
-  //
-  // Before 2026-10-05 this was the biggest wall and nothing else, friends
-  // included, so a pocket walled mostly by the owner's own ally went to
-  // nobody at all (the ally never annexes, and nobody else was "dominant"),
-  // and a pocket you were attacking could go to a bystander with more border.
+  // nobody tapped it. Only nations not friendly to the owner can take it.
+  // Among those: whoever has the largest attack running against the owner;
+  // with no attack, whoever has the most wall-tile contact, tie-broken by
+  // lowest player id so every client agrees. Returns -1 when every nation
+  // on the wall is the owner's friend.
   capturingPlayer(wallCounts, targetId) {
     const friends = this.players[targetId].allies;
     let best = -1, bestTroops = 0;
@@ -237,62 +207,41 @@ Object.assign(Game, {
     return best;
   },
 
-  // True when an enclosed piece is its nation's mainland (its largest piece)
-  // and may not be annexed. A cut-off fragment falls to any wall, but the
-  // mainland only falls the way OpenFront's surroundedBySamePlayer allows:
-  // ringed by exactly one other nation, with no unclaimed land (or water, or
-  // map edge — enclosedRegion has already ruled those out) anywhere along
-  // its border. So one nation that fully engulfs another takes it whole,
-  // and a nation merely hemmed in by several neighbours is left to be fought.
-  // `pocket` is anything carrying enclosedRegion's wallCounts and open.
+  // True when an enclosed piece is its nation's mainland (its largest
+  // piece) and may not be annexed. A cut-off fragment falls to any wall,
+  // but the mainland falls only when ringed by exactly one other nation
+  // with no unclaimed land along its border. So one nation that fully
+  // engulfs another takes it whole, and a nation hemmed in by several
+  // neighbours is left to be fought. `pocket` is anything carrying
+  // enclosedRegion's wallCounts and open.
   mainlandHolds(pocket, size, biggest) {
     return size >= biggest && (pocket.open || pocket.wallCounts.size !== 1);
   },
 
-  // Every pocket of `targetId` that `byPlayerId`'s land touches the wall of,
-  // not just the one under a cursor. A nuke leaves its blast as a scatter of
-  // survivors among unclaimed irradiated ground, so resettling that ground
-  // turns what is left of the defender there into dozens of one- and
-  // two-tile pockets — annexing them one tap at a time was miserable, and
-  // this is what lets a single tap take the lot.
+  // Every pocket of `targetId` that `byPlayerId`'s land touches the wall
+  // of, not just the one under a cursor, so a single tap clears the scatter
+  // of survivors a nuke leaves.
   //
-  // `requireDominant` (default false — an explicit tap or a bot's own
-  // opportunistic annex, ai.js's annexIfEnclosed, always succeeds against
-  // any pocket byPlayerId touches at all, mixed wall or not) switches to
-  // real OpenFront's "attacks it hardest" resolution instead: only pockets
-  // where byPlayerId is the single dominant wall contributor pass, which is
-  // what the automatic sweep below needs so a pocket touched by several
-  // different players resolves to exactly one winner rather than whoever's
-  // scan happens to run first.
+  // `requireDominant` (default false: a tap or a bot's annexIfEnclosed
+  // succeeds against any pocket byPlayerId touches) keeps only pockets where
+  // byPlayerId is the capturing player. The automatic sweep needs that so a
+  // pocket touched by several players resolves to exactly one winner.
   //
-  // Contact points are collected off our own border (borderTiles, kept live
-  // by setOwner) rather than off the defender's tile set or our own full
-  // territory, since a pocket is by definition something our land touches —
-  // only a border tile can have a neighbour of a different owner — and the
-  // shared seen/run map keeps the sweep linear in the defender's tiles no
-  // matter how much of our border touches them. This runs from the hover
-  // renderer on essentially every frame territory changes anywhere on the
-  // map while the cursor rests on another nation, so scanning all of `me`'s
-  // tiles instead of just its border was a per-frame hitch of its own for a
-  // large empire. Uses nbuf so the abuf enclosedRegion walks on can't
-  // clobber it mid-scan.
+  // Contact points are collected off our own border (borderTiles), and the
+  // shared seen/run map keeps the sweep linear in the defender's tiles. The
+  // hover renderer calls this often, so it must stay border-sized. Uses nbuf
+  // so enclosedRegion's abuf can't clobber it mid-scan.
   //
-  // Mainland vs cut-off piece (#39): see mainlandHolds. This has swung both
-  // ways. First a mixed ring could take a whole living nation; then
-  // (2026-09-27) no ring at all could, which also stopped a tribe one player
-  // had fully engulfed from falling. It now follows OpenFront: one nation
-  // alone, all the way round.
+  // Mainland vs cut-off piece: see mainlandHolds.
   //
-  // Friends never annex each other, whichever caller asks: an alliance (or a
-  // shared team, which game/teams.js records as one) is checked here rather
-  // than left to the callers, since with the mainland rule above a tap on an
-  // ally you happen to surround would otherwise swallow them whole.
+  // Friends never annex each other, whichever caller asks: an alliance (or
+  // a shared team) is checked here, not left to the callers.
   //
   // `sweep` (checkAnnexations only) is an AnnexSweep shared across every
   // player's scan in one sweep: components are judged from its cache, and
-  // only a pocket that actually passes is re-walked from this player's own
-  // contact tile, so the tiles come back in exactly the order the uncached
-  // walk would produce.
+  // only a pocket that passes is re-walked from this player's own contact
+  // tile, so the tiles come back in exactly the order the uncached walk
+  // would produce.
   enclosedPocketsOf(targetId, byPlayerId, requireDominant, sweep) {
     const me = this.players[byPlayerId];
     if (targetId < 0 || targetId === byPlayerId || !me) return [];
@@ -379,30 +328,17 @@ Object.assign(Game, {
     return taken;
   },
 
-  // Every ~20 ticks (real OpenFront's own PlayerExecution cadence at its 10
-  // ticks/sec, see feedback-openfront-source-porting memory), sweep every
-  // live player's border for enclosed enemy ground and take it automatically
-  // — no tap required. The original port (2026-08-18) deliberately made this
-  // click-only, reasoning the user had framed the feature as "click on them
-  // once"; a later report made clear that read was wrong on two points: a
-  // surrounded tribe/pocket should fall the instant the ring closes exactly
-  // like real OpenFront, and the same is true of a chunk of a bigger nation
-  // that an ongoing attack has just cut off from its own mainland — neither
-  // should sit there waiting on a click. UI.onTap's own annexRegion intent is
-  // left in place alongside this (an already-annexed pocket just finds
-  // nothing left to take, harmlessly), since a tap still resolves faster than
-  // waiting for the next sweep tick.
+  // Every ANNEX_SWEEP_TICKS ticks, sweep every live player's border for
+  // enclosed enemy ground and take it automatically: a surrounded pocket,
+  // or a chunk an attack has cut off from its mainland, falls when the ring
+  // closes. UI.onTap's annexRegion intent stays alongside, since a tap
+  // resolves faster than the next sweep.
   //
-  // Passes requireDominant=true to annexEnclosedPockets (see its own comment)
-  // so a pocket ringed by a mix of players resolves to exactly one of them —
-  // whoever owns the most of its wall — instead of every bordering player's
-  // turn in this same loop independently trying (and, before that flag
-  // existed, every one of them failing, since the old single-owner-wall test
-  // rejected a mixed ring outright regardless of who was asking).
+  // Passes requireDominant=true so a pocket ringed by a mix of players
+  // resolves to exactly one of them.
   //
-  // Contacts are read the same way AI.borderTargets does (a single walk of
-  // borderTiles, not the full tile set), just inlined here rather than
-  // shared with ai.js, which this file must not depend on.
+  // Contacts are read as AI.borderTargets does (one walk of borderTiles),
+  // inlined because this file must not depend on ai.js.
   ANNEX_SWEEP_TICKS: 20,
   checkAnnexations() {
     const nb = this.nbuf, sweep = new AnnexSweep();
@@ -423,21 +359,14 @@ Object.assign(Game, {
     }
   },
 
-  // Instantly hands every tile of an enclosed region to byPlayerId — no
-  // troops, no siege ticks, per OpenFront's annexation rule that a fully
-  // surrounded territory falls for free the moment it's attacked. If this
-  // was the loser's entire remaining territory, their treasury moves with
-  // it too (same halved-for-human rule handleDeadDefender uses below), since
-  // regular tile loss never transfers gold and a full wipe otherwise
-  // silently drops it.
+  // Instantly hands every tile of an enclosed region to byPlayerId: no
+  // troops, no siege ticks. If this was the loser's entire territory, their
+  // treasury moves too (halved for a human, as in handleDeadDefender).
   //
-  // A combat death catches itself next tick: maxTroops falls with every tile
-  // lost, so by the time the last one goes troops are already near zero and
-  // the p.troops < 20 sweep below finishes the job. Annexation skips combat
-  // entirely, so that path never fires here — a 0-tile player's floor is
-  // BASE_POP, not zero, so their troops would actually climb from wherever
-  // annexation left them and they'd sit "alive" forever. Elimination is
-  // finalized here instead of left to the sweep.
+  // Annexation skips combat, so the loser's troops are never spent down and
+  // the tick() sweep (troops < 20) would never catch them: a 0-tile player
+  // would regrow toward BASE_POP and sit 'alive' forever. Elimination is
+  // finalized here instead.
   annexRegion(tiles, byPlayerId) {
     if (tiles.length === 0) return;
     const loser = this.players[GameMap.owner[tiles[0]]];

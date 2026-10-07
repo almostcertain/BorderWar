@@ -2,29 +2,20 @@
 // Extends the Game singleton declared in game/core.js. Move-only split of the
 // former js/game.js; see docs/game-split-plan.md.
 Object.assign(Game, {
-  // Ported against OpenFront's actual AStarWater/SmoothingWaterTransformer
-  // source (github.com/openfrontio/OpenFrontIO), not guessed. The old
-  // seaPath was an unweighted multi-source BFS — correct, but on a
-  // 4-directional grid an unweighted search has no reason to prefer one
-  // shortest path over another, so ties resolved in queue order and routes
-  // came out as long straight runs hugging the coastline. OpenFront's real
-  // pathfinder fixes that with three independent levers, all reproduced
-  // below:
-  //  1. A per-tile cost keyed on distance-from-shore (GameMap.shoreDist) —
+  // Weighted A* over water. An unweighted search gives long straight runs
+  // hugging the coast, so there are three levers:
+  //  1. A per-tile cost keyed on distance from shore (GameMap.shoreDist):
   //     hugging the coast is expensive, a band a few tiles out is free, deep
-  //     water carries a small penalty of its own. See shoreCostPenalty.
+  //     water has a small penalty. See shoreCostPenalty.
   //  2. A weighted heuristic (SEA_HEURISTIC_WEIGHT > 1) plus a small
   //     cross-product tie-breaker that biases ties toward the straight
-  //     source-goal line. On a cardinal-only grid that turns ties into an
-  //     alternating staircase instead of one long run per axis.
+  //     source-goal line.
   //  3. A Bresenham re-trace over the result (retraceWaterLine) that pulls
-  //     each straight-enough stretch taut into a true diagonal line,
-  //     decomposed into whichever cardinal tile of each diagonal step is
-  //     actually deep enough water — the direct source of the organic
-  //     diagonal/stair-step look, not just the search's tie-breaking.
+  //     each straight-enough stretch into a diagonal line, decomposed into
+  //     cardinal steps over deep-enough water.
   //
-  // Terrain-agnostic BFS distance is still what nearestOwnedCoast /
-  // isCoastal use elsewhere — this is specifically the open-water crossing.
+  // nearestOwnedCoast / isCoastal use a terrain-agnostic BFS instead; this
+  // is specifically the open-water crossing.
 
   // OpenFront's AStarWater cost constants: 100 per tile moved, scaled up so
   // the magnitude penalty buckets (below) stay whole numbers.
@@ -76,17 +67,14 @@ Object.assign(Game, {
   },
 
   // Weighted A* over WATER tiles, seeded from every water tile adjacent to
-  // `sourceTiles`, stopping the instant it pops a water tile adjacent to
+  // `sourceTiles`, stopping when it pops a water tile adjacent to
   // `targetTile`. Returns the path as a tile sequence (water tiles, ending
-  // on targetTile itself) or null if `targetTile` isn't coastal at all or no
-  // route is found within the guard.
+  // on targetTile) or null if `targetTile` isn't coastal or no route is
+  // found within the guard.
   //
   // `maxSteps` (optional) never extends a route past that many water tiles
-  // from its start. A caller that will reject a long route anyway (the AI's
-  // detour check) passes it so a target only reachable the long way round
-  // fails fast instead of exhausting SEA_PATH_GUARD — measured on The World
-  // at ~144ms per such failure, most of the AI's naval hitching. It also
-  // shrinks the node guard (SEA_PATH_NODES_PER_STEP).
+  // from its start, and shrinks the node guard (SEA_PATH_NODES_PER_STEP), so
+  // a target only reachable the long way round fails fast.
   seaPath(sourceTiles, targetTile, maxSteps = Infinity) {
     const owner = GameMap.owner, shoreDist = GameMap.shoreDist, w = GameMap.width;
     // Battle Royale's dead zone (game/drill.js) is impassable: no route
@@ -107,13 +95,9 @@ Object.assign(Game, {
     if (starts.length === 0) return null;
 
     // Fast reject: two water tiles can only connect if they share a
-    // waterComponentId (see GameMap.computeWaterComponents, same adjacency
-    // this A* moves through below). Without this, a target on a separate
-    // sea or a landlocked lake made the search below exhaust its entire
-    // reachable side of the map — up to SEA_PATH_GUARD tiles — just to
-    // prove there's no route; measured live at 20-40ms for a single call,
-    // repeated across every boat/warship/trade-ship repath on the map, this
-    // was the game's main remaining source of hitching.
+    // waterComponentId (GameMap.computeWaterComponents). Without this,
+    // a target on a separate sea runs the search to its guard just to
+    // prove there is no route, which was the main source of hitching.
     const wc = GameMap.waterComponentId;
     const targetComponents = new Set();
     for (const t of targetWater) targetComponents.add(wc[t]);
@@ -150,14 +134,10 @@ Object.assign(Game, {
       return Math.floor((cross * (COST_SCALE - 1)) / crossNorm / crossNorm);
     };
 
-    // Search state lives in a reusable arena rather than a Map/Set/array trio
-    // built and thrown away per call. A single search explores thousands of
-    // water tiles, so those collections were the game's largest remaining
-    // source of garbage once the repaint queue was fixed — with the AI
-    // disabled a tick allocates nothing at all, and this is most of what the
-    // AI's share was. Costs are bounded well inside Int32: SEA_PATH_GUARD
-    // (200k) tiles at BASE_COST 100 plus at most a 1000 shore penalty each is
-    // ~2.2e8 against a 2.1e9 ceiling.
+    // Search state lives in a reusable arena, not per-call Map/Set/array
+    // (a major source of garbage). Costs stay well inside Int32:
+    // SEA_PATH_GUARD (200k) tiles at BASE_COST 100 plus at most a 1000 shore
+    // penalty each is ~2.2e8.
     const arena = this.seaArena(owner.length);
     const hasG = arena.hasG, gVal = arena.gVal, from = arena.from, closed = arena.closed, steps = arena.steps;
     const heapId = arena.heapId, heapPri = arena.heapPri;
@@ -241,14 +221,9 @@ Object.assign(Game, {
   },
 
   // Straightens the A* result into diagonal-looking runs without changing
-  // its tile-density — render.js's boat trail and stepBoats' pos/BOAT_SPEED
-  // both treat every path[] entry as one tile of travel, so smoothing has to
-  // fill in every intermediate tile of the straightened line rather than
-  // collapse to sparse corner waypoints. Two passes, loose then strict,
-  // mirror SmoothingWaterTransformer's own two line-of-sight passes; the
-  // deep local-A*-refinement pass it also runs near the two endpoints isn't
-  // ported — shoreCostPenalty already keeps seaPath itself off the shore
-  // near departure and arrival, which is what that pass exists to patch up.
+  // its tile density: the boat trail and stepBoats treat every path[] entry
+  // as one tile of travel, so every intermediate tile of a straightened
+  // line is filled in. Two line-of-sight passes, loose then strict.
   smoothSeaPath(path) {
     if (path.length <= 3) return path;
     const target = path[path.length - 1];
@@ -288,11 +263,9 @@ Object.assign(Game, {
     return this.retraceWaterLine(from, to, minShoreDist) !== null;
   },
 
-  // Bresenham line from `from` to `to`, decomposing each diagonal step of
-  // the ideal line into whichever of its two cardinal sub-tiles is passable
-  // (falls back to the other), since this grid only has cardinal edges —
-  // exactly SmoothingWaterTransformer's canSee/tracePath. Returns the full
-  // tile sequence (inclusive of both ends) or null the moment the line
+  // Bresenham line from `from` to `to`, decomposing each diagonal step into
+  // whichever of its two cardinal sub-tiles is passable. Returns the full
+  // tile sequence (inclusive of both ends), or null the moment the line
   // crosses land or water shallower than `minShoreDist`.
   retraceWaterLine(from, to, minShoreDist) {
     const w = GameMap.width, owner = GameMap.owner, shoreDist = GameMap.shoreDist, dead = this.drillDead;
@@ -338,46 +311,33 @@ Object.assign(Game, {
 
   // --- Closest reachable water (fog of war scouts, game/scouts.js) -----------
   //
-  // seaPath answers "is there a route to this tile" and says no for land, for
-  // a lake the ship cannot get into, and when its guard runs out. A Scout may
-  // never be told no because of terrain — the refusal itself would say what is
-  // under the fog (docs/fog-of-war.md) — so this is the search that always
-  // has an answer: sail toward a tile, whatever it is, and end on the closest
-  // water that can actually be reached.
-  //
-  // It is the same weighted A* as seaPath (same costs, heuristic weight,
-  // tie-breaker and smoothing) with two differences.
+  // A Scout may never be told no because of terrain (the refusal would say
+  // what is under the fog, docs/fog-of-war.md), so this search always has an
+  // answer: sail toward a tile, whatever it is, and end on the closest water
+  // that can be reached. Same weighted A* as seaPath, with two differences.
   //
   // IT KEEPS THE BEST TILE IT HAS SEEN, by straight grid distance to what it
-  // is steering for, and when it stops without arriving that tile is the
-  // answer. What it steers for (the "aim") is the goal itself when the ship
+  // is steering for (the 'aim'). The aim is the goal itself when the ship
   // can sail onto it; otherwise the nearest tile of the ship's own body of
-  // water within SEA_TOWARD_SNAP_DIST of the goal — the exact closest
-  // reachable water, found by a ring scan before the search starts, so a
-  // click on land or on a lake has a real destination to path to. Only when
-  // there is no such tile does the search run "blind": it steers at the goal
-  // itself, which it can never reach, and settles for the best tile within
-  // SEA_TOWARD_BLIND_NODES.
+  // water within SEA_TOWARD_SNAP_DIST of the goal, found by a ring scan
+  // before the search. With no such tile the search runs 'blind': it steers
+  // at the goal and settles for the best tile within SEA_TOWARD_BLIND_NODES.
   //
-  // IT NEVER EXCEEDS THE TICK'S SEA BUDGET. seaPath only checks the budget
-  // before it starts and then runs to its own 200k guard in one go. This runs
-  // in slices: seaTowardRun explores at most `slice` tiles per call, and
-  // inside tick() only runs at all when the whole slice (plus the fixed cost,
-  // on the first one) still fits in what SEA_PATH_NODE_BUDGET_PER_TICK has
-  // left. The search state survives between calls, so a long route is found
-  // over several ticks rather than not at all: the same 200k guard seaPath
-  // has, spent a slice at a time. Either a slice runs whole or it does not
-  // run, which keeps the route a ship gets independent of what else was
-  // searching that tick; only when it gets it moves.
+  // IT NEVER EXCEEDS THE TICK'S SEA BUDGET. seaTowardRun explores at most
+  // `slice` tiles per call, and inside tick() runs only when the whole slice
+  // (plus the fixed cost, on the first one) fits in what
+  // SEA_PATH_NODE_BUDGET_PER_TICK has left. The search state survives
+  // between calls, so a long route is found over several ticks. A slice runs
+  // whole or not at all, which keeps the route independent of what else was
+  // searching that tick; only when it arrives moves.
   //
-  // That is what the separate arena below is for: seaPath's own is wiped by
-  // every other search between one slice and the next. It holds ONE search at
-  // a time — starting a second wipes the first — so the caller owns the
-  // rule that only one is in flight (Game.scoutSearch).
+  // It has its own arena (seaPath's is wiped by every other search), holding
+  // ONE search at a time: the caller owns the rule that only one is in
+  // flight (Game.scoutSearch).
   //
   // Deterministic: integer math over the map, a binary heap with a fixed push
   // order, nothing from Game.rng. The state object and the arena are sim
-  // state like any other and are only advanced inside tick().
+  // state and are only advanced inside tick().
   SEA_TOWARD_SNAP_DIST: 256,
   SEA_TOWARD_BLIND_NODES: 40000,
 

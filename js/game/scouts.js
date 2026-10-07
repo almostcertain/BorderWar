@@ -1,45 +1,37 @@
 // js/game/scouts.js — Fog of war: the Scout (docs/fog-of-war.md).
 // Extends the Game singleton declared in game/core.js.
 //
-// An unarmed ship that exists to uncover the map. It is bought like a Warship
-// (the `build_unit` intent, launched from one of the buyer's Ports) and sent
-// like one (`move_scout`), but where a Warship can only be ordered onto
-// discovered water, a Scout can be sent anywhere, including straight into the
-// black. It reveals VISION_SIGHT_SCOUT cells around itself as it sails, and
-// lasts until an enemy Warship or a nuke sinks it.
+// An unarmed ship that uncovers the map. Bought like a Warship (the
+// `build_unit` intent, launched from one of the buyer's Ports) and sent
+// like one (`move_scout`), but it can be sent anywhere, including into the
+// black. It reveals VISION_SIGHT_SCOUT cells around itself as it sails,
+// and lasts until an enemy Warship or a nuke sinks it.
 //
 // FOG OFF: no Scout can exist. buildScout refuses, Game.scouts stays empty,
-// tick() never calls stepScouts, and nothing here draws from Game.rng in any
-// match. All Scout state is the three top-level fields below, plus the search
-// arena in game/seapath.js, which only a Scout's search ever allocates.
+// tick() never calls stepScouts, and nothing here draws from Game.rng in
+// any match.
 //
-// AN ORDER NEVER SAYS NO BECAUSE OF TERRAIN. A refusal would tell the player
-// whether a black tile is land or water. So neither buying nor redirecting a
-// Scout looks at the map under the click at all: the order only records the
-// tile, and stepScouts does the pathfinding afterwards, inside the tick, with
-// the seaToward search (game/seapath.js) — the one that always has an answer.
-// The Scout sails toward the tile and stops on the closest water it can
-// reach: on the tile itself, off the coast if it turned out to be land, on
-// the near shore if it is a lake the Scout cannot get into. The only refusals
-// are ones that say nothing about fogged terrain — see resolveScoutLaunch.
+// AN ORDER NEVER SAYS NO BECAUSE OF TERRAIN. A refusal would tell the
+// player whether a black tile is land or water. So neither buying nor
+// redirecting a Scout looks at the map under the click: the order only
+// records the tile, and stepScouts does the pathfinding afterwards, inside
+// the tick, with the seaToward search (game/seapath.js), which always has
+// an answer. The Scout stops on the closest water it can reach. The only
+// refusals say nothing about fogged terrain (see resolveScoutLaunch).
 //
-// THE SEARCH IS SPREAD OVER TICKS. It explores at most SCOUT_PATH_NODES tiles
-// a tick and never takes a tick over the sea budget, so a long route takes a
-// few ticks to find (ten at the very worst, one second), during which the
-// Scout waits where it is. One search is in flight at a time, for the whole
-// match (Game.scoutSearch); other Scouts needing a route wait their turn.
+// THE SEARCH IS SPREAD OVER TICKS. It explores at most SCOUT_PATH_NODES
+// tiles a tick and never takes a tick over the sea budget; the Scout waits
+// where it is meanwhile. One search is in flight at a time, for the whole
+// match (Game.scoutSearch); other Scouts wait their turn.
 //
-// A search that ends without arriving — its guard ran out, or the tile is
-// too far from the Scout's sea to have a known closest point — gives the best
-// tile it found. The Scout sails there and searches again, and stops for good
-// when a search arrives, runs out of sea, or finds nothing closer than where
-// the Scout already is. Every leg ends strictly closer to the destination
-// than it began, so that always terminates.
+// A search that ends without arriving gives the best tile it found. The
+// Scout sails there and searches again, and stops for good when a search
+// arrives, runs out of sea, or finds nothing closer than where the Scout
+// is. Every leg ends strictly closer to the destination, so it terminates.
 //
-// What the UI may show: `destTile` is the tile the player clicked and is safe
-// to draw. `path` is the real route, computed on the real map, and runs
-// through water the owner has not discovered yet — draw the ship, never the
-// route ahead of it.
+// What the UI may show: `destTile` is the tile the player clicked and is
+// safe to draw. `path` is the real route and runs through undiscovered
+// water: draw the ship, never the route ahead of it.
 Object.assign(Game, {
   // Two shells sink it whatever they roll (warshipShellDamage is 200-325).
   SCOUT_MAX_HEALTH: 400,
