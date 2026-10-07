@@ -1434,8 +1434,10 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 #olBar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
 #olBarFill { display: block; height: 100%; width: 0; background: #3d7dff; transition: width 1s linear; }
 
-#joinLobby.isOpen #olTips { display: flex; flex-direction: column; gap: 12px; text-align: left; }
-#olTipList { display: flex; flex-direction: column; gap: 12px; flex: 1; }
+#joinLobby.isOpen #olTips { display: flex; flex-direction: column; gap: 12px; text-align: left; cursor: pointer; user-select: none; }
+#olTipList { display: grid; flex: 1; }
+.olTipPage { grid-area: 1 / 1; display: flex; flex-direction: column; gap: 12px; visibility: hidden; }
+.olTipPage.on { visibility: visible; }
 .olTip { display: flex; gap: 10px; align-items: flex-start; }
 .olTip .ic { width: 24px; height: 24px; flex: none; margin-top: 1px; }
 .olTip b { display: block; font-size: 14px; font-weight: 600; }

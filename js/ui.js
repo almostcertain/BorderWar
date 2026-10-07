@@ -3105,7 +3105,12 @@ const UI = {
     document.getElementById('olBarFill').style.width = '0';
     document.getElementById('olBots').textContent = '';
     this._renderOpenLobbyTips(0);
-    this._olTipIntervalID = setInterval(() => this._renderOpenLobbyTips(this._olTipPage + 1), this.OPEN_LOBBY_TIP_MS);
+    this._restartOpenLobbyTipTimer();
+    // Tapping the card turns the page; the dots jump to theirs.
+    document.getElementById('olTips').onclick = (e) => {
+      if (e.target.closest('.olDot')) return;
+      this._turnOpenLobbyTips(this._olTipPage + 1);
+    };
   },
 
   _renderOpenLobbyFacts(lobby) {
@@ -3114,6 +3119,19 @@ const UI = {
       (mapLabel ? mapLabel + ' map · ' : '') + (lobby.maxPlayers ? lobby.maxPlayers + ' nations · ' : '') + 'Fog of war';
   },
 
+  // A page turned by hand gets its full time before the next automatic turn.
+  _restartOpenLobbyTipTimer() {
+    if (this._olTipIntervalID) clearInterval(this._olTipIntervalID);
+    this._olTipIntervalID = setInterval(() => this._renderOpenLobbyTips(this._olTipPage + 1), this.OPEN_LOBBY_TIP_MS);
+  },
+
+  _turnOpenLobbyTips(page) {
+    this._renderOpenLobbyTips(page);
+    this._restartOpenLobbyTipTimer();
+  },
+
+  // Every page is laid out, stacked in one grid cell with only the current
+  // one visible, so the card is as tall as its tallest page and never resizes.
   _renderOpenLobbyTips(page) {
     const PER_PAGE = 3;
     const pages = Math.ceil(this.OPEN_LOBBY_TIPS.length / PER_PAGE);
@@ -3121,7 +3139,12 @@ const UI = {
     this._olTipPage = page;
     const list = document.getElementById('olTipList');
     list.innerHTML = '';
-    for (const tip of this.OPEN_LOBBY_TIPS.slice(page * PER_PAGE, (page + 1) * PER_PAGE)) {
+    this.OPEN_LOBBY_TIPS.forEach((tip, n) => {
+      if (n % PER_PAGE === 0) {
+        const group = document.createElement('div');
+        group.className = 'olTipPage' + (n / PER_PAGE === page ? ' on' : '');
+        list.appendChild(group);
+      }
       const row = document.createElement('div');
       row.className = 'olTip';
       const img = document.createElement('img');
@@ -3138,8 +3161,8 @@ const UI = {
       body.appendChild(text);
       row.appendChild(img);
       row.appendChild(body);
-      list.appendChild(row);
-    }
+      list.lastChild.appendChild(row);
+    });
     const dots = document.getElementById('olTipDots');
     dots.innerHTML = '';
     for (let i = 0; i < pages; i++) {
@@ -3147,7 +3170,7 @@ const UI = {
       dot.type = 'button';
       dot.className = 'olDot' + (i === page ? ' on' : '');
       dot.setAttribute('aria-label', 'Tips page ' + (i + 1));
-      dot.addEventListener('click', () => this._renderOpenLobbyTips(i));
+      dot.addEventListener('click', () => this._turnOpenLobbyTips(i));
       dots.appendChild(dot);
     }
   },
