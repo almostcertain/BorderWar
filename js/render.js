@@ -332,7 +332,14 @@ const Render = {
     // tribe wedged between neighbours, that meant hovering it took the
     // gold-pocket branch below, enclosedPocketsOf came back empty, and
     // nothing got painted at all instead of falling back to the plain wash.
-    const found = id !== Game.me ? Game.enclosedRegion(UI.hoverTile, new Map(), 1) : null;
+    //
+    // A boat or scout hover has no tile (hoverTile is -1), so there is no
+    // pocket to look for. Walking from -1 threw in enclosedRegion, after the
+    // old tint was wiped from hoverPixels but before it was blitted off the
+    // canvas, and with hoverBox already dropped nothing ever cleaned it up:
+    // the leftover showed as a pale block on that nation whenever a later
+    // hover drew the chunks it sat in.
+    const found = id !== Game.me && UI.hoverTile >= 0 ? Game.enclosedRegion(UI.hoverTile, new Map(), 1) : null;
     const isMainland = found && Game.mainlandHolds(found, found.tiles.length, Game.largestLandPiece(id));
     const region = found && !isMainland && found.wallCounts.has(Game.me) && !Game.areAllied(id, Game.me) ? found : null;
     if (region) {
