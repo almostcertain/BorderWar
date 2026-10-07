@@ -3069,7 +3069,110 @@ const UI = {
     document.getElementById('joinRoster').innerHTML = '';
     document.getElementById('joinPlayerCount').textContent = '';
     this.setLobbyStatus('join', 'Connecting to server…', false);
+    this._setOpenLobby(false);
     this._hidePreLobbyChrome();
+  },
+
+  // The open game's wait screen (#joinLobby.isOpen): what the match is, when
+  // it starts, and a few tips to read meanwhile. Two pages of three, turned
+  // every OPEN_LOBBY_TIP_MS. Open games always run with fog, so nothing here
+  // mentions picking a spawn or shows the map.
+  OPEN_LOBBY_TIP_MS: 9000,
+  OPEN_LOBBY_TIPS: [
+    { icon: 'troops', title: 'Grow your nation', text: 'Tap unclaimed land next to your border. Your troops march out and claim it.' },
+    { icon: 'attack', title: 'Take tribes early', text: 'Beige land belongs to tribes. They make no alliances, so nobody comes to their defence.' },
+    { icon: 'radio', title: 'The map starts hidden', text: 'You only see what you have discovered. Scouts, warships and Radio Towers reveal more.' },
+    { icon: 'city', title: 'Build Cities', text: 'Cities raise your maximum troops.' },
+    { icon: 'port', title: 'Build a Port', text: 'Ports earn gold from trade ships and launch your navy.' },
+    { icon: 'ally', title: 'Make peace', text: 'Right-click a nation, or press and hold on a phone, and choose Peace. Allies cannot attack each other.' }
+  ],
+
+  // Play now, into the open game: switch to the wait screen straight away
+  // from the menu's /lobbies entry, rather than when the first lobby_info
+  // lands. Call after showJoinLobby, which resets it.
+  showOpenLobby(entry) {
+    this._setOpenLobby(true);
+    this._renderOpenLobbyFacts(entry);
+  },
+
+  _setOpenLobby(on) {
+    document.getElementById('joinLobby').classList.toggle('isOpen', on);
+    if (this._olTipIntervalID) { clearInterval(this._olTipIntervalID); this._olTipIntervalID = null; }
+    this._olCountdown = null;
+    if (!on) return;
+    document.getElementById('olTimerLabel').textContent = 'Connecting…';
+    document.getElementById('olTimerNum').textContent = '';
+    document.getElementById('olBarFill').style.width = '0';
+    document.getElementById('olBots').textContent = '';
+    this._renderOpenLobbyTips(0);
+    this._olTipIntervalID = setInterval(() => this._renderOpenLobbyTips(this._olTipPage + 1), this.OPEN_LOBBY_TIP_MS);
+  },
+
+  _renderOpenLobbyFacts(lobby) {
+    const mapLabel = String(lobby.mapSize || '').replace(/^./, (c) => c.toUpperCase());
+    document.getElementById('olFacts').textContent =
+      (mapLabel ? mapLabel + ' map · ' : '') + (lobby.maxPlayers ? lobby.maxPlayers + ' nations · ' : '') + 'Fog of war';
+  },
+
+  _renderOpenLobbyTips(page) {
+    const PER_PAGE = 3;
+    const pages = Math.ceil(this.OPEN_LOBBY_TIPS.length / PER_PAGE);
+    page = ((page % pages) + pages) % pages;
+    this._olTipPage = page;
+    const list = document.getElementById('olTipList');
+    list.innerHTML = '';
+    for (const tip of this.OPEN_LOBBY_TIPS.slice(page * PER_PAGE, (page + 1) * PER_PAGE)) {
+      const row = document.createElement('div');
+      row.className = 'olTip';
+      const img = document.createElement('img');
+      img.className = 'ic';
+      img.src = 'assets/icons/' + tip.icon + '.svg';
+      img.alt = '';
+      img.draggable = false;
+      const body = document.createElement('div');
+      const title = document.createElement('b');
+      title.textContent = tip.title;
+      const text = document.createElement('span');
+      text.textContent = tip.text;
+      body.appendChild(title);
+      body.appendChild(text);
+      row.appendChild(img);
+      row.appendChild(body);
+      list.appendChild(row);
+    }
+    const dots = document.getElementById('olTipDots');
+    dots.innerHTML = '';
+    for (let i = 0; i < pages; i++) {
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'olDot' + (i === page ? ' on' : '');
+      dot.setAttribute('aria-label', 'Tips page ' + (i + 1));
+      dot.addEventListener('click', () => this._renderOpenLobbyTips(i));
+      dots.appendChild(dot);
+    }
+  },
+
+  // `autoStartAt` is null until enough players are in. The bar drains from
+  // wherever the countdown stood when this client first saw it.
+  _renderOpenLobbyTimer(autoStartAt, waitingText) {
+    const label = document.getElementById('olTimerLabel');
+    const num = document.getElementById('olTimerNum');
+    const fill = document.getElementById('olBarFill');
+    if (typeof autoStartAt !== 'number') {
+      this._olCountdown = null;
+      label.textContent = waitingText;
+      num.textContent = '';
+      fill.style.width = '0';
+      return;
+    }
+    const left = Math.max(0, autoStartAt - Date.now());
+    if (!this._olCountdown || this._olCountdown.at !== autoStartAt) {
+      this._olCountdown = { at: autoStartAt, total: Math.max(left, 1) };
+    }
+    const secs = Math.round(left / 1000);
+    label.textContent = 'Starts in';
+    num.textContent = Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
+    fill.style.width = (100 * left / this._olCountdown.total) + '%';
   },
 
   // Play now, into the open game: the menu's hero card is hidden once
@@ -3111,6 +3214,7 @@ const UI = {
       this._autoLobbyCountdownIntervalID = null;
     }
     this._autoLobbyCountdown = null;
+    this._setOpenLobby(false);
     document.getElementById('hostLobby').classList.add('hidden');
     document.getElementById('hostCreateBtn').classList.remove('hidden');
     document.getElementById('joinLobby').classList.add('hidden');
@@ -3165,9 +3269,24 @@ const UI = {
       : { roster: 'joinRoster', count: 'joinPlayerCount' };
     // No human host to badge in an auto lobby (issue #12) — creatorClientId
     // here is just whichever player happened to join first, not a role.
+    const open = role === 'join' && !!(lobby && lobby.isAuto);
     this.renderLobbyRoster(document.getElementById(ids.roster), players,
-      (lobby && lobby.isAuto) ? null : creatorClientId, myClientID, fresh);
+      (lobby && lobby.isAuto) ? null : creatorClientId, myClientID, fresh, open);
     document.getElementById(ids.count).textContent = '(' + players.length + ')';
+
+    // The open game's wait screen. Also reached by typing the open game's
+    // code into the join form, which showOpenLobby never saw.
+    const humans = players.filter((p) => !p.spectator).length;
+    if (open) {
+      if (!document.getElementById('joinLobby').classList.contains('isOpen')) this._setOpenLobby(true);
+      this._renderOpenLobbyFacts(lobby);
+      const need = Math.max(0, (lobby.minPlayers || 2) - humans);
+      this._renderOpenLobbyTimer(lobby.autoStartAt,
+        need > 0 ? 'Waiting for ' + need + ' more player' + (need === 1 ? '' : 's') : 'Starting soon');
+      const bots = Math.max(0, (lobby.maxPlayers || 0) - humans);
+      document.getElementById('olBots').textContent =
+        bots > 0 ? '+ ' + bots + (bots === 1 ? ' bot fills' : ' bots fill') + ' the rest' : '';
+    }
 
     let status;
     const newcomer = players.find((p) => fresh.has(p.clientID));
@@ -3178,12 +3297,9 @@ const UI = {
     // running (lobby.autoStartAt, set by GameServer._maybeAdvanceAutoLobby)
     // so a joiner isn't left guessing when the match will begin.
     else if (lobby && lobby.isAuto) {
-      if (typeof lobby.autoStartAt === 'number') {
-        const secs = Math.max(0, Math.round((lobby.autoStartAt - Date.now()) / 1000));
-        status = 'Starting in ' + secs + 's…';
-      } else {
-        status = 'Open lobby — starts once ' + (lobby.minPlayers || 2) + ' or more players join.';
-      }
+      status = typeof lobby.autoStartAt === 'number'
+        ? 'Match starting soon.'
+        : 'Open lobby — starts once ' + (lobby.minPlayers || 2) + ' or more players join.';
     }
     else status = 'Connected to the lobby.';
     this.setLobbyStatus(role, status, true);
@@ -3222,15 +3338,24 @@ const UI = {
   _tickAutoLobbyCountdown() {
     const state = this._autoLobbyCountdown;
     if (!state) return;
-    const secs = Math.max(0, Math.round((state.autoStartAt - Date.now()) / 1000));
-    this.setLobbyStatus(state.role, 'Starting in ' + secs + 's…', true);
+    this._renderOpenLobbyTimer(state.autoStartAt, '');
   },
 
-  renderLobbyRoster(ul, players, creatorClientId, myClientID, fresh) {
+  // `swatches` (open game only): each player's nation colour. Game.init gives
+  // human N, counted in roster order without spectators, PLAYER_COLORS[N]; a
+  // free-for-all never recolours them. Someone ahead leaving shifts the rest.
+  renderLobbyRoster(ul, players, creatorClientId, myClientID, fresh, swatches) {
     ul.innerHTML = '';
+    let slot = 0;
     for (const p of players) {
       const li = document.createElement('li');
       li.textContent = p.username || ('Player ' + p.clientID);
+      if (swatches && !p.spectator) {
+        const sw = document.createElement('span');
+        sw.className = 'rosterSwatch';
+        sw.style.background = 'rgb(' + PLAYER_COLORS[slot++ % PLAYER_COLORS.length].join(',') + ')';
+        li.prepend(sw);
+      }
       if (p.clientID === creatorClientId) li.classList.add('isHost');
       if (p.clientID === myClientID) li.classList.add('isYou');
       if (fresh && fresh.has(p.clientID)) li.classList.add('justJoined');

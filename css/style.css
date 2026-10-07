@@ -1398,6 +1398,84 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
   to { background: rgba(255, 255, 255, 0.05); }
 }
 
+/* --- Open game wait screen (#joinLobby.isOpen): facts and countdown across
+   the top, tips on the left, roster on the right. One column on phones. --- */
+
+.olSide { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.olOnly { display: none; }
+#joinLobby.isOpen .olOnly { display: block; }
+#joinLobby.isOpen #joinWaiting,
+.menuPanel:has(#joinLobby.isOpen) #accountStrip { display: none; }
+
+#joinMode:has(#joinLobby.isOpen) { padding: 0; border: 0; background: transparent; }
+#joinLobby.isOpen { gap: 12px; }
+#joinLobby.isOpen .olSide,
+.olCard {
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 16, 30, 0.55);
+}
+#joinLobby.isOpen .lobbyRoster { max-height: 220px; }
+
+#joinLobby.isOpen #olHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  text-align: left;
+}
+#olFacts { font-size: 13px; opacity: 0.7; }
+#olTimer { font-size: 13px; white-space: nowrap; }
+#olTimerLabel { opacity: 0.7; }
+#olTimerNum { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; margin-left: 4px; }
+#olTimerNum:empty { display: none; }
+
+#olBar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+#olBarFill { display: block; height: 100%; width: 0; background: #3d7dff; transition: width 1s linear; }
+
+#joinLobby.isOpen #olTips { display: flex; flex-direction: column; gap: 12px; text-align: left; }
+#olTipList { display: flex; flex-direction: column; gap: 12px; flex: 1; }
+.olTip { display: flex; gap: 10px; align-items: flex-start; }
+.olTip .ic { width: 24px; height: 24px; flex: none; margin-top: 1px; }
+.olTip b { display: block; font-size: 14px; font-weight: 600; }
+.olTip span { font-size: 13px; opacity: 0.7; }
+#olTipDots { display: flex; gap: 6px; }
+.panel button.olDot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+}
+.panel button.olDot.on { background: #fff; }
+
+.rosterSwatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  border-radius: 3px;
+  vertical-align: -1px;
+}
+#olBots {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  font-size: 13px;
+  opacity: 0.7;
+  text-align: left;
+}
+#joinLobby.isOpen #olBots:empty { display: none; }
+
+@media (min-width: 760px) {
+  .menuPanel:has(#joinLobby.isOpen) { max-width: 720px; }
+  #joinLobby.isOpen .olGrid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+}
+@media (max-width: 759px) {
+  #joinLobby.isOpen .olGrid { display: flex; flex-direction: column-reverse; gap: 12px; }
+}
+
 .panel button.lobbyLeave {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.2);
