@@ -62,6 +62,16 @@ Use it to jump to the right file; grep for the method name rather than reading b
 - `server/`: `index.js` HTTP and WS · `gamemanager.js` · `gameserver.js` lobby and turn loop · `client.js` · `log.js`.
 - `tools/`: `sim-harness.js` goldens · `sim-profile.js` headless tick profiler · `cpu-top.js` self time from a `.cpuprofile`.
 
+## Comments
+
+Comments are read on every task, so they cost context. Keep them short.
+
+- A comment states a constraint or a non-obvious "why", in 1–3 lines. Don't restate what the code says.
+- No history ("previously", "re-ported on", "replaces the old X", bug-report backstory). That goes in the commit message.
+- No task narration or future plans ("MP-1.4 will wire this", "nothing calls this yet").
+- Rationale longer than a few lines goes in `docs/`, with a one-line pointer from the code.
+- When editing a function, trim comments on it that break these rules. Not in files the golden harness hashes (the sim files, `js/net/*`, `js/fx.js`, `js/replay.js`): leave those for a golden re-record.
+
 ## Communication
 
 The user is producer-level on this project. Keep replies short: what changed, why it matters, and anything risky or needing their decision. Put technical depth in docs (`docs/`), not in chat, unless they ask a technical question directly. Keep the rigor in the work itself (verification, tests), and compress only the report.

@@ -1,16 +1,7 @@
-// GameManager — gameID -> GameServer, per docs/multiplayer-architecture.md §6:
-// "Single Node process. GameManager holds gameID -> GameServer. OpenFront's
-// master/worker sharding (Master.ts, Worker.ts) is a scale-out concern; note
-// the seam (GameManager is the shard boundary) and skip it."
-//
-// MP-2.2: replaces MP-2.1's PlaceholderGame (one hardcoded 'default' lobby,
-// no message parsing) with real join-based routing. A fresh connection's
-// first message must be a `join` (or, best-effort, a `rejoin` — see the long
-// comment on GameServer.rejoinClient for the identity gap that leaves open)
-// — parsed and validated with Protocol.validateMessage *before* anything else
-// touches it. Anything else as a first message (garbage JSON, wrong type,
-// fails validation) closes the connection cleanly with a Protocol.msg.error
-// and never crashes the process.
+// GameManager: gameID -> GameServer (docs/multiplayer-architecture.md §6).
+// Single Node process; GameManager is the seam where sharding would go.
+// A connection's first message must be a valid `join` or `rejoin`; anything
+// else closes it cleanly with a Protocol.msg.error and never crashes the process.
 'use strict';
 
 const Protocol = require('../js/net/protocol.js');
@@ -18,25 +9,16 @@ const Client = require('./client');
 const GameServer = require('./gameserver');
 const log = require('./log');
 
-// How often the periodic sweep below runs. This is the "periodically" half
-// of the reap requirement (the other half — reap on disconnect — happens
-// immediately, inline, in _wire's close handler). 5s is arbitrary and cheap:
-// this loop is O(games), and there are never many concurrent games on a
-// self-hosted box (§6.1).
+// How often the periodic reap runs (reap also runs inline on disconnect).
 const REAP_INTERVAL_MS = 5000;
 
 // How often the heartbeat line prints, and only while a match is ACTIVE.
 const HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
-// Issue #12: rotating open lobbies. One rotation entry per map size GameServer
-// cycles through, in order, wrapping — `maxNations` is the total Nation-slot
-// count for that entry (bots + humans never exceeds it; see GameServer._
-// startAutoLobby). small is excluded: too cramped for an open game, especially
-// on the multi-landmass landforms a random procedural map can roll. The
-// counts are the singleplayer defaults for each size (js/main.js's
-// BOTS_FOR_SIZE/TRIBES_FOR_SIZE — World's 82 Nations / 400 Tribes on
-// 2000x1000, scaled by tile count), so an open game is as crowded as a
-// singleplayer one on the same map.
+// Rotating open lobbies: one entry per map size, cycled in order.
+// `maxNations` is total Nation slots (bots + humans). small is excluded as
+// too cramped. Counts match the singleplayer defaults for each size
+// (js/main.js's BOTS_FOR_SIZE/TRIBES_FOR_SIZE).
 const AUTO_LOBBY_ROTATION = [
   { mapSize: 'medium', maxNations: 46, tribes: 225 },
   { mapSize: 'large', maxNations: 82, tribes: 400 }
@@ -44,16 +26,9 @@ const AUTO_LOBBY_ROTATION = [
 const AUTO_LOBBY_DIFFICULTY = 'medium';
 
 class GameManager {
-  // A ceiling on concurrently-existing games (LOBBY/ACTIVE combined —
-  // FINISHED ones are reaped promptly and don't count). §6.1's own framing
-  // ("never many concurrent games on a self-hosted box") was true by
-  // assumption while nothing but the developer could reach this server;
-  // once it's reachable from the open internet, a flood of `join`s each
-  // naming a fresh gameID would otherwise grow this Map without bound —
-  // each entry is cheap, but not free, and this server has no other backstop
-  // for that. 100 is generous headroom over anything "low traffic" implies,
-  // while still being a real ceiling rather than no ceiling at all. Joining
-  // an *existing* lobby is never affected — see the check's own comment.
+  // Ceiling on concurrent LOBBY/ACTIVE games, so a flood of `join`s naming
+  // fresh gameIDs can't grow the Map without bound. Joining an existing
+  // lobby is never blocked.
   static MAX_CONCURRENT_GAMES = 100;
 
   // `opts.buildID`: when set, a join/rejoin must carry this same build id or it
@@ -71,19 +46,15 @@ class GameManager {
     this._reapIntervalID = setInterval(() => this.reap(), REAP_INTERVAL_MS);
     if (typeof this._reapIntervalID.unref === 'function') this._reapIntervalID.unref();
 
-    // Issue #12: which AUTO_LOBBY_ROTATION entry the next spawned auto lobby
-    // uses. Advances once per spawn (see _spawnAutoLobby), wrapping via `%`
-    // in that method rather than here, so this can just keep counting up
-    // without its own overflow handling.
+    // Which AUTO_LOBBY_ROTATION entry the next auto lobby uses; wrapped with
+    // `%` in _spawnAutoLobby.
     this._autoLobbyRotationIndex = 0;
     this._spawnAutoLobby();
   }
 
-  // Issue #12: create the one open, host-less public lobby this server always
-  // keeps available, and remember its config for when it actually starts
-  // (_onAutoLobbyStarted below). A fresh gameID every time — reusing one
-  // would let a stale client's cached join code silently land in a
-  // different lobby than the one it saw.
+  // Create the one open, host-less public lobby this server always keeps
+  // available. Fresh gameID every time, so a stale cached join code can't
+  // land in a different lobby.
   _spawnAutoLobby() {
     if (this.draining) return;
     const entry = AUTO_LOBBY_ROTATION[this._autoLobbyRotationIndex % AUTO_LOBBY_ROTATION.length];
@@ -102,13 +73,8 @@ class GameManager {
       + entry.maxNations + ' players)');
   }
 
-  // The auto lobby's own start() just fired (a human filled every Nation
-  // slot, or the fill/countdown timer elapsed) — spawn its replacement so
-  // there is always exactly one open lobby waiting, per issue #9's "After
-  // the game starts, another open lobby is created". The just-started game
-  // stays in `this.games` under its old gameID (ACTIVE, then reaped once
-  // FINISHED, same as any other match) — only a brand new entry is added
-  // here, nothing about `oldGameID` is touched.
+  // The auto lobby just started: spawn its replacement so one open lobby is
+  // always waiting. The started game stays in `this.games` untouched.
   _onAutoLobbyStarted(oldGameID) {
     log.info('game ' + oldGameID, 'open lobby started - rotating in a replacement');
     this._spawnAutoLobby();
@@ -168,24 +134,16 @@ class GameManager {
     return this.games.get(gameID) || null;
   }
 
-  // Issue #9: backs GET /lobbies (server/index.js). Only LOBBY-stage games
-  // flagged public — a game that's started or finished has nothing left to
-  // join, and joinClient already rejects joins to either (see its own
-  // comment). Host display name is whichever client became creatorClientId;
-  // falls back to 'Host' the same way js/main.js's hostLobby() does if a
-  // username somehow came through empty.
+  // Backs GET /lobbies: only public LOBBY-stage games. Host name is the
+  // creator's username, falling back to 'Host'.
   listPublicLobbies() {
     const out = [];
     for (const game of this.games.values()) {
       if (!game.isPublic || game.stage !== Protocol.GAME_PHASE.LOBBY) continue;
 
-      // Issue #12: an auto lobby has no human host (game.creatorClientId is
-      // whichever player happened to join first, purely incidental — see
-      // GameServer.joinClient's isAutoLobby guard), so the Join screen needs
-      // different fields to render it: map/slot info and a live countdown
-      // instead of a host name. entry.host is left undefined rather than
-      // 'Host' so js/ui.js's renderPublicLobbies can tell the two kinds
-      // apart without a separate boolean lookup.
+      // An auto lobby has no human host, so the Join screen gets map/slot info
+      // and a countdown instead. entry.host stays undefined so js/ui.js's
+      // renderPublicLobbies can tell the two kinds apart.
       const entry = { gameID: game.gameID, playerCount: game.clients.size, isAuto: !!game.isAutoLobby };
       if (game.isAutoLobby) {
         entry.mapSize = game.autoConfig.mapSize;
@@ -216,11 +174,8 @@ class GameManager {
         this.games.delete(gameID);
         log.info('game ' + gameID, 'reaped (finished)');
       } else if (game.stage === Protocol.GAME_PHASE.LOBBY && game.clients.size === 0 && !game.isAutoLobby) {
-        // Issue #12: an auto lobby is meant to sit open and empty, waiting
-        // for players, exactly like it does the instant _spawnAutoLobby
-        // creates it — this exempts it from the same "nobody ever joined"
-        // rule that reaps a manually-hosted lobby the moment its lobby
-        // empties out again.
+        // An auto lobby is meant to sit open and empty, so it is exempt from
+        // the empty-lobby reap.
         this.games.delete(gameID);
         log.info('game ' + gameID, 'reaped (empty lobby)');
       }
@@ -282,11 +237,7 @@ class GameManager {
         return;
       }
       if (!this.games.has(msg.gameID) && this.games.size >= GameManager.MAX_CONCURRENT_GAMES) {
-        // Gates only the creation of a brand-new lobby — joining one that
-        // already exists is never blocked by this, no matter how many other
-        // games are running, since it adds one client to an existing
-        // Map entry rather than a new one. See MAX_CONCURRENT_GAMES' own
-        // comment for why this exists at all now.
+        // Gates only the creation of a new lobby; see MAX_CONCURRENT_GAMES.
         log.warn('server', 'rejected join to "' + msg.gameID + '": at the '
           + GameManager.MAX_CONCURRENT_GAMES + '-game limit');
         Client.closeWithError(ws, 'server-busy', 'Too many games in progress. Try again shortly.');
@@ -323,18 +274,10 @@ class GameManager {
     const client = game.clients.get(clientID);
     if (!client) return; // disconnected between the event queue and now
 
-    // MP-3.4 liveness: any inbound message at all proves the connection is
-    // alive, not just the dedicated 5s `ping` below — a client mid-`intent`
-    // is obviously connected even if its next scheduled ping hasn't fired
-    // yet, and trusting every message type is more robust than trusting only
-    // the heartbeat. GameServer's timeout sweep reads `lastPing` against
-    // Protocol's 30s window; `isAlive` is reset here too so a client that had
-    // already been marked timed-out (and had a synthesized disconnect intent
-    // injected for it — see GameServer._sweepLiveness) doesn't keep looking
-    // disconnected forever if traffic from it resumes. That does not undo the
-    // disconnect already applied to the sim (MP-4.1's job, not this one's) —
-    // it only stops the roster bookkeeping from re-flagging a client the
-    // sweep has already finished processing.
+    // Liveness: any inbound message proves the connection is alive, not
+    // just `ping`. GameServer's sweep reads `lastPing`. Resetting `isAlive`
+    // stops the roster re-flagging a client whose traffic resumes; it does
+    // not undo a disconnect already applied to the sim.
     client.isAlive = true;
     client.lastPing = Date.now();
 
@@ -343,39 +286,21 @@ class GameManager {
         game.handleIntent(msg.intent, client);
         break;
       case 'start_game':
-        // MP-2.3: the one new per-connection message this task adds. All the
-        // actual logic (creator check, LOBBY-stage check, error reply) lives
-        // in GameServer.handleStartGame (server/gameserver.js) — this is
-        // pure dispatch, exactly like the 'intent' case above, and is the
-        // minimum possible touch to this file to make that message reachable
-        // at all (this switch is the only place a per-connection message
-        // ever reaches a GameServer instance).
+        // Pure dispatch; the creator and stage checks live in
+        // GameServer.handleStartGame.
         game.handleStartGame(msg.config, client);
         break;
       case 'ping':
-        // MP-3.4: the liveness update above is the whole handler — a `ping`
-        // carries no other payload and needs no reply beyond the server's
-        // own outbound `ping` (Transport handles that independently). Split
-        // out from hash/winner below so this case's comment doesn't have to
-        // keep disclaiming two unrelated future tasks.
-        //
-        // The echo is only so the client can time the round trip for its
-        // optional ping readout; the client drops it before the sim sees it.
+        // The liveness update above is the whole handler. The echo only lets
+        // the client time the round trip for its ping readout; the client drops
+        // it before the sim sees it.
         try { client.ws.send(JSON.stringify(Protocol.msg.ping())); } catch (e) { /* socket closing */ }
         break;
       case 'hash':
-        // MP-4.2: record this client's reported hash for the turn it names;
-        // GameServer.endTurn drives the actual tally every HASH_INTERVAL
-        // turns (GameServer._tallyHashes) once enough round trips have
-        // passed for reports to have arrived.
+        // Record the hash; GameServer.endTurn tallies every HASH_INTERVAL turns.
         game.recordHash(msg.turnNumber, msg.hash, client);
         break;
       case 'winner':
-        // MP-3.5: split out from the former shared hash/winner no-op case,
-        // the same way 'ping' was split out in MP-3.4 (see that case's own
-        // comment) — this one now has real behavior (GameServer.recordWinnerVote)
-        // and no longer needs to share a case whose comment used to disclaim
-        // two unrelated future tasks.
         game.recordWinnerVote(msg.winner, client);
         break;
       case 'join':

@@ -14,12 +14,8 @@ const Render = {
 
   labels: [],
   labelsAt: 0,
-  // ms between the START of one label sweep and the next. A sweep no longer
-  // happens in a single frame (see computeLabelSlice) — it walks one nation
-  // per frame — so this is a cadence, not the cost of a spike. Measured on an
-  // Extra Large map mid-match: the old single-pass version flood-filled all
-  // ~830k owned tiles in one 32ms frame, 3.3x a second, which is most of the
-  // client-side hitching this interval was originally set to ration.
+  // ms between the START of one label sweep and the next. A sweep walks one
+  // nation per frame (see computeLabelSlice), so this is a cadence.
   LABEL_INTERVAL: 1000,
 
   // Sweep state for the sliced rebuild: the ids still to walk this sweep, the
@@ -30,11 +26,8 @@ const Render = {
   labelsPending: [],
   labelSweeping: false,
 
-  // Same reasoning as LABEL_INTERVAL, applied to the hover-time annexation
-  // check: a mouse resting deep inside a huge, ordinary (non-enclosed)
-  // nation still has to walk that nation's whole interior before the flood
-  // fill finds the gap proving it's *not* enclosed — sweeping the cursor
-  // across one at full pointermove rate would repeat that walk every tile.
+  // Throttle for the hover-time annexation check: proving a huge nation is
+  // NOT enclosed walks its whole interior, too costly per pointermove.
   hoverAnnexAt: 0,
   ANNEX_HOVER_INTERVAL: 150,
 
@@ -49,13 +42,9 @@ const Render = {
   },
 
   // --- Map icons ---------------------------------------------------------------
-  // Bespoke SVG icons (assets/icons/, previewed by assets/icons/preview.html)
-  // in place of emoji on the map. Emoji looked different on every platform,
-  // and in Firefox on Windows each one is layered gradient art rasterised on
-  // the CPU every time it's drawn: a 2026-09-24 profile had the emoji in the
-  // name labels at 70% of main-thread time (~19 fps). Each icon is rasterised
-  // once per whole-pixel size into its own small canvas and stamped with
-  // drawImage from then on, which every browser does cheaply.
+  // Bespoke SVG icons (assets/icons/) instead of emoji, which differ per
+  // platform and are slow to draw in Firefox on Windows. Each icon is
+  // rasterised once per whole-pixel size and stamped with drawImage.
   ICON_NAMES: ['ally', 'teammate', 'target', 'traitor', 'embargo', 'expiring', 'drill'],
   iconImages: null,
   iconCache: new Map(),
@@ -85,11 +74,8 @@ const Render = {
     return c;
   },
 
-  // Low graphics: draw at one canvas pixel per CSS pixel even on a Retina /
-  // HiDPI screen. That is a quarter of the pixels to fill, blend and upload
-  // every frame, which is what a weak integrated GPU (e.g. a 2017 MacBook's
-  // Iris 640) runs out of first. Everything on the map is sized off this.dpr,
-  // so it all scales down together; text is just a little softer.
+  // Low graphics: one canvas pixel per CSS pixel even on HiDPI, a quarter
+  // of the pixels for a weak integrated GPU. Everything is sized off this.dpr.
   lowRes: false,
   setLowRes(on) {
     this.lowRes = !!on;
@@ -149,12 +135,8 @@ const Render = {
         Math.min(255, r * 1.15 + 40), Math.min(255, g * 1.15 + 40), Math.min(255, b * 1.15 + 40));
     }
 
-    // Hover highlight: a second per-pixel image the same size as tileCanvas,
-    // transparent everywhere except the hovered nation's tiles, blitted in
-    // lockstep with it. One pixel per tile like tileCanvas itself, so it
-    // scales, pans and stays crisp identically — and it means highlighting a
-    // nation is a fill of its own tile set, not thousands of individual
-    // fillRect calls every frame.
+    // Hover highlight: a second image the size of tileCanvas, transparent
+    // except the hovered nation's tiles, blitted in lockstep with it.
     this.hoverCanvas = document.createElement('canvas');
     this.hoverCanvas.width = w;
     this.hoverCanvas.height = h;
@@ -171,26 +153,18 @@ const Render = {
   },
 
   // --- Chunked bitmap layers ---------------------------------------------------
-  // tileCanvas and hoverCanvas are map-sized (8MB each on the large map) and
-  // edited with putImageData, which leaves them as plain CPU canvases. Firefox
-  // hands such a canvas to its GPU process by copying the whole thing on every
-  // drawImage, changed or not: a 2026-09-28 profile on the large map had those
-  // copies (plus the matching texture allocations in the GPU process) as the
-  // main reason the game ran at ~30fps with the main thread 60% idle.
+  // tileCanvas and hoverCanvas are map-sized CPU canvases, and Firefox
+  // copies such a canvas to its GPU process on every drawImage. So each
+  // layer is stamped from LAYER_CHUNK-sized ImageBitmaps (uploaded once,
+  // reused); only chunks whose pixels changed get a new one. A chunk
+  // waiting on its bitmap shows the old one for a frame.
   //
-  // So each layer is stamped from LAYER_CHUNK-sized ImageBitmaps instead. An
-  // ImageBitmap is immutable, so the browser uploads it once and reuses the
-  // texture; only chunks whose pixels changed get a new one. A chunk waiting on
-  // its new bitmap keeps showing the old one for a frame (or the canvas region
-  // itself before it has any), which the paced reveal already hides.
-  // An opaque layer's bitmaps reach one tile into their right and bottom
-  // neighbours, so fractional zoom never opens a hairline seam between chunks.
-  // A translucent layer (the hover tint) can't overlap: the shared row and
-  // column would be blended twice and show as stripes on the chunk grid.
+  // An opaque layer's bitmaps overlap their right and bottom neighbours by
+  // one tile so fractional zoom opens no seam. A translucent layer (the
+  // hover tint) must not overlap: the shared row would blend twice.
   //
-  // Changed tiles are tracked per chunk, not as one bounding box: with fronts
-  // all over a large map a single box covered the whole map, so every chunk
-  // was re-blitted and re-uploaded nearly every frame (2026-09-28 profile).
+  // Changed tiles are tracked per chunk, not as one bounding box: fronts
+  // all over a large map make one box cover everything.
   LAYER_CHUNK: 128,
 
   makeLayer(canvas, overlap) {
@@ -291,10 +265,8 @@ const Render = {
     }
   },
 
-  // Rebuilds the hover overlay for whichever nation UI.hoverId names. Only
-  // called when that changes or the map's ownership does (draw() passes
-  // territoryChanged through) — not every frame, so resting the mouse over a
-  // huge nation costs one Set walk on the change, not one every 16ms.
+  // Rebuilds the hover overlay for the nation UI.hoverId names. Called
+  // only when that or the map's ownership changes, not every frame.
   buildHoverOverlay(id) {
     const px = this.hoverPixels;
     const prev = this.hoverBox;
@@ -306,39 +278,18 @@ const Render = {
     const p = Game.players[id];
     if (!p) { this.flushHoverOverlay(prev); return; }
 
-    // If the tile actually under the cursor sits in a patch of this nation's
-    // land that's fully walled in by ours, tint gold instead of the plain
-    // whole-nation wash — a visible "tap to annex free" cue ahead of the
-    // click, and distinct from hovering their untouched mainland (same
-    // nation, same id, not enclosed) which still gets the ordinary tint
-    // below. Every walled-in patch of theirs is tinted, not just the hovered
-    // one, because that is what the tap now takes (see UI.onTap) — after a
-    // nuke that lights up the whole scatter of survivors at once. The full
-    // sweep only runs once the cheap single walk has confirmed the cursor is
-    // actually on a pocket, so ordinary hovering never pays for it.
-    // enclosedRegion no longer takes a single "wall owner" — a pocket's wall
-    // can now be a mix of players (see game/annex.js's 2026-09-09 fix) — so this
-    // single-shot check supplies its own scratch seen/run and additionally
-    // confirms Game.me is actually one of the pocket's wall contributors
-    // (wallCounts.has), matching what a tap here would actually be able to
-    // take (enclosedPocketsOf/UI.onTap accept any touching wall, not just a
-    // dominant one).
+    // If the tile under the cursor is in a patch of this nation's land
+    // walled in by ours, tint every such patch gold ('tap to annex free',
+    // matching what UI.onTap takes) instead of the plain whole-nation wash.
+    // The full sweep runs only after this one cheap walk confirms a pocket.
     //
-    // It also has to agree with enclosedPocketsOf on the mainland-vs-fragment
-    // rule (Game.mainlandHolds, #39): a nation's largest piece only falls to
-    // one nation ringing it alone, and never to a friend.
-    // Skipping that check here used to make this walk see a mainland as
-    // annexable while enclosedPocketsOf (correctly) refused it — for a
-    // tribe wedged between neighbours, that meant hovering it took the
-    // gold-pocket branch below, enclosedPocketsOf came back empty, and
-    // nothing got painted at all instead of falling back to the plain wash.
+    // Must agree with enclosedPocketsOf: Game.me has to be one of the
+    // pocket's wall contributors (wallCounts.has), and the mainland rule
+    // (Game.mainlandHolds) applies. Otherwise this takes the gold branch,
+    // enclosedPocketsOf returns nothing, and no tint is painted at all.
     //
-    // A boat or scout hover has no tile (hoverTile is -1), so there is no
-    // pocket to look for. Walking from -1 threw in enclosedRegion, after the
-    // old tint was wiped from hoverPixels but before it was blitted off the
-    // canvas, and with hoverBox already dropped nothing ever cleaned it up:
-    // the leftover showed as a pale block on that nation whenever a later
-    // hover drew the chunks it sat in.
+    // A boat or scout hover has no tile (hoverTile is -1); enclosedRegion
+    // throws on -1, so skip the check.
     const found = id !== Game.me && UI.hoverTile >= 0 ? Game.enclosedRegion(UI.hoverTile, new Map(), 1) : null;
     const isMainland = found && Game.mainlandHolds(found, found.tiles.length, Game.largestLandPiece(id));
     const region = found && !isMainland && found.wallCounts.has(Game.me) && !Game.areAllied(id, Game.me) ? found : null;
@@ -393,16 +344,10 @@ const Render = {
     }
     const now = performance.now();
     const tileMoved = UI.hoverTile !== this.hoverBuiltForTile;
-    // Switching to a different nation rebuilds immediately — that one is a
-    // direct answer to the cursor and has to feel instant. A territory change
-    // or a same-nation tile move goes through the throttle instead.
-    //
-    // territoryChanged used to rebuild immediately too, which sounds cheap
-    // and isn't: it is true on any frame ANY tile anywhere changed hands, so
-    // during a push (or just bots fighting somewhere off screen) it fired on
-    // essentially every frame, and each rebuild repaints the hovered nation's
-    // whole tile set — 4ms a frame on an Extra Large map, sustained, for a
-    // tint that nobody can see updating at 60Hz.
+    // A different nation rebuilds immediately: it answers the cursor. A
+    // territory change or same-nation tile move is throttled, because
+    // territoryChanged is true nearly every frame during any fighting and
+    // each rebuild repaints the hovered nation's whole tile set.
     if (id !== this.hoverBuiltFor ||
         ((territoryChanged || tileMoved) && now - this.hoverAnnexAt > this.ANNEX_HOVER_INTERVAL)) {
       this.buildHoverOverlay(id);
@@ -423,10 +368,9 @@ const Render = {
       window.innerHeight / GameMap.height) * 0.92;
   },
 
-  // One tile's pixel: its terrain tone if unowned, otherwise its owner's
-  // fill color, brightened to a border tone if any neighbor has a different
-  // owner. Shared by the full rebuild and the incremental one below so the
-  // two can never drift apart on what a tile is supposed to look like.
+  // One tile's pixel: terrain tone if unowned, else the owner's fill,
+  // brightened to a border tone if a neighbour's owner differs. Shared by
+  // the full and incremental rebuilds so they can't drift apart.
   paintTile(i, x, y, w, h, owner, px) {
     const o = owner[i];
     let color;
@@ -448,11 +392,8 @@ const Render = {
         (y < h - 1 && owner[i + w] !== o);
       color = edge ? this.borderColor[o] : this.fillColor[o][GameMap.terrain[i]];
     }
-    // Irradiated land (see Game.fallout/detonateNuke) reads as a sickly
-    // warning wash over whatever it would otherwise look like — almost
-    // always bare unclaimed terrain (GameImpl's own setFallout throws on an
-    // owned tile), so this only fires for the o<0 branch above in practice,
-    // but blending rather than overriding keeps it correct either way.
+    // Irradiated land (Game.fallout) gets a warning wash. Blended, not
+    // overridden, so it stays correct on the rare owned tile.
     if (Game.fallout && Game.fallout.size && Game.fallout.has(i)) color = this.tintFallout(color);
     // The Drill's dead zone (Game.drillDead, permanent): dead land reads as a
     // dark irradiated violet, distinct from fallout's yellow-green. The sweep
@@ -474,12 +415,11 @@ const Render = {
     );
   },
 
-  // --- Alternate view (hold Space), after OpenFront -------------------------
-  // Strips the nation colours off the map: owned land is drawn as bare
-  // terrain under a faint wash, and every border is recoloured by its
-  // relationship to you — self green, ally/teammate yellow, embargo red,
-  // everyone else grey. OpenFront's render-settings: fillAlpha 0.15, the same
-  // four colours. Names, badges and fronts are hidden while it is up (draw()).
+  // --- Alternate view (hold Space) -------------------------------------------
+  // Strips the nation colours: owned land is bare terrain under a faint
+  // wash, and borders are recoloured by relationship to you (self green,
+  // ally/teammate yellow, embargo red, others grey). Names, badges and
+  // fronts are hidden while it is up (draw()).
   altView: false,
   ALT_COLORS: [[0, 255, 0], [255, 255, 0], [128, 128, 128], [255, 0, 0]],
   ALT_FILL_ALPHA: 0.15,
@@ -538,10 +478,8 @@ const Render = {
     if (this.jCount) this.jCount.fill(0);
   },
 
-  // Fixed-ratio blend toward FALLOUT_TINT, done in unpacked RGB space and
-  // repacked — see the `packed` helper this mirrors. mix=0.45 keeps the
-  // underlying terrain/border tone (and therefore ownership, still legible
-  // at a glance) rather than replacing it outright.
+  // Fixed-ratio blend toward FALLOUT_TINT in RGB. mix=0.45 keeps the
+  // underlying terrain/border tone, so ownership stays legible.
   FALLOUT_TINT: [190, 210, 70],
   tintFallout(color) {
     const r = color & 0xff, g = (color >> 8) & 0xff, b = (color >> 16) & 0xff, a = (color >>> 24) & 0xff;
@@ -554,13 +492,10 @@ const Render = {
     );
   },
 
-  // The owner of each tile as currently drawn. Tiles are painted from this,
-  // never from GameMap.owner directly: while a paced reveal (below) is part
-  // way through a turn the canvas shows a mix of old and new owners, and a
-  // border tone worked out from the sim's owners would leave the visible edge
-  // without its border wherever the sim has already moved past it. Every
-  // change to a tile here repaints its four neighbours too, so the canvas is
-  // always exactly paintTile() of this array and the border never breaks.
+  // The owner of each tile as currently drawn. Tiles are painted from
+  // this, never from GameMap.owner: mid-reveal the canvas mixes old and new
+  // owners, and borders must follow what is visible. Every change repaints
+  // the four neighbours, so the canvas is always paintTile() of this array.
   shownOwner: null,
 
   buildTiles() {
@@ -578,14 +513,9 @@ const Render = {
     this.markLayerDirty(this.tileLayer, 0, 0, w - 1, h - 1);
   },
 
-  // Recolors just the tiles Game.setOwner touched since the last rebuild
-  // (already expanded to their neighbors there) instead of the whole map —
-  // the same per-pixel result as buildTiles(), just proportional to how much
-  // territory actually changed instead of total map size. Also narrows the
-  // putImageData blit to the changed tiles' bounding box, which helps unless
-  // damage is scattered across the map (e.g. two unrelated fronts active at
-  // once), in which case it falls back toward a full-width/height blit —
-  // never worse than buildTiles()'s own unconditional full blit.
+  // Recolours just the tiles Game.setOwner touched since the last rebuild
+  // (already expanded to their neighbours). Same per-pixel result as
+  // buildTiles(), proportional to how much territory changed.
   buildTilesIncremental(dirtyTiles) {
     const w = GameMap.width, h = GameMap.height;
     const owner = GameMap.owner, shown = this.shownOwner, px = this.pixels;
@@ -610,18 +540,14 @@ const Render = {
   },
 
   // --- Paced territory reveal ------------------------------------------------
-  // The sim only advances on a turn (Protocol.TURN_INTERVAL_MS, 100ms), and a
-  // whole turn's conquests land in one tick, so painting them the frame they
-  // arrive makes a front visibly step ten times a second regardless of how
-  // fast the display is. This spreads each turn's changed tiles across the
-  // next REVEAL_MS of frames instead, in conquest order (the dirty list is
-  // insertion-ordered), so the edge sweeps forward rather than jumping.
+  // A whole turn's conquests land in one tick (100ms), so painting them on
+  // arrival makes fronts step at 10Hz. This spreads each turn's changed
+  // tiles across the next REVEAL_MS of frames instead.
   //
   // Pure presentation: the sim, the wire and the state hash never see it.
-  // The canvas trails GameMap.owner by at most REVEAL_MS, and every tile
-  // takes the *current* owner when its slot comes up (showTile), so it always
-  // converges to exactly what buildTiles() would draw. Set smoothTerritory
-  // false to fall back to the old paint-on-arrival behaviour.
+  // Each tile takes the *current* owner when its slot comes up (showTile),
+  // so the canvas always converges to what buildTiles() would draw. Set
+  // smoothTerritory false for paint-on-arrival.
   smoothTerritory: true,
   REVEAL_MS: 90,          // a little under one turn, so a batch is done before the next lands
   qTile: new Int32Array(1 << 16),
@@ -629,13 +555,11 @@ const Render = {
   qHead: 0,
   qTail: 0,
 
-  // 'jitter' scatters each turn's tiles instead of sweeping them in conquest
-  // order: a tile is hashed to one of JITTER_BUCKETS buckets and one bucket is
-  // painted every JITTER_MS / JITTER_BUCKETS. Batches are not flushed when the
-  // next turn lands, so with JITTER_MS above the turn length consecutive turns
-  // overlap and the front dissolves forward with no 10Hz pulse. The canvas
-  // trails GameMap.owner by at most JITTER_MS however fast turns arrive.
-  // 'ordered' is the conquest-order sweep described above.
+  // 'jitter' scatters each turn's tiles: a tile is hashed to one of
+  // JITTER_BUCKETS buckets and one bucket is painted every JITTER_MS /
+  // JITTER_BUCKETS. Batches are not flushed when the next turn lands, so
+  // turns overlap and the front has no 10Hz pulse. The canvas trails
+  // GameMap.owner by at most JITTER_MS. 'ordered' sweeps in conquest order.
   revealMode: 'jitter',
   JITTER_MS: 150,
   JITTER_BUCKETS: 9,
@@ -665,11 +589,9 @@ const Render = {
     }
   },
 
-  // Moves this frame's dirty tiles into the reveal queue, timestamped across
-  // [now, now + REVEAL_MS]. Anything still queued from the previous turn is
-  // flushed first: turns arriving faster than REVEAL_MS (debug burst, catch-up,
-  // a sped-up local game) degrade gracefully to paint-on-arrival instead of
-  // building up lag.
+  // Moves this frame's dirty tiles into the reveal queue, timestamped
+  // across [now, now + REVEAL_MS]. Anything still queued is flushed first,
+  // so turns arriving faster than REVEAL_MS degrade to paint-on-arrival.
   enqueueDirty(dirty, now) {
     if (this.revealMode === 'jitter') { this.enqueueJitter(dirty); return; }
     const n = dirty.size;
@@ -752,28 +674,19 @@ const Render = {
 
   // --- Fog of war --------------------------------------------------------------
   // docs/fog-of-war.md. What each nation has discovered is sim state
-  // (game/vision.js); everything here only reads it, to decide what the local
-  // viewer is shown, and writes nothing back.
+  // (game/vision.js); everything here only reads it and writes nothing back.
   //
-  // WHO IS FOGGED. fogActive() is the one place that decides whether the
-  // viewer's picture is restricted at all, and canSee() the one place that
-  // answers "is this tile inside what the viewer has discovered". The UI
-  // (leaderboard, hover panel, radial menu) should filter on these two rather
-  // than re-derive the rule. Both read the sim directly, so they are right at
-  // any moment, input handlers included.
+  // fogActive() is the one place that decides whether the viewer's picture
+  // is restricted; canSee() the one place that answers 'has the viewer
+  // discovered this tile'. The UI should filter on these two. Both read the
+  // sim directly, so they are right at any moment, input handlers included.
   //
-  // The whole map is shown (fogActive() false, canSee() true for every tile)
-  // when any of these holds:
+  // The whole map is shown when any of these holds:
   //   - the match has no fog (Game.fog);
-  //   - the match is over (Game.winnerId is set): the fog lifts for everyone;
-  //   - the viewer has been eliminated (their player's `alive` is false),
-  //     from that turn on, team game or not;
-  //   - the viewer is not a nation at all: Game.me names no player, or one
-  //     with no vision group. This is the spectator and replay case. Neither
-  //     exists as a client mode yet (a spectating client currently falls back
-  //     to viewing as player 0, see main.js's `start` handler); whatever adds
-  //     one only has to leave Game.me off the roster, e.g. -1, which
-  //     altRelationOf and drawDiploBadges already treat as "no viewer".
+  //   - the match is over (Game.winnerId is set);
+  //   - the viewer has been eliminated;
+  //   - the viewer is not a nation: Game.me names no player, or one with
+  //     no vision group (spectator/replay; leave Game.me off the roster).
   fogActive() {
     if (!Game.fog || Game.winnerId !== null) return false;
     // A replay shows the whole map unless the viewer asks for one player's fog.
@@ -789,36 +702,24 @@ const Render = {
     return !this.fogActive() || Game.isDiscovered(Game.me, tile);
   },
 
-  // THE LAYER. A small canvas with one pixel per CORNER of the sim's vision
-  // grid rather than per cell: cells + 1 each way, 251x126 on the large map.
-  // A corner is opaque while any cell touching it is undiscovered and clear
-  // once they all are. Stretched over the map with smoothing, that leaves an
-  // undiscovered cell solid across its whole area (all four of its corners
-  // are opaque) and puts the soft edge, one cell wide, entirely inside the
-  // discovered cells along the boundary. A pixel per cell would centre the
-  // blend on the boundary instead and show the first half-cell of
-  // undiscovered terrain through it.
+  // THE LAYER. A small canvas with one pixel per CORNER of the vision grid
+  // (cells + 1 each way). A corner is opaque while any cell touching it is
+  // undiscovered. Stretched with smoothing, that keeps an undiscovered cell
+  // solid and puts the one-cell soft edge inside the discovered cells.
   //
   // updateFog() keeps the layer in step with the viewer's vision group.
-  // Game.visionCount[group] changes exactly when the group's discovered set
-  // does, so on most frames the whole cost is comparing it with fogSeenCount.
-  // When it has grown, the grid is walked for the cells the layer has not got
-  // yet (fogSeen is the layer's own copy of the group's bits, and the walk
-  // stops once it has found as many as the count grew by), their corners are
-  // recomputed, and only the rectangle they fall in is blitted.
+  // Game.visionCount[group] changes exactly when the discovered set does,
+  // so most frames cost one comparison with fogSeenCount. When it has
+  // grown, only the new cells' corners are recomputed and blitted (fogSeen
+  // is the layer's own copy of the group's bits).
   //
-  // Like the map layers above, the canvas is edited with putImageData, so
-  // Firefox would copy it to the GPU on every draw. It is tiny, but once it
-  // has held still for FOG_BITMAP_SETTLE frames it is swapped for an
-  // ImageBitmap anyway; while the viewer is still exploring, the canvas itself
-  // is stamped and no bitmaps are churned.
+  // Once the canvas has held still for FOG_BITMAP_SETTLE frames it is
+  // swapped for an ImageBitmap (see the chunked layers above).
   //
-  // CULLING. The layer is drawn over the whole world (see draw() for the
-  // order), but no pass relies on it to hide anything: each one also skips
-  // what fogHides()/fogHidesAt() say the viewer has not discovered. Those two
-  // read fogSeen, so they are only for the passes draw() runs after
-  // updateFog(), behind a check of `fogged`; anything answering a question
-  // from outside a frame (the hit-tests) goes through canSee().
+  // CULLING. No pass relies on the layer to hide anything: each also skips
+  // what fogHides()/fogHidesAt() say is undiscovered. Those read fogSeen,
+  // so they are only for passes draw() runs after updateFog(); anything
+  // asked from outside a frame (hit-tests) goes through canSee().
   FOG_COLOR: [6, 10, 20],        // the backdrop draw() clears to, so the fog and the void past the map's edge are one
   FOG_BITMAP_SETTLE: 30,
   FOG_SUB: 8,                    // layer pixels per vision cell each way
@@ -909,14 +810,11 @@ const Render = {
     this.fogCorners[idx] = 0.999;               // marks it as fading; the tick sets the real value
   },
 
-  // Repaints the layer's pixels for corners i0..i1, j0..j1 (inclusive) and the
-  // cells around them. Each pixel is the bilinear blend of its cell's four
-  // corners, pushed through a steep smoothstep: the edge is a fraction of a
-  // cell wide instead of the whole cell a plain stretch would give. The ramp
-  // starts well inside the discovered cell (t = 0.95 is nearly at the
-  // undiscovered boundary), so undiscovered ground stays fully covered.
-  // A range that reaches the grid's edge runs on through the FOG_PAD border,
-  // which repeats the edge pixel.
+  // Repaints the layer's pixels for corners i0..i1, j0..j1 (inclusive) and
+  // the cells around them. Each pixel is the bilinear blend of its cell's
+  // four corners through a steep smoothstep, so the edge is a fraction of a
+  // cell wide and starts well inside the discovered cell. A range reaching
+  // the grid's edge runs on through the FOG_PAD border.
   fogPaint(i0, j0, i1, j1) {
     const cw = this.fogW, ch = this.fogH, S = this.FOG_SUB, P = this.FOG_PAD, stride = cw * S + 1 + 2 * P;
     const corners = this.fogCorners, cs = cw + 1, px = this.fogPixels, c = this.FOG_COLOR;
@@ -1084,14 +982,10 @@ const Render = {
     const ctx = this.ctx, s = this.cam.scale * this.dpr, C = Game.VISION_CELL;
     const cw = this.canvas.width, ch = this.canvas.height;
     const halfW = cw / 2 / s, halfH = ch / 2 / s;
-    // In cells. The layer is let run half a cell past the map on every side
-    // (the outer half of its edge pixels, which just repeat the edge value):
-    // stopping exactly on the map's edge leaves that edge antialiased against
-    // the tiles underneath, a faint outline of the map through the fog. Past
-    // the edge there is only the backdrop, which is the fog's own colour.
-    // The layer carries that half cell as a real border (FOG_PAD), because a
-    // source rectangle reaching outside the image is not drawn at all by some
-    // mobile browsers: the fog vanished whenever the view took in a map edge.
+    // In cells. The layer runs half a cell past the map on every side, or the
+    // map's edge would show as a faint outline through the fog. That half
+    // cell is a real border (FOG_PAD): some mobile browsers draw nothing when
+    // a source rectangle reaches outside the image.
     const x0 = Math.max(-0.5, Math.floor((this.cam.x - halfW) / C) - 1);
     const y0 = Math.max(-0.5, Math.floor((this.cam.y - halfH) / C) - 1);
     const x1 = Math.min(Math.min(GameMap.width / C, this.fogW) + 0.5, Math.ceil((this.cam.x + halfW) / C) + 1);
@@ -1175,17 +1069,12 @@ const Render = {
     this.drawSamFlashes();
     this.drawRadioScans();
     if (fog) {
-      // Everything above is the world, and the fog goes over all of it:
-      // whatever runs out past the discovered area (a range ring, a boat's
-      // trail, a contrail, a blast) is cut off where the area ends. What
+      // Everything above is the world, and the fog goes over all of it. What
       // follows is drawn on top of the fog, so culling is all that hides it:
-      //   - names, badges, front numbers and the gold pop-ups further down.
-      //     Each is placed by a single discovered tile, and lettering sliced
-      //     through by the fog's edge reads as a glitch;
-      //   - the viewer's own missiles in flight, the one thing they are shown
-      //     over undiscovered ground (the blast, a world effect, stays under);
-      //   - the placement ghost: it is their cursor, and has to stay visible
-      //     while a nuke is aimed into the black.
+      //   - names, badges, front numbers and gold pop-ups, each placed by a
+      //     single discovered tile;
+      //   - the viewer's own missiles in flight (the blast stays under);
+      //   - the placement ghost, which must stay visible when aimed into the black.
       this.drawFog();
       if (!this.altView) {
         this.drawLabels();
@@ -1207,14 +1096,9 @@ const Render = {
     this.drawSelectionBox();
   },
 
-  // Static rail lines between stations — drawn underneath the structure
-  // discs (called before drawStructures in draw()) so a station's disc sits
-  // cleanly on top of the tracks converging on it rather than the line
-  // cutting across the icon. Each railroad's `waypoints` is just its two
-  // station tiles plus, for a diagonal pair, the single axis-aligned elbow
-  // bend between them (see Game.orthogonalPath) — never a per-cell walk —
-  // so this draws as one or two dead-straight horizontal/vertical
-  // moveTo/lineTo segments per rail, never a tile-by-tile staircase.
+  // Static rail lines, drawn under the structure discs. Each railroad's
+  // `waypoints` is its two station tiles plus at most one elbow
+  // (Game.orthogonalPath), so each draws as one or two straight segments.
   drawRailroads() {
     if (!Game.railroads.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -1243,28 +1127,21 @@ const Render = {
     ctx.stroke();
   },
 
-  // Structures, drawn as an overlay rather than baked into the tile blit: the
-  // blit is one pixel per tile, which is far too coarse to carry an icon, and it
-  // is rebuilt on every territory change besides.
+  // Structures are an overlay, not baked into the tile blit (one pixel per
+  // tile is too coarse for an icon). Each sits on a disc ringed in its
+  // owner's colour.
   //
-  // Each sits on a dark disc ringed in its owner's colour, so whose city it is
-  // reads at a glance — which matters because capturing one takes its pop bonus
-  // with it, making a bordering city a visible reason to push.
-  // CSS-pixel disc radius a structure actually draws at — device-pixel-ratio
-  // free, since input coordinates (pointer events, screenToTile) live in CSS
-  // pixels too. Shared with findStructureNear below so the area someone can
-  // tap always matches the size of the icon they're looking at.
+  // CSS-pixel disc radius a structure draws at. Shared with
+  // findStructureNear so the tappable area matches the icon.
   structureRadius() {
     const font = Math.max(10, Math.min(20, this.cam.scale * 2.2));
     return font * 0.66 * 2;   // doubled: at map-fit zoom the old size read as barely a dot
   },
 
-  // Structure icons give way to dots (drawStructureDots) when zoomed far out:
-  // their radius stops shrinking at the font floor above, so on a big map at
-  // map-fit zoom they carpet whole nations and bury the borders (SAMs are the
-  // exception and always keep their icon). Icons show
-  // at ICON_DOT_SCALE (CSS px per tile) and closer, and always while placing a
-  // build, so you can still see and tap what's already there.
+  // Structure icons give way to dots (drawStructureDots) when zoomed far
+  // out, where they would bury the borders; SAMs always keep their icon.
+  // Icons show at ICON_DOT_SCALE (CSS px per tile) and closer, and always
+  // while placing a build.
   ICON_DOT_SCALE: 1.5,
   structureIconsShown() {
     return (typeof UI !== 'undefined' && !!UI.placing) || this.cam.scale >= this.ICON_DOT_SCALE;
@@ -1275,11 +1152,8 @@ const Render = {
   // still moving, to draw straight onto the map.
   paintStructureIcon(ctx, type, owner, built, px, py, r) {
     const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
-    // Disc is a dimmed tone of the owner's own colour — the same shade the
-    // territory fill uses on flat ground — rather than a fixed dark navy, so
-    // the city reads as part of that nation's land, not a generic marker.
-    // It's fully opaque (no alpha) so the hover overlay, which is drawn
-    // beneath structures each frame, never shows through and brightens it.
+    // Disc is a dimmed tone of the owner's colour. Fully opaque, so the
+    // hover overlay drawn beneath never shows through.
     ctx.beginPath();
     ctx.arc(px, py, r, 0, Math.PI * 2);
     ctx.fillStyle = `rgb(${(c[0] * 0.62) | 0}, ${(c[1] * 0.62) | 0}, ${(c[2] * 0.62) | 0})`;
@@ -1293,10 +1167,7 @@ const Render = {
       // Under construction: the icon sits dimmed so a finished structure
       // still reads as the visually "solid" one at a glance.
       ctx.globalAlpha = built ? 1 : 0.45;
-      // Hand-drawn glyphs rather than the unit's emoji: colour emoji carry
-      // their own built-in colours and ignore fillStyle, so on platforms
-      // with a colour emoji font the icon rendered washed out against the
-      // disc instead of the solid white this needs to be.
+      // Hand-drawn glyphs, not emoji: colour emoji ignore fillStyle.
       ctx.fillStyle = '#ffffff';
       if (type === 'factory') {
         // A single low, wide block with a smokestack — deliberately
@@ -1321,11 +1192,8 @@ const Render = {
         ctx.closePath();
         ctx.fill();
       } else if (type === 'port') {
-        // Anchor glyph, stroked rather than filled like the others (a
-        // ring and a hooked shackle read as hollow shapes) — ring at top,
-        // a stem down through a crossbar (the "stock"), flaring into a
-        // wide fluke at the base. Unmistakably distinct from the blocky
-        // city/factory/fort silhouettes.
+        // Anchor glyph, stroked: ring at top, stem through a crossbar, wide
+        // fluke at the base.
         ctx.lineWidth = Math.max(1.5, r * 0.16);
         ctx.strokeStyle = '#ffffff';
         ctx.lineCap = 'round';
@@ -1435,13 +1303,10 @@ const Render = {
     }
   },
 
-  // Structure icons are stamped from a per-(type, owner, built) bitmap at the
-  // current icon radius instead of being redrawn from paths every frame (a few
-  // hundred structures cost several ms a frame that way). The radius changes
-  // while zooming, and building a bitmap per structure per frame would cost
-  // more than drawing directly, so sprites are only built once the radius has
-  // held still for STRUCT_SPRITE_SETTLE frames; until then this returns null
-  // and the caller draws directly. A new radius drops the old sprites.
+  // Structure icons are stamped from a per-(type, owner, built) bitmap at
+  // the current icon radius. The radius changes while zooming, so sprites
+  // are built only once it has held still for STRUCT_SPRITE_SETTLE frames;
+  // until then this returns null and the caller draws directly.
   STRUCT_SPRITE_SETTLE: 10,
   STRUCT_TYPE_IDX: { city: 0, factory: 1, fort: 2, port: 3, silo: 4, sam: 5, radio: 6 },
   structSprites: new Map(),
@@ -1491,12 +1356,9 @@ const Render = {
     return c;
   },
 
-  // Finds the structure of `type` whose drawn disc a tap (in CSS-pixel client
-  // coordinates, same space as screenToTile's input) actually falls near — not
-  // just the single tile it happens to be anchored to. The disc reads as a
-  // big, tappable icon, so a tap anywhere across it (plus a little slop past
-  // its own edge) should count as tapping the structure, exactly as it looks
-  // like it should. Picks the closest match when discs overlap.
+  // Finds the structure of `type` whose drawn disc (plus a little slop) a
+  // tap in CSS-pixel client coordinates falls on, not just its anchor tile.
+  // Picks the closest when discs overlap.
   findStructureNear(sx, sy, type) {
     if (type !== 'sam' && !this.structureIconsShown()) return null;   // dots aren't tappable
     const r = this.structureRadius();
@@ -1630,10 +1492,9 @@ const Render = {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
 
-    // Zoomed out, structures shrink to owner-coloured dots, as OpenFront
-    // does, except SAMs: their icon and level stay, since reading air
-    // defence at a glance is a big part of what max zoom-out is for.
-    // Range rings follow the same rule: forts' only with icons, SAMs' always.
+    // Zoomed out, structures shrink to owner-coloured dots, except SAMs,
+    // which keep icon and level. Range rings follow suit: forts' only with
+    // icons, SAMs' always.
     const iconsShown = this.structureIconsShown();
     // Fog: an undiscovered structure is skipped in every pass below, range
     // ring included; a ring would give it away from well outside the fog.
@@ -1660,11 +1521,8 @@ const Render = {
       ctx.setLineDash([]);
     }
 
-    // Same idea for SAM Launchers, just with a per-building radius (
-    // Game.dynamicSamRange, which grows with level and ramps smoothly right
-    // after an upgrade — see its own comment) instead of Fort's fixed
-    // fortRange(), and a solid rather than dashed ring so the two structures'
-    // protection zones stay visually distinct even where they overlap.
+    // SAM Launchers: per-building radius (Game.dynamicSamRange) and a solid
+    // ring, so it stays distinct from a fort's dashed one.
     for (const b of Game.buildings.values()) {
       if (b.type !== 'sam' || !b.built) continue;
       if (fog && this.fogHides(b.tile)) continue;
@@ -1724,11 +1582,8 @@ const Render = {
         ctx.fillRect(bx, by, barW * pct, barH);
       }
 
-      // Level, above the disc — always shown once built, level 1 included, so
-      // a structure's level can be read straight off the map.
-      // Stamped from a cached bitmap (see levelBadge) rather than lettered here:
-      // with a few hundred structures on screen this was the largest block of
-      // text drawing in the frame.
+      // Level, above the disc, shown once built (level 1 included). Stamped
+      // from a cached bitmap (see levelBadge); lettering it here was slow.
       if (b.built && b.level >= 1) {
         const badgeFont = Math.round(Math.max(9 * this.dpr, Math.min(15 * this.dpr, r * 0.6)));
         const img = this.levelBadge(b.level, badgeFont);
@@ -1736,13 +1591,9 @@ const Render = {
         ctx.drawImage(img, Math.round(px - img.width / 2), Math.round(ly - img.height / 2));
       }
 
-      // Charge pips below the disc, one per level — filled = ready to fire,
-      // hollow = that charge's own independent SAM_COOLDOWN is still
-      // counting down (see Game.stepSAMs). Makes "a level-2 SAM has two
-      // separate charges, not one shared cooldown" legible at a glance
-      // instead of only inferable from watching it fire twice.
-      // A Silo gets the same pips: its missile slots work the same way (see
-      // Game.siloFreeSlots).
+      // Charge pips below the disc, one per level: filled = ready, hollow =
+      // that charge's own SAM_COOLDOWN is running (see Game.stepSAMs). A Silo's
+      // missile slots work the same way (Game.siloFreeSlots).
       if (b.built && (b.type === 'sam' || b.type === 'silo')) {
         const ready = b.type === 'sam' ? b.level - b.samQueue.length : Game.siloFreeSlots(b);
         const pipR = Math.max(1.5 * this.dpr, r * 0.12);
@@ -1772,11 +1623,8 @@ const Render = {
     }
   },
 
-  // Game.resolveWarshipLaunch runs a real seaPath (weighted A*) per
-  // candidate Port — fine for a one-off click, far too expensive to redo
-  // every animation frame while the placement ghost just sits over the same
-  // hovered tile. Cached by that tile, only recomputed when it actually
-  // changes.
+  // Game.resolveWarshipLaunch runs a real seaPath per candidate Port, too
+  // expensive per frame. Cached by hovered tile.
   warshipLaunchPreview(tile) {
     if (this._warshipLaunchTile !== tile) {
       this._warshipLaunchTile = tile;
@@ -1785,10 +1633,7 @@ const Render = {
     return this._warshipLaunchResult;
   },
 
-  // Same caching idea as warshipLaunchPreview just above, for
-  // Game.resolveNukeLaunch — cheap by comparison (no seaPath), but the
-  // Silo scan is still no reason to redo it every animation frame while the
-  // mouse sits still over the same tile.
+  // Same caching as warshipLaunchPreview, for Game.resolveNukeLaunch.
   nukeLaunchPreview(nukeType, tile) {
     if (this._nukeLaunchTile !== tile || this._nukeLaunchType !== nukeType) {
       this._nukeLaunchTile = tile;
@@ -1833,15 +1678,12 @@ const Render = {
     return false;
   },
 
-  // Where the armed structure would land. Mouse only — touch has no hover, so
-  // there the hint line under the build bar is the whole of the feedback.
+  // Where the armed structure would land. Mouse only.
   //
-  // Fog: this is drawn over the fog layer (see draw()), so the cursor and a
-  // nuke's aim stay visible in the black. That makes it the one pass nothing
-  // covers, and each part of the ghost that is worked out from the real map
-  // has to hold back what the viewer has not discovered: the structure under
-  // the cursor, a warship's snapped destination and route, and the stations a
-  // new one would link to. The rings centred on the cursor itself say nothing.
+  // Fog: this is drawn over the fog layer, so nothing covers it. Each part
+  // of the ghost worked out from the real map must hold back what the
+  // viewer has not discovered: the structure under the cursor, a warship's
+  // snapped destination and route, and the stations a new one would link to.
   drawPlacement() {
     if (!UI.placing || UI.placing === 'debugpeace' || UI.placeHover < 0) return;   // debugpeace has no ghost
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -1850,26 +1692,17 @@ const Render = {
     const fog = this.fogged;
     const blind = fog && this.fogHides(tile);
     const hoverB = blind ? undefined : Game.buildings.get(tile);
-    // Warship resolution (which Port it launches from, the route it sails)
-    // runs a real seaPath per candidate Port — too expensive to redo every
-    // animation frame while the mouse just sits still. Cached by hovered
-    // tile, same idea render.js's own hoverAnnexAt throttle uses for a
-    // different expensive per-frame check.
+    // Cached by hovered tile (see warshipLaunchPreview).
     const warshipPreview = UI.placing === 'warship' ? this.warshipLaunchPreview(tile) : null;
     const isNuke = UI.placing === 'atombomb' || UI.placing === 'hydrogenbomb' || UI.placing === 'mirv';
     const nukePreview = isNuke ? this.nukeLaunchPreview(UI.placing, tile) : null;
     const isDebugNuke = UI.placing === 'debugnuke';
-    // Hovering an existing structure of the same type while armed previews an
-    // upgrade instead of a blocked build — same ghost, different legality
-    // check, matching what UI.onTap actually does on tap. Warship and the
-    // two bomb types have no buildings-map entry (and no upgrade) at all —
-    // they're always checked against their own cached resolution instead.
-    // The debug nuke has no legality check at all (see Game.debugNuke) — any
-    // tile is always a valid click for either half of its two-click flow.
-    // Fog: a warship order shows as refused unless both the tile under the
-    // cursor and the water it snaps to are discovered. Green over the black
-    // would say "there is water here, and a way to it". The sim refuses the
-    // same orders (resolveWarshipLaunch); the ghost does not lean on that.
+    // Hovering an existing same-type structure previews an upgrade, as
+    // UI.onTap does. Warship and the bombs have no buildings entry and use
+    // their own cached resolution. The debug nuke has no legality check.
+    // Fog: a warship order shows as refused unless both the cursor tile and
+    // the water it snaps to are discovered; green over the black would say
+    // 'there is water here, and a way to it'.
     const warshipOk = !!warshipPreview && warshipPreview.ok &&
       !(fog && (blind || this.fogHides(warshipPreview.dest)));
     // A Scout is bought with a click anywhere, and nothing it can be refused
@@ -1893,22 +1726,13 @@ const Render = {
     const px = (tile % w - this.cam.x) * s + cw / 2;
     const py = (((tile / w) | 0) - this.cam.y) * s + ch / 2;
 
-    // City or Factory only — whichever is armed — and skipped for the
-    // upgrade-hover case (hovering an already-built structure of that same
-    // type), since upgrading never touches the rail network. A Factory
-    // always shows its own recruiting ring (TRAIN_STATION_MAX_RANGE, the
-    // same radius onStructureCompleted's factory branch actually uses) even
-    // with nothing in range yet — useful on its own as a planning aid. A
-    // City has no recruiting reach of its own: per onStructureCompleted's
-    // city branch it only joins the network at all once a Factory is
-    // already within that same range, so its ring only appears once
-    // Game.previewCityConnections confirms there's actually something to
-    // connect to — an empty ring here would just be noise. Drawn before the
-    // tile highlight below so that small, more important square/ring sits
-    // on top rather than under a dashed line.
-    // Fort placement: show the protection radius while hovering. Read live
-    // from Game.fortRange() rather than hardcoded, so the preview ring always
-    // matches the coverage a fort actually gives.
+    // Rail ring, City or Factory only, skipped when hovering an existing one
+    // (an upgrade never touches rail). A Factory always shows its recruiting
+    // ring (TRAIN_STATION_MAX_RANGE). A City's appears only once
+    // Game.previewCityConnections finds a Factory in range.
+    //
+    // Fort placement: show the protection radius, read live from
+    // Game.fortRange().
     if (UI.placing === 'fort' && !(hoverB && hoverB.type === 'fort')) {
       const cx = px + s / 2, cy = py + s / 2;
       ctx.beginPath();
@@ -1938,10 +1762,8 @@ const Render = {
       ctx.setLineDash([]);
     }
 
-    // SAM Launcher placement: show the range a fresh (level-1) SAM would
-    // cover. Skipped on the upgrade-hover case — an existing SAM's range
-    // ring is already drawn every frame in drawStructures above, so a second
-    // one here would just double up.
+    // SAM Launcher placement: the range of a fresh level-1 SAM. Skipped when
+    // hovering an existing SAM, whose ring drawStructures already draws.
     if (UI.placing === 'sam' && !(hoverB && hoverB.type === 'sam')) {
       const cx = px + s / 2, cy = py + s / 2;
       ctx.beginPath();
@@ -1973,12 +1795,9 @@ const Render = {
       ctx.setLineDash([]);
     }
 
-    // Warship placement: a click can land anywhere now (Game.resolveWarship
-    // Launch does the snapping), so the ghost shows what will ACTUALLY
-    // happen rather than the raw hovered tile — the route it'll sail from
-    // whichever owned Port got picked, plus the patrol radius it wanders
-    // once it arrives at the (possibly snapped) destination, same dashed-
-    // ring language as Fort's protection radius above.
+    // Warship placement: show what will actually happen. The route from the
+    // Port that got picked, plus the patrol radius at the (possibly snapped)
+    // destination.
     if (warshipOk) {
       const dx = (warshipPreview.dest % w + 0.5 - this.cam.x) * s + cw / 2;
       const dy = (((warshipPreview.dest / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
@@ -2009,21 +1828,12 @@ const Render = {
       ctx.setLineDash([]);
     }
 
-    // Nuke targeting: inner (guaranteed-kill) and outer (falling-off blast)
-    // radii at the hovered tile — Game.NUKE_MAGNITUDES for whichever bomb is
-    // armed — plus a straight dashed line back to whichever ready Silo would
-    // actually launch it, once resolveNukeLaunch confirms one's available.
-    // The line is drawn even when nukePreview isn't ok (no Silo/on cooldown/
-    // short on gold), same restraint the tile square/ring below already
-    // gives every other placement — only the radii need a real launch to be
-    // worth showing.
+    // Nuke targeting: inner (guaranteed-kill) and outer blast radii at the
+    // hovered tile (Game.NUKE_MAGNITUDES), plus the trajectory from the Silo
+    // that would launch it, once resolveNukeLaunch confirms one.
     if (isNuke) {
-      // MIRV (ticket #28) has no NUKE_MAGNITUDES entry of its own — the
-      // mothership has no single blast, it splits into MIRV_WARHEAD_COUNT
-      // scattered warheads (see nukes.js's own comment on why) — so its
-      // ghost shows the whole possible spread (MIRV_RANGE) as one dashed
-      // ring instead of the inner/outer blast pair every other nuke type
-      // gets below.
+      // MIRV has no NUKE_MAGNITUDES entry (the mothership splits into
+      // scattered warheads), so its ghost is one dashed ring at MIRV_RANGE.
       const cx = px + s / 2, cy = py + s / 2;
       if (UI.placing === 'mirv') {
         ctx.beginPath();
@@ -2057,11 +1867,8 @@ const Render = {
       }
 
       if (nukePreview.ok) {
-        // Same parabola drawNukes' contrail traces for a nuke actually in
-        // flight (lerp from Silo to target, sine-arced upward by height
-        // scaled off trip distance) so the preview line IS the trajectory,
-        // not just a straight stand-in — matters once missile defense needs
-        // to read where an incoming nuke will actually pass overhead.
+        // Same parabola drawNukes traces for a nuke in flight, so the preview
+        // line IS the trajectory.
         const from = { x: nukePreview.silo.tile % w, y: (nukePreview.silo.tile / w) | 0 };
         const to = { x: tile % w, y: (tile / w) | 0 };
         const dist = Math.hypot(to.x - from.x, to.y - from.y);
@@ -2083,14 +1890,9 @@ const Render = {
       }
     }
 
-    // Debug panel nuke: same blast-radius ghost as the real nuke preview
-    // above, keyed off UI.debugNukeType instead of UI.placing since
-    // 'debugnuke' isn't itself a bomb type. Once the first click has picked
-    // a launch point (UI.debugNukeSrc >= 0), also traces the same arced
-    // trajectory the real preview draws from its resolved Silo — here from
-    // that explicit source tile instead — plus a small marker pinning it in
-    // place, since the tile-square ghost below always tracks the mouse
-    // (now hovering the destination for the second click), not the source.
+    // Debug nuke: the same blast-radius ghost, keyed off UI.debugNukeType.
+    // After the first click (UI.debugNukeSrc >= 0) it also traces the arc
+    // from that source tile and pins a marker on it.
     if (isDebugNuke) {
       const mag = Game.NUKE_MAGNITUDES[UI.debugNukeType];
       const cx = px + s / 2, cy = py + s / 2;
@@ -2148,14 +1950,11 @@ const Render = {
       let lines = UI.placing === 'factory'
         ? Game.previewFactoryConnections(tile)
         : Game.previewCityConnections(tile);
-      // The preview links to any station in range, whoever owns it, and the
-      // range is far longer than anyone's sight. In fog a line is shown only
-      // if the viewer could have worked it out: it ends on a station they have
-      // discovered and runs over land they have discovered the whole way
-      // (fogRailPreview), and a City or Port shows any at all only when a
-      // Factory they can see is in range. The sim's own answer is found on the
-      // real map, so drawing it would say whether the tile under the cursor,
-      // and the ground between it and the station, is land.
+      // The sim links to any station in range, whoever owns it. In fog a line
+      // is shown only if the viewer could have worked it out: it ends on a
+      // discovered station and crosses only discovered land (fogRailPreview),
+      // and a City or Port shows one only when a visible Factory is in range.
+      // Drawing the sim's own answer would reveal what the black hides.
       if (fog && lines.length) {
         if (UI.placing !== 'factory' && !this.fogSeesFactoryNear(tile)) lines = [];
         else lines = lines.map(path => this.fogRailPreview(path[0], path[path.length - 1])).filter(Boolean);
@@ -2352,19 +2151,11 @@ const Render = {
     }
   },
 
-  // Partitions an attack's live frontier into disconnected segments using
-  // 8-connected BFS (diagonal touches still count as one front — otherwise a
-  // border running at 45 degrees fragments into a chain of singletons), then
-  // returns one representative tile per segment: whichever tile in the
-  // cluster sits closest to that cluster's own centroid, so the label always
-  // lands on real border rather than in the gap between two fronts.
-  // Ported from OpenFront's AttackImpl.clusterBorderTiles — same 30-tile
-  // minimum and top-2 cap, so a nation fighting on two separated fronts gets
-  // a number on each, but three-plus fragments (or a second sliver too small
-  // to matter) still collapse down to the biggest ones.
-  // `tiles` is the attack's live border Set (Game.stepAttack keeps it in step
-  // with the conquest heap, which may hold the same tile more than once and so
-  // can't be clustered directly); an array is still accepted.
+  // Partitions an attack's live frontier into disconnected segments
+  // (8-connected BFS, so a 45-degree border stays one front) and returns
+  // one tile per segment: the one closest to the segment's centroid, so the
+  // label sits on real border. Callers pass a 30-tile minimum and a top-2
+  // cap. `tiles` is the attack's live border Set; an array is accepted.
   clusterBorderTiles(tiles, minSize, maxClusters) {
     const borderSet = tiles instanceof Set ? tiles : new Set(tiles);
     if (borderSet.size === 0) return [];
@@ -2413,13 +2204,9 @@ const Render = {
     return significant.slice(0, maxClusters).map(c => c.tile);
   },
 
-  // Live troop counter on every active front, sat on the leading edge(s).
-  // Read live from the attack each frame, so reinforcing a push simply makes
-  // the number climb rather than spawning a second marker. A single nation
-  // can be fighting the same enemy across two disconnected stretches of
-  // border at once, so each front is clustered and labelled independently
-  // rather than averaged into one point hovering in the no-man's-land
-  // between them.
+  // Live troop counter on every active front, on its leading edge(s). Read
+  // from the attack each frame. Each disconnected stretch of border is
+  // clustered and labelled separately.
   drawFronts() {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
@@ -2429,10 +2216,8 @@ const Render = {
 
     for (const a of Game.attacks) {
       if (a.troops <= 0) continue;   // fully cancelled; cleared later this tick
-      // The player's own pushes and incoming Nation attacks carry a number;
-      // wars between other nations still show as a front line, but Tribes
-      // attacking the player are low-effort filler AI — a live count for
-      // every Tribe front is noise nobody reads.
+      // Only fronts involving the player carry a number, and Tribe attacks on
+      // the player are skipped as noise.
       if (a.attacker !== Game.me && a.target !== Game.me) continue;
       if (a.target === Game.me && a.attacker !== Game.me && Game.players[a.attacker].isTribe) continue;
       // Unclaimed land isn't contested — there's no defender to fight over
@@ -2443,10 +2228,8 @@ const Render = {
       const fronts = this.clusterBorderTiles(a.border, 30, 2);
       if (!fronts.length) continue;
 
-      // Every front reaching this point already involves the player one way
-      // or the other: blue for a push they're making, red for one landing on
-      // them. A retreating front reads as grey — it's on its way out, not
-      // fighting for the ground its number still sits on.
+      // Blue for the player's push, red for one landing on them, grey for a
+      // retreating front.
       const colour = a.retreating ? '#9aa4b2' : (a.attacker === Game.me ? '#6db4ff' : '#ff6b6b');
       const font = Math.max(13 * this.dpr, Math.min(19 * this.dpr, s * 1.6));
       ctx.font = '600 ' + font.toFixed(1) + 'px system-ui, sans-serif';
@@ -2467,11 +2250,8 @@ const Render = {
     }
   },
 
-  // A small bitmap circle — filled square "dots" on a disc of radius R,
-  // rather than ctx.arc()'s smooth curve — so the boat reads as deliberately
-  // chunky/pixel-art, matching the map's own hard-edged tile blit instead of
-  // the softer vector shapes the rest of the overlay (fronts, structures)
-  // uses. Built once and reused; the shape itself never changes.
+  // A small bitmap circle of square 'dots', so the boat looks chunky like
+  // the tile blit. Built once and reused.
   BOAT_DOT_RADIUS: 3,
   buildBoatDots() {
     const R = this.BOAT_DOT_RADIUS;
@@ -2484,15 +2264,10 @@ const Render = {
     return dots;
   },
 
-  // Extends (or, on a retreat crossing back over a tile boundary, rebuilds)
-  // `b`'s cached trail — a Path2D in tile-space (tile+0.5 so it lands on the
-  // same cell centers every other tile-based draw call uses) covering
-  // path[0..idx]. A Path2D can only grow (no "remove the last segment" op),
-  // so a retreating boat — whose idx counts back down as it sails home, see
-  // stepBoats — can't be shrunk in place; it's cheaper to detect that case
-  // and rebuild from scratch than to carry a second data structure just for
-  // it. Either way this only pays for the tiles crossed since the last
-  // draw (normally 0 or 1) instead of the whole route every frame.
+  // Extends `b`'s cached trail: a Path2D in tile space (tile+0.5) covering
+  // path[0..idx]. A Path2D can only grow, so a retreating boat (idx counts
+  // back down) gets a rebuild. Either way only the tiles crossed since the
+  // last draw are paid for.
   updateBoatTrail(b, idx, w) {
     if (b._trailBuiltIdx === undefined || idx < b._trailBuiltIdx) {
       const path = new Path2D();
@@ -2512,15 +2287,10 @@ const Render = {
     b._trailBuiltIdx = idx;
   },
 
-  // Boats in transit, drawn as a pixelated dot with a trail line back to
-  // where it launched from. The trail's traveled-so-far geometry is cached
-  // per boat (see updateBoatTrail) rather than rebuilt tile-by-tile every
-  // frame — needs no cleanup of its own beyond that, since it vanishes the
-  // instant the boat does (landed, sunk, refunded, recalled home), the
-  // resolved boat object simply isn't in Game.boats to iterate over anymore.
-  // Stroked via a camera-matching canvas transform (rather than this file's
-  // usual manual per-point toScreen math) so the cached tile-space path
-  // stays valid across pan/zoom — only the transform changes, not the path.
+  // Boats in transit: a pixelated dot with a trail back to the launch
+  // point. The trail is cached per boat (updateBoatTrail) and stroked
+  // through a camera-matching canvas transform, so the tile-space path
+  // stays valid across pan and zoom.
   drawBoats() {
     if (!Game.boats.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -2553,13 +2323,9 @@ const Render = {
       let colour = owner ? `rgb(${owner.color[0]}, ${owner.color[1]}, ${owner.color[2]})` : 'rgba(235,240,250,0.9)';
       if (b.retreating) colour = '#9aa4b2';
 
-      // Trail: the actual sea route travelled so far, tile by tile, not a
-      // straight line — seaPath curves around coastlines, so a direct line
-      // from launch to here would cut across land. Same idea as OpenFront's
-      // own boat trail. The cached path covers whole tiles crossed so far;
-      // the sub-tile leading edge up to the boat's exact position changes
-      // every frame, so it's drawn fresh as a single short segment instead
-      // of being folded into the cache.
+      // Trail: the sea route travelled so far, not a straight line (which
+      // would cut across land). The cache covers whole tiles; the sub-tile
+      // leading edge changes every frame and is drawn fresh.
       this.updateBoatTrail(b, idx, w);
       ctx.setTransform(s, 0, 0, s, cw / 2 - this.cam.x * s, ch / 2 - this.cam.y * s);
       ctx.lineWidth = Math.max(1, this.dpr) / s;
@@ -2588,10 +2354,8 @@ const Render = {
     }
   },
 
-  // Trains in transit, drawn with the same pixelated-dot technique drawBoats
-  // uses for a consistent "chunky" unit look — but skips the trail line
-  // drawBoats needs to show its route, since a train's whole route is
-  // already permanently visible as a rail (see drawRailroads).
+  // Trains in transit: the same pixelated dot as boats, with no trail
+  // (the rail is already visible).
   drawTrains() {
     if (!Game.trains.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -2602,11 +2366,8 @@ const Render = {
     const fog = this.fogged;
 
     for (const t of Game.trains) {
-      // trainTilePos walks the same orthogonal elbow waypoints drawRailroads
-      // renders (see connectStations/buildTrainRoute), not a discrete
-      // per-tile path, so the dot glides smoothly along each horizontal/
-      // vertical leg and pivots cleanly at the bend instead of hopping tile
-      // to tile.
+      // trainTilePos walks the same elbow waypoints drawRailroads renders, so
+      // the dot glides along each leg and pivots at the bend.
       const { x: tx, y: ty } = Game.trainTilePos(t);
 
       const px = (tx + 0.5 - this.cam.x) * s + cw / 2;
@@ -2630,14 +2391,9 @@ const Render = {
     }
   },
 
-  // Trade ships in transit between two Ports, drawn as a single flat circle
-  // in their source nation's own colour — no trail (unlike drawBoats/
-  // drawTrains' pixelated-dot cluster), since with dozens of ships in flight
-  // on long cross-map sea routes, redrawing each one's entire travelled path
-  // as a fresh line every frame was the actual cost driver, not the dot
-  // itself. One arc+fill (plus a thin dark outline for contrast against
-  // water) replaces what used to be a moveTo/lineTo per travelled waypoint
-  // and ~2*BOAT_DOT_RADIUS^2 fillRect calls.
+  // Trade ships between Ports: one flat circle in the source nation's
+  // colour, with no trail. With dozens in flight, redrawing each one's
+  // travelled path every frame was the cost.
   drawTradeShips() {
     if (!Game.tradeShips.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -2670,10 +2426,8 @@ const Render = {
     }
   },
 
-  // CSS-pixel (client-coordinate) position of a warship — the same space
-  // screenToTile/findStructureNear use for hit-testing (UI's shift-drag box
-  // select and click-to-relocate), distinct from the device-pixel math
-  // drawWarships uses below to actually paint it.
+  // CSS-pixel client position of a warship, the space hit-testing uses
+  // (drawWarships paints in device pixels).
   warshipClientPos(w) {
     const s = this.cam.scale;
     const p = Game.pathPos(w);
@@ -2683,12 +2437,9 @@ const Render = {
     };
   },
 
-  // Warships: a persistent combat unit, not a transient boat/trade-ship
-  // crossing, so it gets a heavier, distinct hull silhouette (an elongated
-  // hexagon, rotated to face its current heading) instead of the pixel-dot
-  // or flat-circle treatment those get — plus a health bar once damaged and
-  // a selection ring + patrol-radius ring for whichever of the player's own
-  // are currently shift-drag selected (see UI.selectedWarships).
+  // Warships: an elongated hexagon hull rotated to its heading, a health
+  // bar once damaged, and a selection ring plus patrol-radius ring for the
+  // player's selected ones (UI.selectedWarships).
   drawWarships() {
     if (!Game.warships.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -2718,10 +2469,8 @@ const Render = {
           ctx.setLineDash([]);
         }
 
-        // Centered on the ship's live position, not patrolTile, so the ring
-        // follows it while under way instead of sitting at its destination
-        // (patrolTile is set the instant an order is issued — see
-        // moveWarships/buildWarship).
+        // Centred on the ship's live position, not patrolTile, so the ring
+        // follows it while under way.
         ctx.beginPath();
         ctx.arc(px, py, Game.WARSHIP_PATROL_RANGE * s, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(255,255,255,0.22)';
@@ -2850,19 +2599,15 @@ const Render = {
     return best;
   },
 
-  // Scouts (fog matches only): an unarmed ship that exists to uncover the map,
-  // drawn as an arrowhead in its owner's colour pointing the way it is sailing,
-  // so it cannot be taken for a warship's pair of rings. Culled by the fog on
-  // position like every other pass; a scout lights up the water round it, so
-  // the player's own are always in view in practice.
+  // Scouts (fog matches only): an arrowhead in its owner's colour pointing
+  // the way it is sailing. Culled by the fog on position like every other
+  // pass.
   //
-  // WHAT IS NEVER DRAWN: the route. A scout's `path` is found on the real map
-  // and runs through water the owner has not discovered, so a line along it
-  // would trace unseen coastlines. The heading below reads only the few tiles
-  // right around the hull, which are discovered by construction, and the
-  // destination marker (drawScoutOrders) is the raw tile the player clicked.
-  // While a route is still being found, the owner's scout shows a small
-  // spinner, and nothing else.
+  // WHAT IS NEVER DRAWN: the route. A scout's `path` runs through water
+  // the owner has not discovered, so a line along it would trace unseen
+  // coastlines. The heading reads only the few tiles around the hull, and
+  // the destination marker (drawScoutOrders) is the raw clicked tile. While
+  // a route is being found, the owner's scout shows a small spinner.
   drawScouts() {
     if (!Game.scouts.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -2952,11 +2697,8 @@ const Render = {
   },
 
   // Where the viewer's own scouts are headed: a hollow diamond on the tile
-  // each was last sent to, exactly as clicked, quiet for one under way and
-  // brighter for a selected one. Drawn over the fog because the click may
-  // have been into the black; it is the player's own input, not the map. Gone
-  // once the scout has stopped, since a scout that could not get all the way
-  // there stopped somewhere else.
+  // each was sent to, brighter for a selected one. Drawn over the fog: it
+  // is the player's own input, not the map. Gone once the scout has stopped.
   drawScoutOrders() {
     if (!Game.scouts.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -2980,17 +2722,9 @@ const Render = {
     }
   },
 
-  // A warship's shells in flight — see Game.warshipShootAt (spawns one at the
-  // firing warship's position) and stepShells (advances shell.x/y toward the
-  // target's live position every tick, resolving the hit — and removing the
-  // shell — the instant it closes within range, so it never lingers at or
-  // sails past a stale point once the target is hit or gone). Position is
-  // whatever stepShells last computed, same tick-granularity look as
-  // drawBoats/drawWarships rather than a smoothed lerp. Rendered as a small
-  // blinking dot in the firing player's colour so a kill reads as "the shell
-  // got there", not instant, matching drawWarships' health-bar-only-when-
-  // damaged restraint by staying tiny and simple rather than a sprite/trail
-  // effect.
+  // A warship's shells in flight (Game.warshipShootAt, stepShells).
+  // Position is whatever stepShells last computed, with no smoothing. A
+  // small blinking dot in the firing player's colour.
   drawShells() {
     if (!Game.shells.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -3023,27 +2757,15 @@ const Render = {
     }
   },
 
-  // The MIRV mothership in flight (ticket #28) — see Game.launchMirv/
-  // stepMirvs, and nukes.js's own "MIRV" class comment for the full
-  // explanation of why this game's MIRV keeps the straight-line-plus-arc
-  // convention every other nuke here uses instead of porting OpenFront's
-  // real cubic-Bezier parabola pathfinder. What IS real now: from/to are the
-  // Silo and the actual mid-air separation point (launchMirv's own
-  // formula), and arcHeight below now matches the real source's own control-
-  // point height (getParabolaControlPoints: max(distance/3, 50)) rather than
-  // an unrelated guess, so the visual apex lines up with what the real
-  // pathfinder would have produced even though the curve shape underneath
-  // it (sine vs. cubic Bezier) doesn't. Kept as its own function rather than
-  // folded into drawNukes because Game.mirvs is a separate array from
-  // Game.nukes (see Game.stepMirvs' own comment on why) and because a MIRV
-  // reads as visually distinct from an ordinary nuke: a bigger warhead disc,
-  // a brighter/wider contrail, and no target-ring preview (drawNukeTarget
-  // needs a NUKE_MAGNITUDES entry, and the mothership has none — see
-  // nukes.js's own comment on why; the precise impact points aren't known
-  // until it splits, so nothing to ring yet).
+  // The MIRV mothership in flight (Game.launchMirv/stepMirvs): a straight
+  // line plus a sine arc like every other nuke, from the Silo to the
+  // mid-air separation point, with arcHeight max(distance/3, 50). Its own
+  // function because Game.mirvs is a separate array and it draws
+  // differently: bigger disc, brighter contrail, no target ring (impact
+  // points aren't known until it splits).
   //
-  // Fog: draw() calls this twice, like drawNukes (see there). `overFog` picks
-  // the viewer's own motherships, drawn above the fog layer; without it the
+  // Fog: draw() calls this twice, like drawNukes. `overFog` picks the
+  // viewer's own motherships, drawn above the fog layer; without it the
   // call draws everyone else's, culled to the discovered area.
   drawMirvs(overFog) {
     if (!Game.mirvs.length) return;
@@ -3102,26 +2824,15 @@ const Render = {
     }
   },
 
-  // A nuke in flight — see Game.launchNuke (fixed from/to tile-space points
-  // and a born/duration pair, exactly like a warship's own shell) and
-  // Game.stepNukes (detonates once duration elapses). Unlike a shell's
-  // straight lerp, this arcs: a real ballistic missile climbs and falls
-  // rather than skimming the ground, and OpenFront's own nuke path is a
-  // literal parabola (ParabolaUniversalPathFinder) — this reproduces the
-  // LOOK of that with a cheap sine offset in screen space rather than
-  // porting the real curve-fitting pathfinder, since travel duration (the
-  // part that actually matters for gameplay) is already exact off the
-  // straight-line distance in Game.launchNuke. Warhead drawn as a plain
-  // disc — round, so unlike the old rocket silhouette it needs no tangent/
-  // angle bookkeeping to orient itself along the arc.
+  // A nuke in flight (Game.launchNuke, Game.stepNukes). The arc is a cheap
+  // sine offset in screen space over the straight lerp; travel duration
+  // comes from the straight-line distance. Warhead drawn as a plain disc.
   //
-  // Fog: the viewer's own missiles are the one thing they are shown over
-  // undiscovered ground, so in a fog match draw() calls this twice. The first
-  // call (no argument) runs under the fog layer and draws everyone else's,
-  // each only while the warhead as drawn is inside the discovered area; the
-  // contrail behind it is cut off by the layer where it leaves that area.
-  // The second (`overFog`) runs above the layer and draws the viewer's own,
-  // whole. With fog off there is one call and it draws them all.
+  // Fog: the viewer's own missiles are the one thing shown over
+  // undiscovered ground, so in a fog match draw() calls this twice. The
+  // first call (no argument) runs under the fog layer and draws everyone
+  // else's, each only while its warhead is inside the discovered area. The
+  // second (`overFog`) runs above the layer and draws the viewer's own.
   drawNukes(overFog) {
     if (!Game.nukes.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -3131,26 +2842,16 @@ const Render = {
     for (const n of Game.nukes) {
       const mine = n.ownerId === Game.me;
       if (fog && mine !== !!overFog) continue;
-      // Ticket #25: a nuke heading for the player's land also marks where
-      // it will hit — a pulsing red ring at its outer blast radius plus a
-      // solid one at the guaranteed-destroyed inner radius. Drawn before the
-      // warhead's own off-screen skip below, so the target still shows when
-      // the missile itself is out of view. Skipped for mirvwarhead: up to
-      // MIRV_WARHEAD_COUNT of these can be airborne from one strike, and
-      // nukes.js's own updateNukeAlert already skips individual warhead rows
-      // in favour of one alert for the mothership — this keeps the on-map
-      // rings consistent with that same "warn once, not 350 times" call
-      // (ui.js's own comment on it) and avoids up to 350 extra ring draws a
-      // frame.
+      // A nuke heading for the player's land also marks where it will hit: a
+      // pulsing ring at the outer blast radius and a solid one at the inner.
+      // Drawn before the off-screen skip below, so the target shows even when
+      // the missile doesn't. Skipped for mirvwarhead, matching the single
+      // mothership alert in UI.updateNukeAlert.
       const isWarhead = n.nukeType === 'mirvwarhead';
       if (!isWarhead && UI.nukeThreatensMe(n)) this.drawNukeTarget(n, s, cw, ch);
 
-      // Clamped on the low end too, unlike a plain Math.min(1, ...): a
-      // mirvwarhead can have a `born` still in the FUTURE while it waits out
-      // its own per-warhead spawn delay (spawnMirvWarheads' own comment) —
-      // without the floor, a negative t here would lerp/arc backward past
-      // `from` instead of just sitting at it. A no-op for every other nuke
-      // type, whose born is never later than the current tick.
+      // Clamped at 0 too: a mirvwarhead's `born` can be in the future while it
+      // waits out its spawn delay, and a negative t would arc backward past `from`.
       const t = Math.max(0, Math.min(1, (Game.renderElapsed - n.born) / n.duration));
       // Same arc the sim's SAM check uses (Game.nukeArcPos), so the drawn
       // warhead is exactly where interception thinks it is.
@@ -3165,20 +2866,10 @@ const Render = {
       const colour = '#ff2a2a';
       const radius = Math.max(6 * this.dpr, Math.min(14 * this.dpr, s * 0.45));
 
-      // Contrail: the parabola traced from launch (Silo) up to the nuke's
-      // current position, left on screen for the rest of the flight — same
-      // "shows you where it came from" idea as a boat's own trail (see
-      // drawBoats/updateBoatTrail), just rebuilt fresh off the arc formula
-      // above every frame instead of cached tile-by-tile, since a nuke's
-      // whole flight is a few seconds and a handful of sample points, not a
-      // boat's much longer sea route. Stroked via the same camera-matching
-      // transform trick drawBoats uses so it stays correct across pan/zoom.
-      // mirvwarhead gets a flat 2-point contrail (a straight line to its
-      // current position) instead of the full up-to-24-segment arced
-      // polyline every other nuke draws — with up to MIRV_WARHEAD_COUNT of
-      // these on screen from one strike, a full per-warhead polyline is real
-      // per-frame cost for a detail that reads as visual noise at that
-      // density anyway. atombomb/hydrogenbomb keep the full polyline.
+      // Contrail: the parabola from launch to the current position, rebuilt
+      // from the arc formula each frame and stroked through the camera
+      // transform. A mirvwarhead gets a flat 2-point line instead of the
+      // 24-segment polyline, since hundreds can be on screen at once.
       const steps = isWarhead ? 1 : Math.max(2, Math.ceil(t * 24));
       ctx.setTransform(s, 0, 0, s, cw / 2 - this.cam.x * s, ch / 2 - this.cam.y * s);
       ctx.beginPath();
@@ -3195,12 +2886,8 @@ const Render = {
       ctx.globalAlpha = 1;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-      // Warhead as a plain filled disc at the tip — orientation-free, so no
-      // tangent/angle computation needed unlike the old rocket silhouette.
-      // It flashes in flight (wall-clock pulse, same idea as drawNukeTarget's
-      // ring, so it's fine to run off performance.now() here in render.js)
-      // by brightening toward white so it reads against its own owner colour
-      // rather than blending into it.
+      // Warhead: a filled disc at the tip, flashing toward white on a
+      // wall-clock pulse so it reads against its owner colour.
       const flash = 0.5 + 0.5 * Math.sin(performance.now() / 90);
       ctx.beginPath();
       ctx.arc(px, py, radius, 0, Math.PI * 2);
@@ -3246,12 +2933,9 @@ const Render = {
     ctx.restore();
   },
 
-  // The shockwave left by a detonation — see Game.detonateNuke's push to
-  // nukeBlasts and Game.stepNukes' own aging/pruning. An expanding ring from
-  // inner to outer radius over NUKE_BLAST_FX_DURATION, fading out, plus a
-  // brief bright flash at the core — purely cosmetic feedback, since the
-  // actual lasting effect (the crater) is already visible in the terrain
-  // itself the instant GameMap.owner flips to WATER.
+  // The shockwave left by a detonation (Game.detonateNuke pushes
+  // nukeBlasts; Game.stepNukes ages them): a ring expanding from inner to
+  // outer radius over NUKE_BLAST_FX_DURATION, plus a brief core flash.
   drawNukeBlasts() {
     if (!Game.nukeBlasts.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -3285,12 +2969,10 @@ const Render = {
     }
   },
 
-  // A Radio Tower finishing (fog matches) — see Fx.radioScan. The sim drops
-  // the tower the tick it is built, so this stands in for it: the icon it
-  // would have had, shrinking away, while two rings sweep from it out to the edge
-  // of the disc it uncovered (the same disc the placement ghost shows). A
-  // world effect, drawn under the fog; one the viewer has not discovered the
-  // centre of is left out.
+  // A Radio Tower finishing (Fx.radioScan). The sim drops the tower the
+  // tick it is built, so this stands in for it: the icon shrinking away
+  // while two rings sweep out to the edge of the disc it uncovered. Drawn
+  // under the fog; left out if its centre is undiscovered.
   drawRadioScans() {
     const now = Game.renderElapsed;
     Fx.pruneRadioScans(now);
@@ -3333,10 +3015,8 @@ const Render = {
     }
   },
 
-  // An intercept kill — see Game.stepSAMs' push to samFlashes and its own
-  // aging/pruning. A quick expanding ring, deliberately smaller and much
-  // faster than drawNukeBlasts' own shockwave — this is confirming a nuke
-  // got shot down before it could go off, not the detonation itself.
+  // An intercept kill (Game.stepSAMs pushes samFlashes): a quick expanding
+  // ring, smaller and faster than a nuke's shockwave.
   drawSamFlashes() {
     if (!Game.samFlashes.length) return;
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
@@ -3345,12 +3025,8 @@ const Render = {
 
     for (const f of Game.samFlashes) {
       if (fog && this.fogHidesAt(f.x, Math.max(0, f.y))) continue;   // an intercept happens up on the arc, like drawNukes
-      // Lower-bound clamp is load-bearing, not just tidy: an unclamped
-      // negative t here fed straight into `maxR * t` below as a ctx.arc
-      // radius — Game.fastForward() can spawn one with `born` set from an
-      // `elapsed` far ahead of renderElapsed (which only advances inside
-      // main.js's frame loop); see Game.dynamicSamRange's comment for the
-      // first place this exact crash shape was caught.
+      // The lower clamp is load-bearing: `born` can be ahead of renderElapsed,
+      // and a negative t becomes a negative ctx.arc radius, which throws.
       const t = Math.max(0, Math.min(1, (Game.renderElapsed - f.born) / Game.SAM_FLASH_FX_DURATION));
       const px = (f.x + 0.5 - this.cam.x) * s + cw / 2;
       const py = (f.y + 0.5 - this.cam.y) * s + ch / 2;
@@ -3373,10 +3049,8 @@ const Render = {
     }
   },
 
-  // The live shift-drag marquee rectangle — see Input's `selecting` state.
-  // Drawn last, in raw device-pixel canvas space (Input tracks it in
-  // CSS-pixel client coordinates, same space as every other pointer handler,
-  // so it's scaled up by dpr here rather than everywhere it's touched).
+  // The live shift-drag marquee (Input's `selecting` state). Input tracks
+  // it in CSS pixels, so it is scaled by dpr here.
   drawSelectionBox() {
     const sel = Input.selecting;
     if (!sel || !sel.active) return;
@@ -3391,15 +3065,9 @@ const Render = {
     ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
   },
 
-  // "+gold" labels that drift up and fade out over each city a train just
-  // paid — Game.stepTrains/stepTradeShips record these through Fx.goldPopup
-  // for every owner alike, and this is where they become the local player's
-  // view of them: the ownerId filter below is the only thing that decides
-  // whose money the viewer watches tick up (a payout at a foreign or allied
-  // city is not theirs to see). Ageing is on the render clock too, so nothing
-  // about these labels touches the simulation. Same warm-gold palette as the
-  // level badge in drawStructures so a payout reads as the same kind of "you
-  // got richer" as leveling up.
+  // '+gold' labels that drift up and fade over a city a train just paid.
+  // The sim records them through Fx.goldPopup for every owner; the ownerId
+  // filter below decides whose the viewer sees. Aged on the render clock.
   drawGoldPopups() {
     const now = Game.renderElapsed;
     Fx.prune(now);
@@ -3430,10 +3098,7 @@ const Render = {
       ctx.lineJoin = 'round';
       ctx.strokeStyle = `rgba(0, 0, 0, ${(alpha * 0.85).toFixed(3)})`;
       ctx.fillStyle = `rgba(255, 233, 168, ${alpha.toFixed(3)})`;
-      // Rounded to the nearest thousand rather than formatGold's exact
-      // decimal ("10.0k") — a popup is a quick flash, not a ledger entry, so
-      // it reads as a clean "+10k" the same way trainGold's own values
-      // (multiples of 5000) round with zero remainder.
+      // Rounded to the nearest thousand: a popup is a quick flash, not a ledger.
       const k = Math.round(g.amount / 1000);
       const text = '+' + (k > 0 ? k + 'k' : g.amount);
       const ly = py - font * 1.1 - rise;
@@ -3484,11 +3149,8 @@ const Render = {
   },
 
   // Opens a label sweep: snapshots who is worth labelling and clears the
-  // shared `seen` buffer once for the whole sweep. Clearing once here rather
-  // than per nation is exactly what the old single-pass version did and is
-  // still correct, because a nation's flood fill below only ever expands into
-  // its OWN tiles — two nations can never mark the same tile, so one nation's
-  // marks can't leak into another's walk later in the same sweep.
+  // shared `seen` buffer once. Once is enough: a nation's flood fill only
+  // expands into its OWN tiles, so marks can't leak between nations.
   beginLabelSweep() {
     const size = GameMap.owner.length;
     if (!this.seenBuf || this.seenBuf.length !== size) {
@@ -3504,15 +3166,9 @@ const Render = {
     this.labelSweeping = true;
   },
 
-  // Anchors ONE nation's label in its largest contiguous landmass, and is the
-  // unit of work a sweep is sliced into — see drawLabels for the pacing.
-  //
-  // Walking every nation in a single call (what this used to do) meant flood-
-  // filling every owned tile on the map in one frame: measured at 32ms on an
-  // Extra Large map mid-match, fired 3.3x a second, which is a dropped frame
-  // every time and was the single largest source of client-side hitching.
-  // The work per sweep is unchanged — it is just spread a nation per frame,
-  // so the same rebuild costs ~1.3ms a frame instead of 32ms in one.
+  // Anchors ONE nation's label in its largest contiguous landmass. This is
+  // the unit of work a sweep is sliced into (see drawLabels): walking every
+  // nation in one frame flood-fills every owned tile and drops a frame.
   computeLabelSlice(playerId) {
     const w = GameMap.width, owner = GameMap.owner;
     const seen = this.seenBuf, queue = this.queueBuf;
@@ -3574,11 +3230,9 @@ const Render = {
     }
   },
 
-  // Advances the label sweep by exactly one nation per frame, starting a fresh
-  // sweep once LABEL_INTERVAL has passed since the last one BEGAN. The visible
-  // set only swaps in when a sweep finishes, so labels never render half-built
-  // — they are at most one sweep stale, which is what the old timer already
-  // gave them.
+  // Advances the label sweep one nation per frame, starting a new sweep
+  // once LABEL_INTERVAL has passed since the last one BEGAN. The visible
+  // set swaps in only when a sweep finishes.
   stepLabels() {
     const now = performance.now();
     if (!this.labelSweeping) {
@@ -3594,24 +3248,17 @@ const Render = {
   },
 
   // --- Label sprites -----------------------------------------------------------
-  // Each nation's label (icons, name, troop count) is rasterised once into its
-  // own small canvas and stamped with drawImage every frame, instead of being
-  // re-lettered with strokeText/fillText every frame. On the World map several
-  // hundred labels come on screen together early in a match, and outlined canvas
-  // text is slow, especially in Safari: that was the frame-rate drop players saw
-  // "as soon as the names appear". A sprite is redrawn only when what it shows
-  // changes (troop text, icons, name) or its whole-pixel font size does, and at
-  // most LABEL_REDRAW_MAX sprites / LABEL_REDRAW_MS of that work happens per
-  // frame, oldest sprite first; the rest keep showing their previous image
-  // (scaled to the right size) for a frame or two.
+  // Each nation's label (icons, name, troop count) is rasterised once into
+  // its own small canvas and stamped with drawImage; outlined canvas text
+  // is slow, especially in Safari. A sprite is redrawn only when its
+  // content or whole-pixel font size changes, and at most LABEL_REDRAW_MAX
+  // sprites / LABEL_REDRAW_MS of that happens per frame, oldest first. The
+  // rest keep their previous image, scaled, for a frame or two.
   //
-  // The count cap matters as much as the time budget: the first stamp of a
-  // just-redrawn sprite pays to hand the changed bitmap to the GPU (~0.5ms each
-  // in Chromium at 2x DPR, several times the redraw itself), and that cost lands
-  // in drawImage, outside the time budget. Troop counts change every tick and a
-  // growing nation's font creeps up a pixel at a time, so troop and size
-  // changes wait LABEL_REFRESH_MS since that sprite was last drawn; a new
-  // label, a renamed one or an icon change goes straight into the queue.
+  // The count cap matters as much as the time budget: a redrawn sprite's
+  // first stamp pays a GPU upload that lands outside the budget. Troop and
+  // size changes wait LABEL_REFRESH_MS since that sprite was last drawn; a
+  // new label, a rename or an icon change is queued at once.
   // See docs/perf-label-rendering.md.
   LABEL_REDRAW_MS: 2,
   LABEL_REDRAW_MIN: 2,        // always make at least this much progress per frame
@@ -3717,11 +3364,9 @@ const Render = {
     this.snapshotLabelSprite(sp);
   },
 
-  // Firefox copies a canvas to its GPU process on every drawImage from it,
-  // changed or not, which with a few hundred labels on screen was ~2ms a
-  // frame of copying (2026-09-28 profile). An ImageBitmap is immutable, so it
-  // is uploaded once and reused; stamp that, and keep stamping the previous
-  // bitmap (with its own size) until the new one resolves.
+  // Firefox copies a canvas to its GPU process on every drawImage, so
+  // stamp an immutable ImageBitmap instead, and keep stamping the previous
+  // one (at its own size) until the new one resolves.
   snapshotLabelSprite(sp) {
     if (this.labelNoBitmap) return;
     const gen = ++sp.bmpGen;

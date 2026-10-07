@@ -1,10 +1,5 @@
-// Right-click / long-press menu for acting on another nation.
-//
-// Built as an SVG overlay rather than drawn into the map canvas: the map is a
-// pixel blit that gets rebuilt whenever territory changes, and hit-testing arcs
-// against it by hand would buy nothing. OpenFront's own menu is SVG for the
-// same reason. Geometry follows theirs — menuSize 190 (so a 95 outer radius),
-// mainMenuInnerRadius 40, centerButtonSize 30, 300ms reopen cooldown.
+// Right-click / long-press menu for acting on another nation. An SVG
+// overlay, not drawn into the map canvas.
 //
 // Four quadrants: trade toggle (north), Boat/Betray (east), Peace/Renew
 // (south), Target (west, non-allied players only). In a team game the centre
@@ -55,11 +50,9 @@ const Radial = {
     if (performance.now() - this.lastHide < this.REOPEN_MS) return;
     if (Replay.active) return; // watching a replay: no orders to give
     if (targetId === Game.me) return;
-    // Fog of war: no menu on the black. Opening one at all would say whether
-    // the tile is someone's land, unclaimed or sea. A tile the viewer can see
-    // always belongs to a nation they have met (docs/fog-of-war.md), so the
-    // name in the hub needs no further check; UI.knows() is asked anyway, so
-    // the menu can never introduce a nation.
+    // Fog of war: no menu on the black; opening one would reveal whether the
+    // tile is land, unclaimed or sea. UI.knows() keeps the menu from ever
+    // introducing a nation (docs/fog-of-war.md).
     if (!Render.canSee(tile) || (targetId >= 0 && !UI.knows(targetId))) return;
     if (targetId >= 0) {
       const p = Game.players[targetId];
@@ -109,30 +102,15 @@ const Radial = {
     this.menuEl.style.width = span + 'px';
   },
 
-  // What each quadrant does right now. Index 0 = north, then clockwise —
-  // matching OpenFront's own d3.pie layout in RadialMenu.ts exactly (their
-  // startAngle is -π/n, which centers item 0 at north and walks clockwise
-  // through east/south/west for the rest).
+  // What each quadrant does right now. Index 0 = north, then clockwise.
   //
-  // Positions are ported from their rootMenuElement's actual slot order for
-  // a non-owned tile: [Info, Boat‖Betray, Renew‖Peace, Attack‖Donate]. We
-  // have no Info panel or radial Attack (attack is a direct tap on the map
-  // here), so north carries the trade toggle OpenFront keeps in its Info
-  // panel and west carries Target (also an Info-panel action upstream) — but
-  // Boat/Betray at east and Peace/Renew at south match their real layout, not
-  // a guess.
-  // Note the split each slot now makes. `note`/`disabled` come from the
-  // *BlockReason validators, run right here on the current state, so a wedge
-  // that cannot be pressed says so the instant the menu opens — no round trip.
-  // `act` sends an intent and answers nothing: whether the action actually
-  // happened is decided a turn later, inside the Executor, by the same
-  // validators re-run on every client (MP-1.5, §5). Advisory here,
-  // authoritative there.
+  // `note`/`disabled` come from the *BlockReason validators run on current
+  // state, so a blocked wedge says so at once. `act` only sends an intent;
+  // the Executor re-runs the same validators a turn later on every client.
+  // Advisory here, authoritative there.
   //
-  // `me` stays in this file: it is Game.me, a view pointer, and every use of it
-  // below is about what to draw for the player looking at the screen. It is
-  // deliberately absent from the intents themselves — the server stamps the
-  // author, so a client cannot act as anyone but itself.
+  // `me` is Game.me, a view pointer used only for drawing. It is never put
+  // in an intent: the server stamps the author.
   slots() {
     if (this.mode === 'donate') return this.donateSlots();
     const me = Game.me, t = this.targetId;
@@ -189,10 +167,8 @@ const Radial = {
     // Nations only; tribes never trade.
     if (t >= 0 && !Game.players[t].isTribe) out[0] = this.tradeSlot(me, t);
 
-    // Boat: a deliberate sea route to the exact tile the menu was opened on,
-    // available against any target — including one already reachable by
-    // land, as a shortcut, exactly like OpenFront's own Boat button. Only
-    // fills the east slot when Betray hasn't already claimed it above.
+    // Boat: a sea route to the exact tile the menu was opened on, allowed
+    // even against a land-reachable target. East slot, unless Betray took it.
     if (!out[1]) {
       const troops = Math.floor(Game.players[me].troops * UI.ratio);
       const reason = Game.navalInvasionBlockReason(me, this.tile, troops);
@@ -255,16 +231,9 @@ const Radial = {
     this.hide();
   },
 
-  // Rebuilt only when something a player can see has actually changed — this is
-  // called every frame from UI.update so the cooldown and renewal countdowns
-  // stay live, and rewriting the SVG at 60Hz would be silly.
-  // How often the wedges are re-validated while the menu sits open. slots()
-  // is not a cheap read of existing state — the Boat wedge's own note comes
-  // from navalInvasionBlockReason, which resolves a landing tile and then
-  // runs a real sea route search to fill it in. Doing that at 60Hz for a menu
-  // whose only live text is a whole-second countdown was pure waste; a
-  // re-validation every 200ms keeps that countdown honest and the wedge's
-  // enabled/disabled state current within a fifth of a second.
+  // How often the wedges are re-validated while the menu is open. slots()
+  // is not cheap (the Boat note runs a real sea route search), and the only
+  // live text is a whole-second countdown.
   REVALIDATE_MS: 200,
 
   refresh() {
