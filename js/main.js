@@ -736,7 +736,13 @@
     // The lobby that fed the finished match is gone; don't show its stale code.
     inLobby = false;
     myRole = 'sp';
+    fromQuickJoin = false;
     UI.hideLobby();
+    // Land on the home screen, not the setup screen the match was started
+    // from. Leaving a replay stays on the Replays list it was picked from.
+    if (document.getElementById('overlay').dataset.mode !== 'replay') {
+      document.getElementById('modeBack').click();
+    }
     startLobbyListPolling();
     // The finished match's player still exists until Game.init() runs again,
     // which would otherwise leave the debug panel floating over this menu.
