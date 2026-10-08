@@ -74,5 +74,24 @@ const Account = {
 
   deleteAccount(password) {
     return this._post('delete-account', { password }).then(d => this._signedIn(d));
+  },
+
+  // Achievements and cosmetics (docs/metaprogression.md §6.4). Both resolve to
+  // the account's {unlocked, counters, equipped} and reject like _post.
+  getProgress() {
+    return fetch('api/progress', { credentials: 'same-origin', cache: 'no-store' }).then(
+      r => r.json().catch(() => null).then(data => {
+        if (r.ok && data) return data;
+        const err = new Error((data && data.message) || 'Something went wrong. Try again.');
+        err.code = (data && data.error) || 'server';
+        throw err;
+      }),
+      () => { throw new Error('Can\'t reach the server. Check your connection.'); }
+    );
+  },
+
+  // progress: any of {unlocked, counters, equipped}; the server merges it in.
+  saveProgress(progress) {
+    return this._post('progress', progress);
   }
 };

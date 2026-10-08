@@ -167,6 +167,7 @@ const UI = {
     this.setupBuildBar();
     this.setupTips();
     this.setupLobby();
+    this.setupProgress();
     this.setupAccount();
     this.setupReplays();
 
@@ -205,6 +206,7 @@ const UI = {
 
     document.getElementById('debugToggle').addEventListener('click', () => {
       this.debugOpen = !this.debugOpen;
+      if (this.debugOpen) Progress.disqualify();
     });
 
     document.getElementById('debugNukeAtom').addEventListener('click', () => this.armDebugNuke('atombomb'));
@@ -833,7 +835,14 @@ const UI = {
     el.classList.remove('hidden');
     document.getElementById('hpSwatch').style.background =
       `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
-    document.getElementById('hpName').textContent = p.name;
+    const nameEl = document.getElementById('hpName');
+    const title = Progress.titleOf(playerId);
+    const nameKey = p.name + '\n' + title;
+    if (nameEl._key !== nameKey) {
+      nameEl._key = nameKey;
+      nameEl.textContent = p.name;
+      if (title) nameEl.insertAdjacentHTML('beforeend', ` <small class="playerTitle">${escapeHtml(title)}</small>`);
+    }
     // Runs every frame (refreshHoverPanel), so only rewritten on a change.
     const subEl = document.getElementById('hpSub');
     const sub =
@@ -2051,6 +2060,129 @@ const UI = {
     minBtn.onclick = () => setMin(!overlay.classList.contains('minimized'));
     setMin(false);
     overlay.classList.remove('hidden');
+    // The winner's victory banner, shown to everyone in the match.
+    overlay.dataset.banner = Game.winnerId !== null ? Progress.bannerOf(Game.winnerId) : '';
+    this.renderEndEarned();
+  },
+
+  // --- Achievements (js/progress.js, docs/metaprogression.md) ----------------
+
+  setupProgress() {
+    const overlay = document.getElementById('achOverlay');
+    const close = () => overlay.classList.add('hidden');
+    document.getElementById('achLink').addEventListener('click', () => {
+      this.renderAchievements();
+      overlay.classList.remove('hidden');
+    });
+    document.getElementById('achClose').addEventListener('click', close);
+    for (const tab of document.querySelectorAll('#achTabs button')) {
+      tab.addEventListener('click', () => { this.achTab = tab.dataset.tab; this.renderAchievements(); });
+    }
+    document.getElementById('achLoadout').addEventListener('click', e => {
+      const btn = e.target.closest('button[data-type]');
+      if (!btn || btn.disabled) return;
+      Progress.equip(btn.dataset.type, btn.dataset.id || null);
+      this.renderAchievements();
+    });
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && !overlay.classList.contains('hidden')) close();
+    });
+    Progress.onUnlock = id => { this.showAchievementToast(id); this.renderEndEarned(); };
+  },
+
+  achTab: 'medals',
+
+  renderAchievements() {
+    const cosmetics = this.achTab === 'cosmetics';
+    for (const tab of document.querySelectorAll('#achTabs button')) tab.classList.toggle('active', tab.dataset.tab === this.achTab);
+    document.getElementById('achList').classList.toggle('hidden', cosmetics);
+    document.getElementById('achLoadout').classList.toggle('hidden', !cosmetics);
+    this.renderLoadout();
+    const items = Progress.list();
+    const earned = items.filter(it => it.unlockedAt).length;
+    document.getElementById('achCount').textContent = earned + ' of ' + items.length + ' earned';
+    let html = '';
+    for (const group of ProgressDefs.GROUPS) {
+      const rows = items.filter(it => it.def.group === group.id);
+      if (!rows.length) continue;
+      html += `<div class="achGroup">${escapeHtml(group.name)}</div>`;
+      for (const it of rows) {
+        const got = !!it.unlockedAt;
+        const secret = it.def.hidden && !got;
+        let sub = secret ? 'Keep playing to find this one.' : it.def.desc;
+        const reward = !secret && it.def.unlocks ? ProgressDefs.COSMETICS[it.def.unlocks] : null;
+        if (reward) sub += ' Unlocks ' + (reward.type === 'banner' ? 'a victory banner' : reward.type === 'emblem' ? 'the ' + reward.name + ' emblem' : 'the title "' + reward.name + '"') + '.';
+        if (got) sub += ' · ' + new Date(it.unlockedAt).toLocaleDateString();
+        else if (it.progress) sub += ' · ' + Math.min(it.progress.have, it.progress.need) + '/' + it.progress.need;
+        html += `<div class="achRow${got ? ' earned' : ''}" data-group="${group.id}">`
+          + `<span class="achMedal" aria-hidden="true">${got ? '★' : '☆'}</span>`
+          + `<span class="achText"><b>${escapeHtml(secret ? '???' : it.def.name)}</b><small>${escapeHtml(sub)}</small></span></div>`;
+      }
+    }
+    document.getElementById('achList').innerHTML = html;
+    document.getElementById('achGuestNote').classList.toggle('hidden', !Account.available || !!Account.user);
+  },
+
+  // One row of choices per cosmetic type; a locked one names what unlocks it.
+  renderLoadout() {
+    const LABELS = { title: 'Title', emblem: 'Map emblem', banner: 'Victory banner' };
+    const NOTES = { title: 'Shown beside your name', emblem: 'Shown on your nation\'s map label', banner: 'Everyone sees it when you win' };
+    const eq = Progress.loadout();
+    let html = '';
+    for (const type of ProgressDefs.COSMETIC_TYPES) {
+      html += `<div class="achGroup">${LABELS[type]} <span>${NOTES[type]}</span></div><div class="loadoutRow">`;
+      html += `<button type="button" data-type="${type}" data-id="" class="${eq[type] ? '' : 'active'}">None</button>`;
+      for (const id of Object.keys(ProgressDefs.COSMETICS)) {
+        const c = ProgressDefs.COSMETICS[id];
+        if (c.type !== type) continue;
+        const by = Progress.unlockerOf(id);
+        if (!by) continue;
+        const owned = Progress.has(by);
+        const def = ProgressDefs.ACHIEVEMENTS[by];
+        const tip = owned ? '' : 'Earn ' + (def.hidden ? 'a hidden achievement' : def.name) + ' to unlock';
+        html += `<button type="button" data-type="${type}" data-id="${id}" class="${eq[type] === id ? 'active' : ''}"`
+          + `${owned ? '' : ' disabled'} title="${escapeHtml(tip)}">${c.glyph ? c.glyph + ' ' : ''}${escapeHtml(c.name)}</button>`;
+      }
+      html += '</div>';
+    }
+    document.getElementById('achLoadout').innerHTML = html;
+  },
+
+  showAchievementToast(id) {
+    const def = ProgressDefs.ACHIEVEMENTS[id];
+    if (!def) return;
+    const el = document.getElementById('achToast');
+    const row = document.createElement('div');
+    row.className = 'achToastRow';
+    row.innerHTML = `<span class="achMedal" aria-hidden="true">★</span>`
+      + `<span class="achText"><small>Achievement earned</small><b>${escapeHtml(def.name)}</b>${this.unlockLine(def)}</span>`;
+    el.appendChild(row);
+    el.classList.remove('hidden');
+    // Matches the achToastFade animation length in style.css.
+    setTimeout(() => {
+      row.remove();
+      if (!el.firstChild) el.classList.add('hidden');
+    }, 5000);
+  },
+
+  // What an achievement unlocked, as a line for the toast and the panel.
+  unlockLine(def) {
+    const c = def.unlocks ? ProgressDefs.COSMETICS[def.unlocks] : null;
+    if (!c) return '';
+    const kind = { title: 'title', emblem: 'emblem', banner: 'victory banner' }[c.type];
+    return `<small>Unlocked ${kind}: ${c.glyph ? c.glyph + ' ' : ''}${escapeHtml(c.name)}</small>`;
+  },
+
+  renderEndEarned() {
+    const el = document.getElementById('endEarned');
+    const ids = Progress.matchEarned || [];
+    el.classList.toggle('hidden', ids.length === 0);
+    if (!ids.length) { el.textContent = ''; return; }
+    el.innerHTML = '<small>Earned this match</small>' + ids.map(id => {
+      const def = ProgressDefs.ACHIEVEMENTS[id];
+      return def ? `<div><span class="achMedal" aria-hidden="true">★</span> ${escapeHtml(def.name)}</div>` : '';
+    }).join('');
   },
 
   // --- Lobby ------------------------------------------------------------------
@@ -2451,6 +2583,7 @@ const UI = {
     const strip = document.getElementById('accountStrip');
     strip.classList.toggle('hidden', !Account.available);
     if (!Account.available) return;
+    Progress.accountChanged();
     const user = Account.user;
     document.getElementById('accountStatus').textContent = user ? 'Signed in as ' + user.email + ' ·' : 'Playing as guest ·';
     document.getElementById('accountSignIn').classList.toggle('hidden', !!user);
@@ -3109,6 +3242,8 @@ const UI = {
     for (const p of players) {
       const li = document.createElement('li');
       li.textContent = p.username || ('Player ' + p.clientID);
+      const title = Progress.titleName(p.cosmetics && p.cosmetics.title);
+      if (title) li.insertAdjacentHTML('beforeend', ` <small class="playerTitle">${escapeHtml(title)}</small>`);
       if (swatches && !p.spectator) {
         const sw = document.createElement('span');
         sw.className = 'rosterSwatch';

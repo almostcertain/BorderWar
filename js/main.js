@@ -1,5 +1,6 @@
 (() => {
   const canvas = document.getElementById('game');
+  Progress.init();
   Render.setup(canvas);
   Input.setup(canvas);
   Radial.setup();
@@ -200,6 +201,7 @@
     Runner.reset();
     UI.showHostLobby(gameID);
 
+    Progress.sendLoadout();
     Transport.connect(onConnect, onServerMessage, {
       local: false,
       gameID: gameID,
@@ -225,6 +227,7 @@
     Runner.reset();
     UI.showJoinLobby();
 
+    Progress.sendLoadout();
     Transport.connect(onConnect, onServerMessage, {
       local: false,
       gameID: code,
@@ -455,6 +458,7 @@
         // tutorial: its free gold is not in the turns (js/tutorial.js).
         if (Replay.active) Replay.onMatchReady();
         else if (!Tutorial.active) Replay.begin(info, msg.myClientID, myPlayerId);
+        Progress.beginMatch({ info: info, myPlayerId: myPlayerId, singleplayer: Transport.isLocal });
 
         // The catch-up backlog. Empty at a fresh start; non-empty after a
         // rejoin (§4), and the drain loop below is what works through it.
@@ -574,6 +578,9 @@
       Transport.turnComplete();
       lastTurnAt = performance.now();
       Perf.simTurn(lastTurnAt - turnStart);
+      // Per turn, not per frame: a backlog runs many ticks in one frame and
+      // achievement tracking must see each one (js/progress.js).
+      Progress.sample();
     }
     Replay.frame();
 

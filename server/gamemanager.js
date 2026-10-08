@@ -35,6 +35,8 @@ class GameManager {
   // is refused with `version-mismatch` (lockstep needs every client on one build).
   constructor(opts) {
     this.buildID = opts && opts.buildID;
+    // Optional server/loadouts.js store: persistentID -> equipped cosmetics.
+    this.loadouts = (opts && opts.loadouts) || null;
     this.games = new Map(); // gameID -> GameServer
 
     // Set by beginDrain(): the server is about to stop. No new lobbies, no
@@ -128,6 +130,11 @@ class GameManager {
     }, HEARTBEAT_INTERVAL_MS);
     if (typeof id.unref === 'function') id.unref();
     this._heartbeatIntervalID = id;
+  }
+
+  // A browser changed its loadout: update it in any lobby it is sitting in.
+  applyLoadout(persistentID, cosmetics) {
+    for (const game of this.games.values()) game.setCosmetics(persistentID, cosmetics);
   }
 
   getGame(gameID) {
@@ -245,7 +252,11 @@ class GameManager {
       }
       const game = this.createGame(msg.gameID);
       const client = new Client(ws);
-      const clientID = game.joinClient(client, { username: msg.username, spectator: msg.spectator, public: msg.public });
+      const clientID = game.joinClient(client, {
+        username: msg.username, spectator: msg.spectator, public: msg.public,
+        persistentID: msg.persistentID,
+        cosmetics: this.loadouts ? this.loadouts.get(msg.persistentID) : null
+      });
       if (clientID === null) return; // joinClient already closed/errored it (mid-game join)
       this._wire(game, ws, clientID);
     });

@@ -7,7 +7,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "node --test \"accounts/*.test.js\""
+    "test": "node --test \"accounts/*.test.js\" \"*.test.js\""
   },
   "dependencies": {
     "ws": "8.21.3"

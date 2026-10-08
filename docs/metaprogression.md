@@ -1,8 +1,11 @@
 # Metaprogression — Achievements and Cosmetics
 
-> **STATUS (2026-10-08): design only, nothing built.** §1 records the owner's
-> decisions from 2026-10-08. §3 (the achievement list) and §4 (the cosmetic list)
-> are drafts for the owner to tune. Tasks are in §9.
+> **STATUS (2026-10-08): PG-1 to PG-4 built** (tracking, achievements panel, toast
+> and end-screen block, cosmetics, account sync). 27 of 30 achievements are live;
+> three are switched off and need an owner decision (§3.1), which is what is left
+> of PG-5. Cosmetics were built without touching any hashed file (§6.3). §1 records the
+> owner's decisions from 2026-10-08. §3 and §4 are drafts for the owner to tune.
+> Tests: `node --test tools/progress.test.js` and `cd server && npm test`.
 
 ## Quick reference
 
@@ -17,9 +20,9 @@
 - **Guests earn progress** in the browser. It moves into the account on sign-in.
 - **Cosmetics are visible to other players**, so the equipped choice travels in
   the lobby and match-start data.
-- **Sim impact: none.** Nothing under `js/game/*`, `ai.js`, `map.js` or `noise.js`
-  changes. Two `js/net/` files do change (§6.3), which needs a golden re-record
-  at the owner's say-so; it is planned to share the protocol bump AU-4 already needs.
+- **Sim impact: none**, and no file the golden harness hashes is touched, so no
+  re-record is needed (owner's call, 2026-10-08). Cosmetics reach the server over
+  a small HTTP route instead of a protocol change (§6.3).
 - **Trust:** honour system. Unlocks are reported by the client, so a modified
   client can claim anything. Accepted, because nothing unlocked has any effect
   on play (§7).
@@ -84,8 +87,8 @@ Achievements that name a difficulty or mode state their own bar.
 ### 2.4 What other players see
 
 - Lobby roster: the player's title next to their name.
-- In the match: the title in the hover panel and nation menu; the capital emblem on
-  the map.
+- In the match: the title in the hover panel and nation menu; the emblem on the
+  nation's map label.
 - Fog of war: a cosmetic is only drawn where the thing it decorates is already
   visible to the viewer. It must never reveal a position (`fog-of-war.md`).
 
@@ -161,6 +164,27 @@ Rules that apply to all of them:
 - Any condition the sim's current state cannot answer directly (for example
   "never launched a nuke") is tracked by the client during the match (§6.1).
 
+### 3.1 As built
+
+- **Switched off** (`enabled: false` in `js/progress-defs.js`, not shown to players):
+  - *Admiral*: the sim does not record who sank a boat. Needs a counter in
+    `warships.js`, so a golden re-record.
+  - *Pacifist Economy*: the sim has no income figure to compare. Needs a sim-side
+    stat or a new definition.
+  - *Kingmaker*: cannot be earned as written. Donations are only allowed in team
+    matches, so there is none in a free-for-all. Needs a new definition.
+- **R2 applies to wins only.** First Blood, Landlord, Pact, Sea Legs and the hidden
+  ones can be earned in any match that isn't a replay or the tutorial.
+- *Comeback* needs an earlier peak of 4% of the map, since every nation starts under 2%.
+- *Big Country* counts the world map too (same 2000x1000 grid).
+- *Lone Wolf* is not awarded in team matches.
+- *Founder* is also earned by skipping through every tutorial step; exiting early does not earn it.
+- Tracking prefers a miss to a wrong award: a kill, betrayal or SAM shot that the
+  sim's state can't attribute with certainty is not counted.
+- A multiplayer win is counted once per match per browser (the last 30 game IDs
+  are remembered), since a page reload replays the match from the start.
+- Opening the singleplayer debug panel ends tracking for that match.
+
 ---
 
 ## 4. Cosmetics (draft list)
@@ -171,10 +195,10 @@ that carries meaning.
 | Type | Where it shows | v1 count | Example unlocks |
 |---|---|---|---|
 | **Title** | Lobby roster, hover panel, nation menu | ~12 | "Admiral" from Admiral, "the Unbroken" from Fortress, "Champion" from Champion |
-| **Capital emblem** | A small icon on the player's starting tile | ~8 | Crown from Conqueror, anchor from Sea Legs, drill bit from Driller |
+| **Map emblem** | A small symbol before the nation's name on its map label | ~8 | Crown from Conqueror, anchor from Sea Legs, drill bit from Driller |
 | **Victory banner** | End screen, for everyone in the match, when this player wins | ~4 | Styles from Warlord, Hard Target, Last One Standing |
 
-- Everyone has a default for each type (no title, plain capital, standard banner).
+- Everyone has a default for each type (no title, no emblem, standard banner).
 - Not every achievement unlocks a cosmetic; roughly half do.
 - **Left out of v1:** nation colours (R1), border styles and territory patterns.
   Borders and territory are the hottest drawing paths on large maps
@@ -221,15 +245,15 @@ The server needs only the list of valid IDs, to reject junk (§6.4).
 
 ### 6.1 Tracking (`js/progress.js`, new, client-only)
 
-- `Progress.beginMatch(info)` at match start; `Progress.sample()` about once a
-  second from the main loop; `Progress.endMatch()` from `UI.checkEndGame`.
+- `Progress.beginMatch(info)` at match start; `Progress.sample()` once per executed
+  turn from the main loop (kills, launches and SAM shots leave a trace for only a
+  tick or so). It detects the end of the match itself.
 - It **reads** sim state and never writes it. Per-match working state (peak land
   share, "was ever allied", nukes seen) lives on `Progress`, not on `Game`.
 - Skipped entirely when `Replay.active` or `Tutorial.active` (R3), apart from
   awarding Founder when the tutorial finishes.
-- Things sampled state cannot show (the player's own nuke launches, say) are
-  counted by watching for the result in sim state between samples where possible,
-  and otherwise from the player's own intents as they are sent.
+- End-of-match awards are a pure function of a match summary
+  (`Progress.evaluate`), which is what the tests exercise.
 - Unlocks are written to storage immediately, then synced (§6.4).
 
 ### 6.2 UI (`js/ui.js`, `js/render.js`)
@@ -237,29 +261,33 @@ The server needs only the list of valid IDs, to reject junk (§6.4).
 - `ui.js`: achievements panel and cosmetics picker in the main menu, the unlock
   toast, the "earned this match" block on the end screen, titles in the lobby
   roster, hover panel and nation menu.
-- `render.js`: capital emblems, drawn in the existing structure/icon pass and
-  cached per emblem so there is no per-frame allocation.
+- `render.js`: the emblem is a glyph drawn into the nation's cached label sprite,
+  so it costs nothing per frame.
 - Cosmetics for a match are read from a client-side table keyed by playerId, built
   from the match-start data. They are **not** written onto `Game.players`.
 
-### 6.3 Carrying cosmetics to other players (`js/net/`, `server/`)
+### 6.3 Carrying cosmetics to other players (`server/`, `js/progress.js`)
 
-- `join` gains an optional `cosmetics` field: `{title, emblem, banner}` IDs.
-- The server keeps it on the `Client`, checks each ID is a known ID of the right
-  type (unknown → dropped), and includes it in `lobby_info` players and in
-  `gameStartInfo.players`.
+As built. The first design added a field to the `join` message, but
+`js/net/protocol.js` is hashed by the golden harness, so this uses an HTTP side
+channel keyed by the browser ID that `join` already carries.
+
+- The client sends `POST /api/loadout` with `{persistentID, equipped}` at page
+  load and whenever the loadout changes. No sign-in needed.
+- The server keeps it in memory only (a few hours, capped), checks each ID is a
+  known cosmetic of the right type, and attaches it to the client when it joins a
+  lobby. A loadout that arrives while the player is in a lobby updates the roster;
+  one that arrives after the match starts does not change that match.
+- `lobby_info` players and `gameStartInfo.players` carry an optional
+  `cosmetics: {title, emblem, banner}`, left out for a player with none.
 - `Game.init` reads only `clientID`, `username` and `playerId` from that roster,
-  so the extra field never reaches the sim.
-- `LocalServer` adds the player's own cosmetics to the singleplayer
-  `gameStartInfo`, so singleplayer and multiplayer share one code path.
-- Replays store `gameStartInfo` whole, so a replay shows the cosmetics as they
-  were, with no extra work.
+  so the field never reaches the sim.
+- Singleplayer: `LocalServer`'s roster has no cosmetics, so the client shows its
+  own loadout for its own nation. A singleplayer replay therefore shows none.
+- Multiplayer replays store `gameStartInfo` whole and show the cosmetics as they were.
+- Emblems ride on the map label, which already obeys fog, rather than on the
+  starting tile, which the sim does not record.
 - Bots and tribes have none.
-- **Goldens:** `js/net/protocol.js` and `js/net/localserver.js` are hashed by the
-  harness, so `compare` will fail on this change even though sim behaviour is
-  identical. It needs a deliberate re-record. AU-4 already requires a protocol
-  bump and a `server/protocol.js` recopy; do both in the same milestone and
-  re-record once.
 
 ### 6.4 Sync (`server/accounts/`, `js/account.js`)
 
@@ -269,12 +297,15 @@ The server needs only the list of valid IDs, to reject junk (§6.4).
 | `POST /api/progress` | `{unlocked?, counters?, equipped?}` | the merged result |
 
 - `POST` merges as in §5.2 and returns the merged copy, which the client stores.
-- The server rejects unknown IDs, non-numeric or absurd counters, and equipped
-  items whose unlocking achievement isn't in the merged `unlocked` set. Same
+- The server drops (without an error) unknown IDs, non-numeric or absurd counters,
+  and equipped items whose unlocking achievement isn't in the merged `unlocked` set. Same
   session cookie, Origin check and JSON-only rules as the other `/api/*` routes.
   The existing 4 KB body limit is enough for the full list.
 - No account server (static hosting): everything works from localStorage and the
   sync calls are skipped, the same way the sign-in UI hides today.
+- The client records which account its local copy belongs to
+  (`borderwar_progress_owner`); a copy belonging to anyone but the signed-in user
+  is discarded, never merged.
 
 ---
 
@@ -304,13 +335,12 @@ The server needs only the list of valid IDs, to reject junk (§6.4).
   the toast and the end-screen line, reload and confirm it persisted; equip a
   title and emblem and see both in a singleplayer match; no console errors.
 - **Two-client check:** each player sees the other's title in the lobby and emblem
-  in the match; a fog match does not show an emblem on an unseen capital.
+  in the match; a fog match does not show an emblem for an unseen nation.
 - **Sign-in merge:** earn as a guest, sign in, confirm it is on the account; sign
   out, confirm the browser is empty; sign in elsewhere, confirm it is there.
 - **Performance:** emblems on the `large` map with a full lobby, checked with the
   allocation metrics in `perf-tools.md`.
-- **Goldens:** PG-1, PG-2 and PG-4 touch no hashed file; no compare needed. PG-3
-  does (§6.3).
+- **Goldens:** no hashed file is touched by any of this.
 
 ---
 
@@ -324,14 +354,14 @@ browser with no server or protocol change.
    achievements that need only sampled sim state.
 2. **PG-2 Achievements UI.** Menu panel, unlock toast, end-screen block.
 3. **PG-3 Cosmetics.** Picker, titles and emblems and banners drawn locally, then
-   the `join` / `lobby_info` / `gameStartInfo` field so others see them. Shares
-   the protocol bump and golden re-record with AU-4.
+   `/api/loadout` and the `lobby_info` / `gameStartInfo` field so others see them.
 4. **PG-4 Account sync.** Migration, `/api/progress`, merge on sign-in, clear on
    sign-out. Needs only AU-1 to AU-3, which are built.
 5. **PG-5 Fill out the list.** The remaining achievements that need per-match
    tracking beyond simple sampling, plus tuning thresholds from real play.
 
-Suggested order: PG-1, PG-2, PG-4, then PG-3 alongside AU-4, then PG-5.
+PG-5 as it stands: the three switched-off achievements in §3.1. Two need a sim
+change (so a golden re-record) or a new definition; one needs a new definition.
 
 ---
 

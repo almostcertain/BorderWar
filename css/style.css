@@ -1666,6 +1666,75 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
   text-decoration: underline;
 }
 
+.panel button#achLink {
+  padding: 4px 8px;
+  background: transparent;
+  color: #a9cdff;
+  font-size: 13px;
+  font-weight: 400;
+  text-decoration: underline;
+}
+
+/* --- Achievements (js/progress.js) ------------------------------------------ */
+#achOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 8, 16, 0.6);
+}
+#achOverlay .optionsPanel { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 420px; max-height: 100%; }
+#achCount { text-align: center; font-size: 13px; opacity: 0.7; }
+#achGuestNote { text-align: center; font-size: 12px; opacity: 0.7; }
+#achList { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
+.achGroup { margin-top: 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; }
+.achRow { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); opacity: 0.6; }
+.achRow.earned { opacity: 1; background: rgba(255, 200, 80, 0.1); }
+.achMedal { flex: none; font-size: 20px; line-height: 1; color: rgba(255, 255, 255, 0.4); }
+.achRow.earned .achMedal, .achToastRow .achMedal, #endEarned .achMedal { color: #ffc850; }
+.achText { display: flex; flex-direction: column; min-width: 0; font-size: 14px; }
+.achText small { font-size: 11px; opacity: 0.7; }
+
+#achTabs { display: flex; gap: 6px; }
+.panel #achTabs button { flex: 1 1 0; padding: 7px; font-size: 13px; background: rgba(255, 255, 255, 0.08); }
+.panel #achTabs button.active { background: rgba(61, 125, 255, 0.55); }
+#achLoadout { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.achGroup span { margin-left: 6px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.loadoutRow { display: flex; flex-wrap: wrap; gap: 6px; }
+.panel .loadoutRow button { padding: 6px 10px; font-size: 13px; font-weight: 400; background: rgba(255, 255, 255, 0.08); }
+.panel .loadoutRow button.active { background: rgba(255, 200, 80, 0.3); outline: 1px solid rgba(255, 200, 80, 0.8); }
+.panel .loadoutRow button:disabled { opacity: 0.35; cursor: default; }
+.playerTitle { font-size: 0.7em; font-weight: 400; font-style: italic; opacity: 0.7; }
+.rTitle { font-size: 10px; font-weight: 400; font-style: italic; opacity: 0.75; }
+
+/* Victory banners: the winner's cosmetic, on everyone's end screen. */
+#endOverlay[data-banner="banner_warlord"] .panel { border-color: #c8443a; box-shadow: 0 0 0 2px rgba(200, 68, 58, 0.5), 0 10px 34px rgba(120, 20, 10, 0.7); background: linear-gradient(rgba(70, 14, 12, 0.95), rgba(10, 16, 30, 0.92) 55%); }
+#endOverlay[data-banner="banner_iron"] .panel { border-color: #b9c4d2; box-shadow: 0 0 0 2px rgba(185, 196, 210, 0.5), 0 10px 34px rgba(0, 0, 0, 0.7); background: linear-gradient(rgba(70, 78, 90, 0.95), rgba(10, 16, 30, 0.92) 55%); }
+#endOverlay[data-banner="banner_last_standing"] .panel { border-color: #ffc850; box-shadow: 0 0 0 2px rgba(255, 200, 80, 0.5), 0 10px 34px rgba(140, 90, 0, 0.7); background: linear-gradient(rgba(90, 62, 8, 0.95), rgba(10, 16, 30, 0.92) 55%); }
+
+#achToast { display: flex; flex-direction: column; gap: 4px; }
+.achToastRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: rgba(50, 36, 8, 0.95);
+  border: 1px solid rgba(255, 200, 80, 0.7);
+  color: #ffeec8;
+  /* 5s in total, matching the timeout in UI.showAchievementToast. */
+  animation: donationAlertIn 0.2s ease-out, achToastFade 1s ease-in 4s forwards;
+}
+@keyframes achToastFade { to { opacity: 0; } }
+
+#endEarned { display: flex; flex-direction: column; gap: 3px; font-size: 13px; text-align: center; }
+#endEarned small { font-size: 11px; opacity: 0.6; }
+#endEarned .achMedal { font-size: 14px; }
+#endOverlay.minimized #endEarned { display: none; }
+
 /* --- Options (js/options.js) ------------------------------------------------ */
 /* Cog in the top-right corner, above the menu overlay; hidden once a match
    is running (the overlay is what it opens from). */

@@ -29,6 +29,8 @@ function exportUser(db, email, now) {
   if (!user) return null;
   let settings = {};
   try { settings = JSON.parse(user.settings_json) || {}; } catch (e) { /* keep {} */ }
+  const parse = (json) => { try { return JSON.parse(json) || {}; } catch (e) { return {}; } };
+  const progress = parse(user.progress_json);
   const sessions = db.prepare('SELECT created_at, last_seen_at, expires_at FROM sessions WHERE user_id = ? ORDER BY created_at').all(user.id);
   const matches = db.prepare(
     'SELECT m.game_id, m.ended_at, m.duration_turns, m.map, m.mode, m.nation_count, p.player_id, p.result, p.place '
@@ -43,6 +45,7 @@ function exportUser(db, email, now) {
       settings,
       createdAt: iso(user.created_at)
     },
+    progress: { unlocked: progress.unlocked || {}, counters: progress.counters || {}, equipped: parse(user.equipped_json) },
     sessions: sessions.map(s => ({ createdAt: iso(s.created_at), lastSeenAt: iso(s.last_seen_at), expiresAt: iso(s.expires_at) })),
     matches: matches.map(m => ({
       gameId: m.game_id, endedAt: iso(m.ended_at), durationTurns: m.duration_turns, map: m.map, mode: m.mode,

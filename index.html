@@ -135,6 +135,7 @@
   </div>
   <div id="nukeAlert" class="hidden"></div>
   <div id="donationAlert" class="hidden"></div>
+  <div id="achToast" class="hidden"></div>
   <div id="drillHud" class="hidden"><span id="drillHudText"></span><span id="drillHudTime"></span></div>
   <div id="diploBanner" class="hidden">
     <span id="diploText"></span>
@@ -214,6 +215,18 @@
     </label>
     <button type="button" id="optCopyPerf" class="linkBtn" title="Copies frame, sim and draw timings from the current or last match, to paste into a bug report.">Copy performance report</button>
     <button type="button" id="optionsClose" class="primaryBtn">Done</button>
+  </div>
+</div>
+
+<div id="achOverlay" class="hidden">
+  <div class="panel optionsPanel" role="dialog" aria-label="Achievements">
+    <h2>Achievements</h2>
+    <div id="achCount"></div>
+    <div id="achTabs"><button type="button" data-tab="medals">Medals</button><button type="button" data-tab="cosmetics">Cosmetics</button></div>
+    <div id="achList"></div>
+    <div id="achLoadout" class="hidden"></div>
+    <div id="achGuestNote" class="hidden">Sign in to keep these on every device.</div>
+    <button type="button" id="achClose" class="primaryBtn">Done</button>
   </div>
 </div>
 
@@ -514,7 +527,7 @@
     <div id="lobbyError" class="hidden"></div>
     </div>
 
-    <div id="menuFoot"><button type="button" id="replaysLink" class="modeTab" data-mode="replay" data-title="Replays">Replays</button></div>
+    <div id="menuFoot"><button type="button" id="replaysLink" class="modeTab" data-mode="replay" data-title="Replays">Replays</button><button type="button" id="achLink">Achievements</button></div>
 
     <div id="communityLinks">
       <a href="https://www.reddit.com/r/BorderWar/" target="_blank" rel="noopener" title="r/BorderWar on Reddit" aria-label="r/BorderWar on Reddit"><img src="assets/icons/reddit.svg" alt="" draggable="false"></a>
@@ -544,6 +557,7 @@
     <button id="endMinBtn" title="Hide">&minus;</button>
     <h1 id="endTitle">Defeated</h1>
     <p id="endText"></p>
+    <div id="endEarned" class="hidden"></div>
     <button id="restartBtn">Play Again</button>
     <div id="endReplayRow" class="hidden"><button id="endReplayBtn" type="button" class="linkBtn">Watch replay</button><button id="endSaveBtn" type="button" class="linkBtn">Download replay</button></div>
   </div>
@@ -578,7 +592,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'render', 'input', 'account', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'render', 'input', 'account', 'progress-defs', 'progress', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

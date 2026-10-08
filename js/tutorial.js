@@ -293,6 +293,7 @@ const Tutorial = {
     const s = this.STEPS[this.step];
     const touch = window.matchMedia('(pointer: coarse)').matches;
     const finished = !s;
+    if (finished) Progress.unlock('founder');
     document.getElementById('tutStep').textContent = finished ? '' : (this.step + 1) + '/' + this.STEPS.length;
     document.getElementById('tutTitle').textContent = finished ? 'You are ready' : s.title;
     document.getElementById('tutText').textContent = finished

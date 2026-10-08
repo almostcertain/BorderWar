@@ -120,8 +120,15 @@ try {
   log.warn('accounts', 'disabled: ' + (e && e.message || e));
 }
 
+// Equipped cosmetics (server/loadouts.js). Not part of accounts: guests have
+// them too, so this answers even when accounts are disabled.
+const loadouts = require('./loadouts').createRoute({
+  log, onChange: (persistentID, equipped) => gameManager.applyLoadout(persistentID, equipped)
+});
+
 const server = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0];
+  if (urlPath === '/api/loadout') return loadouts.handle(req, res);
   if (urlPath.startsWith('/api/')) {
     if (accounts) return accounts.handle(req, res);
     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -146,7 +153,7 @@ const server = http.createServer((req, res) => {
 // the tunnelled deployment (§6.1) has exactly one thing to point at.
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
-const gameManager = new GameManager({ buildID: JSON.parse(BUILD_INFO).id });
+const gameManager = new GameManager({ buildID: JSON.parse(BUILD_INFO).id, loadouts: loadouts.store });
 
 // Singleplayer matches never reach the WS server; the page reports them here
 // so the admin page can count them (server/presence.js).

@@ -133,6 +133,8 @@ users
   display_name    TEXT NOT NULL          -- 1–20 chars, not unique
   tag             TEXT NOT NULL DEFAULT ''
   settings_json   TEXT NOT NULL DEFAULT '{}'
+  progress_json   TEXT NOT NULL DEFAULT '{}'   -- achievements; see metaprogression.md §5.2
+  equipped_json   TEXT NOT NULL DEFAULT '{}'   -- equipped cosmetics
   created_at      INTEGER NOT NULL       -- unix ms
 
 sessions
@@ -241,6 +243,7 @@ the open internet.
 | `POST /api/password` | `{current,next}` | resets sessions, issues a new cookie |
 | `POST /api/delete-account` | `{password}` | deletes user, sessions and match rows |
 | `GET /api/stats` | — | `{games,wins,losses,avgPercentile,recent:[…20]}` |
+| `GET`/`POST /api/progress` | see `metaprogression.md` §6.4 | `{unlocked,counters,equipped}` |
 
 Body limit 4 KB. JSON errors: `{error:'code', message:'…'}` with stable codes
 (`email-taken`, `bad-credentials`, `rate-limited`, `invalid`, `unauthorized`).

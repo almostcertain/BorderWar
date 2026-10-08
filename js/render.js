@@ -3318,7 +3318,8 @@ const Render = {
     this.labelEm('');
     const mc = this.measureCtx;
     mc.font = '600 ' + font + 'px system-ui, sans-serif';
-    const nameW = mc.measureText(sp.wantName).width + nIcons * iconStep * font;
+    const emblem = sp.wantEmblem;
+    const nameW = mc.measureText(sp.wantName).width + (nIcons + (emblem ? 1 : 0)) * iconStep * font;
     mc.font = font + 'px system-ui, sans-serif';
     const troopsW = mc.measureText(sp.wantTroops).width;
     mc.font = '600 100px system-ui, sans-serif';
@@ -3355,6 +3356,13 @@ const Render = {
     }
     g.font = '600 ' + font + 'px system-ui, sans-serif';
     g.textAlign = 'left';
+    if (emblem) {
+      g.strokeText(emblem, x, nameY);
+      g.fillStyle = '#ffd257';
+      g.fillText(emblem, x, nameY);
+      g.fillStyle = '#ffffff';
+      x += iconStep * font;
+    }
     g.strokeText(sp.wantName, x, nameY);
     g.fillText(sp.wantName, x, nameY);
 
@@ -3366,6 +3374,7 @@ const Render = {
     sp.w = w; sp.h = h; sp.ox = cx; sp.oy = cy;
     sp.font = font;
     sp.name = sp.wantName;
+    sp.emblem = emblem;
     sp.troops = sp.wantTroops;
     // An icon whose SVG hasn't loaded yet leaves the sprite marked stale, so it
     // is redrawn once the image arrives.
@@ -3520,6 +3529,8 @@ const Render = {
 
       // Icons scale with the font, so the whole name line does too and the
       // shrink-to-fit below stays a single proportional step.
+      const emblem = Progress.emblemOf(p.id);
+      if (emblem) nIcons++;
       const nameW = (sp.nameEm + nIcons * 1.3) * font;   // icon (1.05em) + gap (0.25em), in ems
       const widest = Math.max(nameW, sp.troopsEm * font);
       if (widest > boxW * 0.92) {
@@ -3536,6 +3547,7 @@ const Render = {
       sp.wantIcons = icons;
       sp.wantTroops = troops;
       sp.wantName = p.name;
+      sp.wantEmblem = emblem;
       sp.px = px;
       sp.py = py;
       sp.usedAt = frame;
@@ -3545,7 +3557,7 @@ const Render = {
       // meantime the old sprite is stamped scaled to the new size, which is all
       // a nation growing a pixel needs. Growing past LABEL_UPSCALE_MAX (zooming
       // in) can't wait: an upscaled sprite is visibly blurry.
-      if (!sp.canvas || sp.icons !== icons || sp.name !== p.name || font > sp.font * this.LABEL_UPSCALE_MAX ||
+      if (!sp.canvas || sp.icons !== icons || sp.name !== p.name || sp.emblem !== emblem || font > sp.font * this.LABEL_UPSCALE_MAX ||
           ((sp.font !== font || sp.troops !== troops) && now - sp.drawnMs >= this.LABEL_REFRESH_MS)) stale.push(sp);
       L.font = font;
     }

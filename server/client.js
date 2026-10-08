@@ -16,6 +16,8 @@ class Client {
     this.username = null;   // string — from the `join` message
     this.spectator = false; // bool — from the `join` message
     this.active = false;    // bool — true while counted in the roster
+    this.persistentID = null; // string from `join`; never logged or broadcast
+    this.cosmetics = null;    // { title, emblem, banner } or null (server/loadouts.js)
 
     // Intents sent since the last endTurn() reset. A cap on flooding
     // traffic, not a security control (D2).

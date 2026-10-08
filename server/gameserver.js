@@ -15,6 +15,14 @@ function who(client) {
   return name + ' (#' + client.clientID + ')';
 }
 
+// Adds `cosmetics` to a roster entry only when the client has some, so an
+// entry without any is unchanged on the wire.
+function withCosmetics(entry, client) {
+  const c = client.cosmetics;
+  if (c) entry.cosmetics = { title: c.title, emblem: c.emblem, banner: c.banner };
+  return entry;
+}
+
 // How often the ACTIVE-phase liveness sweep runs (see _sweepLiveness).
 const LIVENESS_SWEEP_INTERVAL_MS = 3000;
 
@@ -125,6 +133,8 @@ class GameServer {
     client.clientID = clientID;
     client.username = opts.username;
     client.spectator = !!opts.spectator;
+    client.persistentID = opts.persistentID || null;
+    client.cosmetics = opts.cosmetics || null;
     client.active = true;
     this.clients.set(clientID, client);
 
@@ -375,6 +385,20 @@ class GameServer {
 
   // --- Lobby (MP-2.3) --------------------------------------------------------
 
+  // A loadout change for one browser (server/loadouts.js). Lobby only: a
+  // started match keeps the cosmetics it started with.
+  setCosmetics(persistentID, cosmetics) {
+    if (this.stage !== Protocol.GAME_PHASE.LOBBY) return;
+    let changed = false;
+    for (const client of this.clients.values()) {
+      if (client.persistentID !== persistentID) continue;
+      if (JSON.stringify(client.cosmetics) === JSON.stringify(cosmetics)) continue;
+      client.cosmetics = cosmetics;
+      changed = true;
+    }
+    if (changed) this._broadcastLobbyInfo();
+  }
+
   // Broadcast the roster to everyone while in LOBBY; a no-op afterwards.
   // The `lobby` shape is defined here (protocol.js only checks it is an
   // object): game, host, roster. Spectators are included, unlike in
@@ -385,11 +409,11 @@ class GameServer {
     const lobby = {
       gameID: this.gameID,
       creatorClientId: this.creatorClientId,
-      players: Array.from(this.clients.values()).map((c) => ({
+      players: Array.from(this.clients.values()).map((c) => withCosmetics({
         clientID: c.clientID,
         username: c.username,
         spectator: c.spectator
-      }))
+      }, c))
     };
 
     // Auto-lobby-only fields for the Join screen; omitted for manual lobbies.
@@ -515,14 +539,14 @@ class GameServer {
     const players = [];
     for (const client of this.clients.values()) {
       if (client.spectator) continue;
-      players.push({
+      players.push(withCosmetics({
         clientID: client.clientID,
         username: client.username,
         // Roster position, not the clientID counter: Game.init places humans
         // in slots 0..H-1, and clientIDs stop being contiguous the moment
         // anyone leaves and re-joins the lobby.
         playerId: players.length
-      });
+      }, client));
     }
 
     this.gameStartInfo = {

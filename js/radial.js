@@ -297,7 +297,8 @@ const Radial = {
     // naming what's actually there instead of a name and troop count.
     const colour = p ? `rgb(${p.color[0]},${p.color[1]},${p.color[2]})` : 'rgb(120,135,150)';
     const traitor = p && Game.isTraitor(p) ? ' ' + iconHtml('traitor') : '';
-    const label = p ? `${escapeHtml(p.name)}${traitor} · ${formatCount(p.troops)}`
+    const title = p ? Progress.titleOf(p.id) : '';
+    const label = p ? `${escapeHtml(p.name)}${title ? ' <tspan class="rTitle">' + escapeHtml(title) + '</tspan>' : ''}${traitor} · ${formatCount(p.troops)}`
                      : (this.targetId === NEUTRAL ? 'Unclaimed land' : 'Open water');
     // Back and Donate are icons; Close stays a plain ✕ glyph (not an emoji).
     const centre = this.mode === 'donate' ? { attr: 'data-back', icon: 'back', tip: 'Back' }

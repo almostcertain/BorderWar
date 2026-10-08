@@ -45,7 +45,10 @@ const MIGRATIONS = [
      result    TEXT NOT NULL,
      place     INTEGER,
      PRIMARY KEY (match_id, user_id)
-   );`
+   );`,
+  // Achievements and equipped cosmetics (docs/metaprogression.md §5.2).
+  `ALTER TABLE users ADD COLUMN progress_json TEXT NOT NULL DEFAULT '{}';
+   ALTER TABLE users ADD COLUMN equipped_json TEXT NOT NULL DEFAULT '{}';`
 ];
 
 function schemaVersion(db) {
@@ -83,4 +86,4 @@ function open(file) {
   return db;
 }
 
-module.exports = { open, schemaVersion, DEFAULT_PATH, LATEST_VERSION: MIGRATIONS.length };
+module.exports = { open, migrate, schemaVersion, DEFAULT_PATH, LATEST_VERSION: MIGRATIONS.length };
