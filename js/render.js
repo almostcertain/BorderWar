@@ -168,6 +168,7 @@ const Render = {
     if (this.hoverLayer) this.disposeLayer(this.hoverLayer);
     this.tileLayer = this.makeLayer(this.tileCanvas, true);
     this.hoverLayer = this.makeLayer(this.hoverCanvas, false);
+    this.hoverLayer.snap = true;
   },
 
   // --- Chunked bitmap layers ---------------------------------------------------
@@ -286,7 +287,17 @@ const Render = {
     for (const c of layer.chunks) {
       if (c.x > vx1 || c.x + c.w < vx0 || c.y > vy1 || c.y + c.h < vy0) continue;
       if (box && (c.x > box.maxX || c.x + c.w <= box.minX || c.y > box.maxY || c.y + c.h <= box.minY)) continue;
-      if (c.bmp) ctx.drawImage(c.bmp, ox + c.x, oy + c.y);
+      if (layer.snap) {
+        // A translucent layer's chunks can't overlap, so each edge lands on a
+        // device pixel shared with its neighbour: a fractional edge would be
+        // antialiased from both sides and leave a dimmer hairline at the seam.
+        const hx = this.canvas.width / 2, hy = this.canvas.height / 2;
+        const x0 = Math.round((ox + c.x) * s + hx), x1 = Math.round((ox + c.x + c.w) * s + hx);
+        const y0 = Math.round((oy + c.y) * s + hy), y1 = Math.round((oy + c.y + c.h) * s + hy);
+        const dx = (x0 - hx) / s, dy = (y0 - hy) / s, dw = (x1 - x0) / s, dh = (y1 - y0) / s;
+        if (c.bmp) ctx.drawImage(c.bmp, 0, 0, c.w, c.h, dx, dy, dw, dh);
+        else ctx.drawImage(layer.canvas, c.x, c.y, c.w, c.h, dx, dy, dw, dh);
+      } else if (c.bmp) ctx.drawImage(c.bmp, ox + c.x, oy + c.y);
       else ctx.drawImage(layer.canvas, c.x, c.y, c.w, c.h, ox + c.x, oy + c.y, c.w, c.h);
     }
   },
