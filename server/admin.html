@@ -61,6 +61,9 @@
   th:first-child, td:first-child { text-align:left; }
   th { position:sticky; top:0; background:var(--panel); color:var(--dim); font-weight:500; }
   textarea { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 10px; font:inherit; width:100%; min-height:120px; resize:vertical; }
+  #newsBox { margin-top:18px; }
+  #newsBox summary { font-size:13px; font-weight:bold; text-transform:uppercase; letter-spacing:.06em; margin-bottom:8px; }
+  #newsBox summary span { font-weight:normal; text-transform:none; letter-spacing:0; margin-left:8px; }
   #news { display:grid; gap:8px; max-width:560px; }
   #news input { width:100%; }
   #news .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
@@ -109,7 +112,8 @@
   <div id="active"></div>
   <h2>Lobbies</h2>
   <div id="lobbies"></div>
-  <h2>What's new post</h2>
+  <details id="newsBox" open>
+  <summary>What's new post<span id="newsBrief"></span></summary>
   <form id="news">
     <input id="newsTitle" type="text" maxlength="80" autocomplete="off" placeholder="Title">
     <div id="newsTools" role="toolbar" aria-label="Formatting">
@@ -128,6 +132,7 @@
       <span id="newsStatus"></span>
     </div>
   </form>
+  </details>
 </main>
 
 <script src="/js/markup.js"></script>
@@ -509,7 +514,13 @@
   // ---- What's new post (server/news.js). Loaded once per sign-in, so a
   // refresh never overwrites a draft.
   var newsLoaded = false;
+  var NEWS_OPEN_KEY = 'borderwar-admin-news-open';
+  try { if (localStorage.getItem(NEWS_OPEN_KEY) === '0') $('newsBox').open = false; } catch (e) {}
+  $('newsBox').addEventListener('toggle', function () {
+    try { localStorage.setItem(NEWS_OPEN_KEY, $('newsBox').open ? '1' : '0'); } catch (e) {}
+  });
   function newsStatus(post, verb) {
+    $('newsBrief').textContent = post ? '· live: ' + (post.title || 'untitled') : '· none';
     $('newsStatus').style.color = '';
     $('newsStatus').textContent = post ? verb + ' ' + new Date(post.at).toLocaleString() : 'No post is showing.';
     $('newsRemove').disabled = !post;
