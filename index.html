@@ -269,6 +269,16 @@
   </form>
 </div>
 
+<!-- The What's new post (server/news.js); UI.setupNews fills it. -->
+<div id="newsOverlay" class="hidden">
+  <div class="panel optionsPanel" role="dialog" aria-labelledby="newsTitle">
+    <h2 id="newsTitle"></h2>
+    <div id="newsDate"></div>
+    <div id="newsBody"></div>
+    <button type="button" id="newsClose" class="primaryBtn">Got it</button>
+  </div>
+</div>
+
 <div id="installGuide" class="hidden">
   <div class="panel optionsPanel" role="dialog" aria-label="Add to Home Screen">
     <h2>Add to Home Screen</h2>
@@ -527,7 +537,7 @@
     <div id="lobbyError" class="hidden"></div>
     </div>
 
-    <div id="menuFoot"><button type="button" id="replaysLink" class="modeTab" data-mode="replay" data-title="Replays">Replays</button><button type="button" id="achLink">Achievements</button></div>
+    <div id="menuFoot"><button type="button" id="replaysLink" class="modeTab" data-mode="replay" data-title="Replays">Replays</button><button type="button" id="achLink">Achievements</button><button type="button" id="newsLink" class="hidden">What's new</button></div>
 
     <div id="communityLinks">
       <a href="https://www.reddit.com/r/BorderWar/" target="_blank" rel="noopener" title="r/BorderWar on Reddit" aria-label="r/BorderWar on Reddit"><img src="assets/icons/reddit.svg" alt="" draggable="false"></a>
@@ -592,7 +602,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'render', 'input', 'account', 'progress-defs', 'progress', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'render', 'input', 'account', 'progress-defs', 'progress', 'markup', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

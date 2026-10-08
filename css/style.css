@@ -1666,7 +1666,8 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
   text-decoration: underline;
 }
 
-.panel button#achLink {
+.panel button#achLink,
+.panel button#newsLink {
   padding: 4px 8px;
   background: transparent;
   color: #a9cdff;
@@ -1674,6 +1675,38 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
   font-weight: 400;
   text-decoration: underline;
 }
+
+/* --- What's new (UI.setupNews) ----------------------------------------------- */
+.panel button#newsLink.unread { color: #ffc850; font-weight: 700; }
+.panel button#newsLink.unread::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: #ffc850;
+  vertical-align: middle;
+}
+#newsOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 8, 16, 0.6);
+}
+#newsOverlay .optionsPanel { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 420px; max-height: 100%; }
+#newsDate { text-align: center; font-size: 12px; opacity: 0.6; }
+#newsBody { flex: 1 1 auto; min-height: 0; overflow-y: auto; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+#newsBody > * { margin: 0 0 10px; }
+#newsBody > :last-child { margin-bottom: 0; }
+#newsBody h3 { font-size: 16px; }
+#newsBody h4 { font-size: 14px; }
+#newsBody ul { padding-left: 20px; }
+#newsBody a { color: #a9cdff; }
 
 /* --- Achievements (js/progress.js) ------------------------------------------ */
 #achOverlay {

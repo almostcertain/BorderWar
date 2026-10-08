@@ -140,6 +140,7 @@ const server = http.createServer((req, res) => {
     return res.end('Not found');
   }
   if (urlPath === '/presence') return presence.handle(req, res);
+  if (req.method === 'GET' && urlPath === '/news') return news.serve(req, res);
   if (req.method === 'GET' && urlPath === '/lobbies') return serveLobbyList(req, res);
   if (req.method === 'GET' && urlPath === '/buildinfo.json') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -159,6 +160,11 @@ const gameManager = new GameManager({ buildID: JSON.parse(BUILD_INFO).id, loadou
 // so the admin page can count them (server/presence.js).
 const presence = require('./presence').create();
 
+// The What's new post (server/news.js), written from the admin page. Saved to
+// disk only on the default port, for the same reason as chart history below.
+const newsModule = require('./news');
+const news = newsModule.create({ file: process.env.BORDERWAR_NEWS_FILE || (PORT === 8124 ? newsModule.FILE : null), log });
+
 // Admin stats page (server/admin.js): /admin, token-protected. Optional like
 // accounts: if the token can't be read or written, /admin is 404.
 // Chart history is saved to disk only on the default port, so a dev server
@@ -166,7 +172,7 @@ const presence = require('./presence').create();
 let admin = null;
 try {
   admin = require('./admin').create({
-    gameManager, wss, presence, log, build: JSON.parse(BUILD_INFO).id, persistHistory: PORT === 8124,
+    gameManager, wss, presence, news, log, build: JSON.parse(BUILD_INFO).id, persistHistory: PORT === 8124,
     drain: (maxMs) => drain('admin drain requested', maxMs)
   });
 } catch (e) {

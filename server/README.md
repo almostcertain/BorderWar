@@ -41,6 +41,14 @@ node tools/drain-server.js --max-minutes 30
 It calls `POST /admin/drain` with the admin token and returns when the server
 has exited. The Cloudflare tunnel is a separate process; stop it afterwards.
 
+### What's new post
+
+The admin page (`/admin`) has a "What's new post" box: a title and some text,
+with basic markup (headings, lists, bold, italic, links; `js/markup.js`) and a
+live preview; the buttons above the text insert the markup for you. Publishing it puts a "What's new" link on the game's main menu, highlighted
+until a player has opened it; "Remove post" takes the link away. There is one
+post at a time and it is kept in `server/data/news.json`.
+
 ### Player accounts: data and admin commands
 
 Accounts live in one SQLite file, `server/data/borderwar.db` (override with

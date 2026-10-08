@@ -6,6 +6,8 @@
 //   GET /admin/history[?since=ms]  one sample a minute for the page's charts
 //   POST /admin/drain[?maxMinutes=n]  stop taking new games, exit once active
 //                     matches finish (tools/drain-server.js); same token
+//   POST /admin/news  publish or remove the What's new post (server/news.js);
+//                     same token
 //
 // The token is BORDERWAR_ADMIN_TOKEN if set, otherwise a random one generated
 // on first start and kept in server/data/admin-token.txt (gitignored). There is
@@ -225,6 +227,12 @@ function create(opts) {
       const m = /[?&]maxMinutes=(\d+(?:\.\d+)?)/.exec(req.url);
       return send(res, 200, 'application/json; charset=utf-8',
         JSON.stringify(opts.drain(m ? Number(m[1]) * 60000 : 0)));
+    }
+    if (urlPath === '/admin/news') {
+      if (!opts.news) return send(res, 404, 'text/plain', 'Not found');
+      if (req.method !== 'POST') return send(res, 405, 'text/plain', 'Method not allowed');
+      if (!authorized(req)) return send(res, 401, 'application/json; charset=utf-8', '{"error":"unauthorized"}');
+      return opts.news.publish(req, res);
     }
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'Method not allowed');
     if (urlPath === '/admin' || urlPath === '/admin/') {

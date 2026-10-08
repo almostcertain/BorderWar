@@ -168,6 +168,7 @@ const UI = {
     this.setupTips();
     this.setupLobby();
     this.setupProgress();
+    this.setupNews();
     this.setupAccount();
     this.setupReplays();
 
@@ -2063,6 +2064,44 @@ const UI = {
     // The winner's victory banner, shown to everyone in the match.
     overlay.dataset.banner = Game.winnerId !== null ? Progress.bannerOf(Game.winnerId) : '';
     this.renderEndEarned();
+  },
+
+  // --- What's new (server/news.js) --------------------------------------------
+
+  // The menu link appears only when the server has a post, and is marked
+  // unread until this browser has opened that post.
+  setupNews() {
+    const SEEN_KEY = 'borderwar_news_seen';
+    const overlay = document.getElementById('newsOverlay');
+    const link = document.getElementById('newsLink');
+    const close = () => overlay.classList.add('hidden');
+    let post = null;
+    link.addEventListener('click', () => {
+      if (!post) return;
+      document.getElementById('newsTitle').textContent = post.title || "What's new";
+      document.getElementById('newsDate').textContent =
+        new Date(post.at).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+      Markup.render(document.getElementById('newsBody'), post.body);
+      overlay.classList.remove('hidden');
+      link.classList.remove('unread');
+      try { localStorage.setItem(SEEN_KEY, String(post.at)); } catch (e) { /* ignore */ }
+    });
+    document.getElementById('newsClose').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && !overlay.classList.contains('hidden')) close();
+    });
+    fetch('news', { credentials: 'omit', cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(n => {
+        if (!n || !n.post || typeof n.post.body !== 'string' || typeof n.post.title !== 'string') return;
+        post = n.post;
+        let seen = '';
+        try { seen = localStorage.getItem(SEEN_KEY) || ''; } catch (e) { /* ignore */ }
+        link.classList.toggle('unread', seen !== String(post.at));
+        link.classList.remove('hidden');
+      })
+      .catch(() => { /* no server, no post */ });
   },
 
   // --- Achievements (js/progress.js, docs/metaprogression.md) ----------------
