@@ -2,12 +2,10 @@
 // Extends the Game singleton declared in game/core.js. Move-only split of the
 // former js/game.js; see docs/game-split-plan.md.
 Object.assign(Game, {
-  // openfront.wiki/Retreating: ordered instantly by the X next to an attack,
-  // but the troops don't actually leave the field for RETREAT_DELAY (their 20
-  // ticks, 2s at 10/sec) — stepAttack stops conquering the moment this flips,
-  // and the survivors return to the reserve once the timer runs out. Docked
-  // ATTACK_RETREAT_MALUS if the front was pushing on another player; walking
-  // away from empty land costs nothing.
+  // A retreat is ordered instantly, but the troops leave the field after
+  // RETREAT_DELAY: stepAttack stops conquering at once and the survivors
+  // return to the reserve when the timer runs out, docked
+  // ATTACK_RETREAT_MALUS if the front was pushing on another player.
   RETREAT_DELAY: 2,
   ATTACK_RETREAT_MALUS: 0.25,
 
@@ -35,18 +33,12 @@ Object.assign(Game, {
   // Launches an attack from `attacker` against every tile of `targetId` that
   // touches their border. targetId may be NEUTRAL for unclaimed land.
   //
-  // `landmassId`, when given, scopes the whole thing to one landmass —
-  // GameMap.landmassId's connected-component id, so two separate islands
-  // always carry different values. A click on one island must not also push
-  // on a front against the same enemy held on another island entirely, so
-  // consolidation below only folds together attacks sharing the same
-  // landmassId, and refreshFrontier only scans that landmass's border. This
-  // is a deliberate deviation from OpenFront's own AttackExecution, which
-  // consolidates across the attacker's whole border regardless of landmass.
-  // `null` (the AI's own calls, which have no clicked tile to scope by, and
-  // any legacy caller) keeps that original unscoped behaviour — it only ever
-  // consolidates with, and scans borders alongside, other landmassId:null
-  // attacks, never with a real landmass id.
+  // `landmassId`, when given, scopes it to one landmass (GameMap.landmassId):
+  // a click on one island must not also push a front against the same enemy
+  // on another, so consolidation only folds together attacks with the same
+  // landmassId, and refreshFrontier only scans that landmass's border.
+  // `null` (the AI's calls) is unscoped and only ever consolidates with
+  // other landmassId:null attacks.
   launchAttack(attackerId, targetId, troops, landmassId = null) {
     const attacker = this.players[attackerId];
     if (troops < 20 || attacker.troops < troops) return false;
@@ -61,15 +53,11 @@ Object.assign(Game, {
     // attacker for a while. Every attack order, top-ups included.
     this.embargoOnAttack(attackerId, targetId);
 
-    // Every existing attack against this target *on the same landmass*
-    // consolidates into one shared siege pool: all of them fold their troops
-    // into a single survivor, which then re-scans that landmass's current
-    // border (refreshFrontier) so the combined pool pushes on every front it
-    // touches there. A beachhead on another landmass entirely is left alone —
-    // that is the fix for the island-bleed this used to have.
-    // A retreating front is on its way out — folding a fresh push into it
-    // would just re-arm troops already committed to leaving, so it's skipped
-    // here and a brand new attack is opened alongside it instead.
+    // Every existing attack against this target on the same landmass folds
+    // into one survivor, which then re-scans that landmass's border
+    // (refreshFrontier). A retreating front is skipped: folding a fresh push
+    // into it would re-arm troops committed to leaving, so a new attack is
+    // opened alongside it.
     let survivor = null;
     for (let i = this.attacks.length - 1; i >= 0; i--) {
       const at = this.attacks[i];
@@ -78,12 +66,9 @@ Object.assign(Game, {
       if (survivor === null) survivor = at;
       else { survivor.troops += at.troops; this.attacks.splice(i, 1); }
     }
-    // The survivor is an existing attack object, mutated in place, so it keeps
-    // the id it was born with — a fresh id here would silently invalidate every
-    // cancel_attack already in flight against this front, which is the one
-    // thing consolidation must not do. The attacks folded *into* it lose their
-    // ids permanently; a cancel_attack naming one of those simply resolves to
-    // nothing, on every client alike. See nextAttackId.
+    // The survivor is mutated in place and keeps its id, so cancel_attack
+    // intents already in flight stay valid. The attacks folded into it lose
+    // their ids for good. See nextAttackId.
     if (survivor) {
       survivor.troops += troops;
       attacker.troops -= troops;
@@ -122,12 +107,9 @@ Object.assign(Game, {
     target.frontOpenedBy = attacker.id;
   },
 
-  // Two nations pushing into each other are one battle, not two independent
-  // ones. Their committed forces meet and destroy each other, so blunting an
-  // attack costs the attacker the troops it stopped and whichever side has
-  // anything left is the one still advancing. Without this the two pushes pass
-  // straight through one another, each holding its full strength and each
-  // drawing its own counter on the same stretch of border.
+  // Two nations pushing into each other are one battle: their committed
+  // forces destroy each other and whichever side has anything left keeps
+  // advancing. Otherwise the two pushes pass straight through one another.
   resolveOpposingFronts() {
     for (let i = 0; i < this.attacks.length; i++) {
       const a = this.attacks[i];
@@ -146,14 +128,10 @@ Object.assign(Game, {
     }
   },
 
-  // --- Conquest frontier: OpenFront's own priority queue -------------------
-  // A plain FIFO advances in strict distance order, so the wave crosses a ridge
-  // at the same moment it crosses a meadow and terrain only changes the bill.
-  // A priority queue is what gives a front its shape instead — but *what* it is
-  // ordered by is the whole question, and the answer is not accumulated cost
-  // (that is a Dijkstra contour, which is what made these fronts read as rigid).
-  // See frontierPriority for the local, non-accumulating score this is keyed on,
-  // and note that the heap deliberately holds duplicate entries per tile.
+  // --- Conquest frontier: a priority queue ----------------------------------
+  // Keyed on frontierPriority's local, non-accumulating score (an
+  // accumulated cost gives a rigid Dijkstra contour). The heap deliberately
+  // holds duplicate entries per tile.
   heapPush(a, tile, prio) {
     const T = a.heapTile, P = a.heapPrio;
     let i = T.length;
@@ -187,18 +165,13 @@ Object.assign(Game, {
     return top;
   },
 
-  // Rebuilds an attack's queue from the attacker's *current* border with the
-  // target. The queue is a snapshot of a border that moves under it, and a
-  // slow advance drains it faster than conquests refill it, so without this an
-  // attack aborts with most of its troops unspent and every front churns
-  // without ever breaking. Returns false when the two no longer touch at all.
+  // Rebuilds an attack's queue from the attacker's *current* border with
+  // the target. A slow advance drains the queue faster than conquests refill
+  // it, so without this an attack aborts with most of its troops unspent.
+  // Returns false when the two no longer touch.
   //
-  // Scans attacker.borderTiles (owned tiles with a non-owned neighbour, kept
-  // live by setOwner/updateBorderTile) rather than every tile the attacker
-  // owns — only a border tile can possibly neighbour the target, so this is
-  // exactly equivalent, just perimeter-sized instead of area-sized. A launch
-  // (or troop top-up) against a sprawling empire used to re-walk its entire
-  // territory synchronously on every click; this is the fix for that hitch.
+  // Scans attacker.borderTiles (kept live by setOwner/updateBorderTile), not
+  // every owned tile: only a border tile can neighbour the target.
   refreshFrontier(a) {
     const attacker = this.players[a.attacker];
     const border = new Set(), nb = this.nbuf, dead = this.drillDead;
@@ -254,18 +227,11 @@ Object.assign(Game, {
     const attacker = this.players[attackerId];
     const nb = this.abuf;
 
-    // Spoils. The land is divided among every neighbour that touches it, but a
-    // treasury cannot be split along a border — it goes whole to the nation
-    // that landed the killing blow. That asymmetry is the point: a rival who
-    // has been hoarding is worth finishing off yourself rather than leaving to
-    // the vultures, and the reward for it arrives as gold, which the population
-    // curve cannot claw back the way it does conquered land.
-    // OpenFront's conquerGoldAmount halves the spoils specifically when the
-    // player being conquered is Human — Bot/Nation kills pay out in full. So
-    // the branch is on the *defender's type*, not on whether the defender is
-    // the viewing client: with several humans in a lockstep match "the human"
-    // is no longer a single id, and a per-viewer branch would hand different
-    // clients different treasuries.
+    // Spoils. The land is divided among every neighbour that touches it,
+    // but the treasury goes whole to the nation that landed the killing
+    // blow. The spoils are halved when the conquered player is Human. The
+    // branch is on the *defender's type*, never on who is viewing, which
+    // would give different clients different treasuries.
     if (attacker) {
       const spoils = defender.isHuman ? defender.gold / 2 : defender.gold;
       // Located before the carve-up below reassigns every tile.
@@ -293,19 +259,12 @@ Object.assign(Game, {
     // Anything still landlocked among its own kind falls to the attacker.
     for (const i of [...defender.tiles]) this.setOwner(i, attackerId);
 
-    // This carve-up is a shortcut around the normal tile-by-tile siege —
-    // ownership moves in bulk via setOwner above, never through stepAttack's
-    // per-tile defenderLossPerTile deduction — so unlike an ordinary kill,
-    // troops here are never actually reduced to near-zero as tiles run out.
-    // Left alone, a defender with any real reserve (e.g. most of it already
-    // committed elsewhere, to a boat or another front, so the DEAD_DEFENDER_
-    // TILES threshold triggered before combat spent it down) becomes a
-    // 0-tile nation sitting on troops that regrow toward maxTroops' BASE_POP
-    // floor forever: alive, but with nothing left to hold or retake — and no
-    // defeat screen, since the tick() elimination sweep only catches troops
-    // < 20. Finalized here instead, the same way annexRegion's wipe-out route
-    // already has to (see its own comment) for the identical reason: no
-    // combat to zero it out.
+    // This carve-up moves ownership in bulk, not through stepAttack's
+    // per-tile losses, so the defender's troops are never spent down.
+    // Left alone, a 0-tile nation would sit on troops regrowing toward
+    // BASE_POP forever, alive with no defeat screen (the tick() sweep
+    // only catches troops < 20). So it is finalized here, as in
+    // annexRegion.
     defender.troops = 0;
     this.eliminatePlayer(defender);
   },
@@ -326,27 +285,20 @@ Object.assign(Game, {
     const nb = this.nbuf;
 
     // A flat ATTACK_TICK_BUDGET this tick, spent tile by tile against
-    // attackTickFraction until it runs out. `progress` is a plain local, not
-    // a field on `a`: real AttackExecution.tick() resets its own `tickBudget`
-    // fresh every tick too, so anything left over when the loop stops below
-    // is simply dropped rather than carried into the next tick.
+    // attackTickFraction. `progress` is a local: anything left over is
+    // dropped, not carried into the next tick.
     //
-    // OpenFront's own `attack.borderSize() + random.nextInt(0, 5)`: the width
-    // a front is credited with wobbles a few tiles a tick, so two pushes of
-    // identical size don't advance in lockstep with each other.
+    // The width a front is credited with wobbles a few tiles a tick, so
+    // two pushes of identical size don't advance in step.
     const borderTiles = a.border.size + this.frontRand(a, 5);
     let progress = this.ATTACK_TICK_BUDGET;
 
     let guard = 20000;
     while (guard-- > 0) {
-      // Real `while (tickBudget > 0)`: checked at the TOP of the loop, before
-      // a tile is even looked at — NOT as a "can I afford this one" gate
-      // before conquering it (that check used to sit right before the
-      // conquest below; see the 2026-09-10 fix note there for why moving it
-      // here is load-bearing, not cosmetic). One full tick's budget is spent
-      // unconditionally on the very first tile every tick, however much that
-      // tile costs, and only a SECOND tile this same tick is gated on budget
-      // actually remaining.
+      // Checked at the TOP of the loop, NOT as a 'can I afford this
+      // tile' gate before conquering. The first tile each tick is
+      // always taken, whatever it costs; only a further tile the same
+      // tick needs budget left. See the note at the conquest below.
       if (progress <= 0) break;
 
       // OpenFront's own top-of-loop test (`if (troopCount < 1) { attack.delete() }`).
@@ -362,48 +314,27 @@ Object.assign(Game, {
 
       if (GameMap.owner[tile] !== a.target || this.drillDead[tile]) { a.border.delete(tile); this.heapPop(a); continue; }
 
-      // The queue was built from a border that may since have moved — a
-      // counter-attack can retake the tiles this wave advanced through. Without
-      // re-checking contact, the wave rolls on into enemy land and leaves a
-      // disconnected snake of territory behind their front. The entry is simply
-      // dropped (OpenFront's own `continue`): if the front fights its way back
-      // into contact, conquering any tile beside this one re-enqueues it, and
-      // refreshFrontier picks it up wholesale if the queue ever runs dry.
+      // The queue was built from a border that may have moved. Without
+      // re-checking contact, the wave rolls on and leaves a disconnected
+      // snake of territory. The entry is dropped; conquering a tile beside
+      // it re-enqueues it, and refreshFrontier picks it up if the queue
+      // runs dry.
       if (!this.touchesPlayer(tile, a.attacker)) { a.border.delete(tile); this.heapPop(a); continue; }
 
-      // Skipped tiles above cost no budget; only ground actually taken does.
-      // attackTickFraction folds in terrain, the troop-ratio speed ramp, the
-      // fort/fallout bonuses and border width all at once — see its own
-      // comment for why that single division replaced this file's old
-      // separate speed-ratio/fort/fallout multipliers.
+      // Skipped tiles cost no budget; only ground taken does.
       //
-      // NOT gated on `progress >= move` here (2026-09-10 fix, after a user
-      // report of pushes freezing solid with thousands of troops still
-      // committed): a narrow front, tough terrain or a middling troop
-      // disadvantage can easily cost MORE than one whole tick's flat budget
-      // for even the single cheapest tile in queue, and since `progress`
-      // resets to a flat 1 every tick with no carry-over (see above), a
-      // check-before-spend gate here meant that tile — and every tile behind
-      // it, since it's always back at the top of the heap — could never be
-      // afforded, ever: not slow, just permanently stuck. Real
-      // AttackExecution.tick() has no such gate either: it always conquers
-      // whatever `toConquer.dequeue()` returns and only checks budget before
-      // trying a FURTHER tile the same tick (the `progress <= 0` check at the
-      // top of this loop) — guaranteeing at least one tile of progress every
-      // tick a front has troops and contact, however expensive, and letting
-      // `progress` go negative exactly the way `a.troops` already does below.
+      // NOT gated on `progress >= move`: a narrow front, tough terrain or
+      // a troop disadvantage can make the cheapest tile cost MORE than one
+      // tick's flat budget, and with no carry-over a check-before-spend
+      // gate would leave that tile, and so the whole front, permanently
+      // stuck. One tile of progress per tick is guaranteed, and
+      // `progress` may go negative, as `a.troops` does below.
       const move = this.attackTickFraction(attacker, defender, a.troops, GameMap.terrain[tile], tile, borderTiles);
 
-      // Charged unconditionally, even when it overdraws the stack. The old
-      // guard here bailed with `if (a.troops < cost) { a.troops = 0; break; }`,
-      // which deleted the entire remaining force the instant it could not
-      // afford ONE more tile — OpenFront never does that. Theirs subtracts the
-      // loss, lets troopCount go negative, and only ends the attack on the next
-      // iteration's `troopCount < 1`. The gap is proportional to the per-tile
-      // cost, so it was invisible on open ground (~11 troops thrown away) and
-      // five times worse inside a fort aura (~55), i.e. it bit hardest exactly
-      // where a push was already struggling. Now the front always gets the tile
-      // it paid for and simply stops.
+      // Charged unconditionally, even when it overdraws the stack: the
+      // front gets the tile it paid for, and the attack ends on the next
+      // iteration. Bailing out when the stack couldn't afford one more
+      // tile threw away the remaining force, worst inside a fort aura.
       const cost = this.tileCost(attacker, defender, a.troops, GameMap.terrain[tile], tile);
 
       this.heapPop(a);
@@ -414,22 +345,16 @@ Object.assign(Game, {
         defender.troops = Math.max(0, defender.troops - this.defenderLossPerTile(defender));
       }
 
-      // Neighbours are scored BEFORE this tile changes hands, exactly as
-      // OpenFront's tick() calls addNeighbors(tileToConquer) ahead of
-      // conquer(). The ordering is load-bearing, not incidental: it means a
-      // tile whose only attacker-side neighbour is the one being taken right
-      // now scores numOwnedByMe = 0 and lands at the very back of the queue,
-      // while a tile already flanked scores 2 or 3 and jumps the line. That
-      // is what makes the edge reach out in fingers and fill in behind them
-      // rather than advancing as one contour.
+      // Neighbours are scored BEFORE this tile changes hands. That
+      // ordering is load-bearing: a tile whose only attacker-side
+      // neighbour is the one being taken now scores numOwnedByMe = 0 and
+      // goes to the back of the queue, while a flanked tile jumps the
+      // line. That makes the edge reach out in fingers and fill in behind.
       //
-      // No dedup set here either — OpenFront's toConquer holds duplicates on
-      // purpose. A tile adjacent to three separate conquests is enqueued three
-      // times, each with its own roll and a higher numOwnedByMe than the last,
-      // and the heap serves the best of them. Re-scoring ground as the line
-      // wraps around it is half of why pockets snap shut instead of lingering
-      // as holes. `a.border` (the Set) is what the front's real width is read
-      // off, so the duplicates never inflate the advance rate.
+      // No dedup set: a tile adjacent to three conquests is enqueued three
+      // times, each with its own roll and a higher numOwnedByMe, and the
+      // heap serves the best. `a.border` (the Set) is what the front's
+      // width is read off, so duplicates never inflate the advance rate.
       const n = GameMap.neighbors(tile, nb);
       for (let k = 0; k < n; k++) {
         const j = nb[k];

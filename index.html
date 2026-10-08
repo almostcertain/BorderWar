@@ -393,16 +393,34 @@
       </div>
 
       <div id="joinLobby" class="hidden">
-        <div id="joinStatus" class="lobbyStatus"></div>
-        <!-- Copy of the main menu's open-game map, shown after Play now. -->
-        <div id="joinLobbyMap" class="mapPreview hidden">
-          <canvas id="joinLobbyMapCanvas" width="400" height="200"></canvas>
-          <span id="joinLobbyMapNote" class="mapPreviewNote"></span>
+        <!-- Open game only (#joinLobby.isOpen, UI._setOpenLobby): the match's
+             facts and countdown on top, tips beside the roster. A lobby
+             joined by code shows just the .olSide column, as before. -->
+        <div id="olHead" class="olOnly">
+          <div id="olFacts"></div>
+          <div id="olTimer"><span id="olTimerLabel"></span> <b id="olTimerNum"></b></div>
         </div>
-        <div class="lobbyLabel">Players <span id="joinPlayerCount"></span></div>
-        <ul id="joinRoster" class="lobbyRoster"></ul>
-        <div id="joinWaiting">Waiting for the host to start…</div>
-        <button id="joinLeaveBtn" class="lobbyLeave">Leave Lobby</button>
+        <div id="olBar" class="olOnly"><i id="olBarFill"></i></div>
+        <div class="olGrid">
+          <div id="olTips" class="olOnly olCard">
+            <div class="lobbyLabel">How to play</div>
+            <div id="olTipList"></div>
+            <div id="olTipDots"></div>
+          </div>
+          <div class="olSide">
+            <div id="joinStatus" class="lobbyStatus"></div>
+            <!-- Copy of the main menu's open-game map, shown after Play now. -->
+            <div id="joinLobbyMap" class="mapPreview hidden">
+              <canvas id="joinLobbyMapCanvas" width="400" height="200"></canvas>
+              <span id="joinLobbyMapNote" class="mapPreviewNote"></span>
+            </div>
+            <div class="lobbyLabel">Players <span id="joinPlayerCount"></span></div>
+            <ul id="joinRoster" class="lobbyRoster"></ul>
+            <div id="olBots" class="olOnly"></div>
+            <div id="joinWaiting">Waiting for the host to start…</div>
+            <button id="joinLeaveBtn" class="lobbyLeave">Leave Lobby</button>
+          </div>
+        </div>
       </div>
     </div>
 

@@ -2,22 +2,14 @@
 // Extends the Game singleton declared in game/core.js. Move-only split of the
 // former js/game.js; see docs/game-split-plan.md.
 Object.assign(Game, {
-  // --- Population model, after OpenFront -----------------------------------
+  // --- Population model ----------------------------------------------------
   // Cap:         2 * (tiles^0.6 * 1000 + 50000) + cities * 25000
   // Growth/tick: (10 + pop^0.73 / 4) * (1 - pop / maxPop)     at 10 ticks/sec
   //
-  // The 0.73 exponent means growth depends on absolute population, so the curve
-  // only keeps its shape at OpenFront's magnitudes. Their maps are far larger
-  // than ours, and lifting their numbers wholesale would put armies in the
-  // hundreds of thousands on a 25k-tile map — a single push would swallow it.
-  // So the maths is done in OpenFront units and converted back through
-  // POP_SCALE. The (1 - pop/max) term is scale-free and the P^0.73 term is
-  // evaluated on the unscaled figure, so the curve — including its 42% peak —
-  // is preserved exactly while the magnitudes suit this map.
-  // OpenFront keeps troops internally at 10x what it shows: startManpower is
-  // 25,000 and reads as 2.5k, a fresh spawn's cap is ~121,000 and reads as
-  // 12.1k. Scaling by 0.1 therefore makes our raw numbers equal the figures
-  // their UI puts on screen, so pacing can be compared directly.
+  // The 0.73 exponent makes growth depend on absolute population, so the
+  // maths is done in unscaled units and converted back through POP_SCALE:
+  // the curve, including its 42% peak, is preserved while the magnitudes
+  // suit this map. At 0.1 a fresh spawn's cap reads as about 12.1k.
   POP_SCALE: 0.1,
   TICKS_PER_SEC: 10,
   // 1.0 = OpenFront's own rate, exactly. Their msPerTick is 100, the same tick
@@ -27,29 +19,18 @@ Object.assign(Game, {
   TILE_POP_EXPONENT: 0.6,
   TILE_POP_COEF: 1000,
   BASE_POP: 50000,
-  // Raw OpenFront units (Config.cityTroopIncrease(), verified against their
-  // live source), so through POP_SCALE a city is worth +25k troops on the
-  // readout — about twice a fresh spawn's whole cap. Was ported at 25,000, a
-  // 10x transcription error caught in an audit against their actual config.
-  // Paid out per LEVEL, not per city — verbatim their maxTroops(), which sums
-  // city.level() across every built city before multiplying by this. A city
-  // upgraded to level 3 is worth exactly what three level-1 cities would be.
+  // Unscaled units: through POP_SCALE a city is worth +25k troops on the
+  // readout. Paid per LEVEL, not per city: maxTroops sums city levels, so a
+  // level-3 city is worth three level-1 cities.
   CITY_POP_INCREASE: 250000,
 
-  // Nation difficulty. OpenFront scales a Nation's opening troops, cap and
-  // growth by the match's difficulty (startManpower / maxTroops /
-  // troopIncreaseRate in Config.ts): 12,500 / 18,750 / 25,000 troops, 0.5 /
-  // 0.75 / 1.0x cap and 0.9 / 0.95 / 1.0x growth for Easy / Medium / Hard.
-  // Hard is a Nation on a human's footing. Only the three tiers the menu
-  // offers are ported; their fourth (Impossible) isn't.
+  // Nation difficulty: a Nation's opening troops, cap and growth scale by
+  // the match's difficulty (0.5 / 0.75 / 1.0x cap and 0.9 / 0.95 / 1.0x
+  // growth for Easy / Medium / Hard). Hard is a Nation on a human's footing.
   //
-  // Medium is the balance this game shipped with, so it is also the fallback
-  // for a missing or unrecognised setting (a multiplayer lobby has no picker
-  // yet). All three convert through POP_SCALE, which leaves the opening fill
-  // ratio identical to OpenFront's — a human still starts at 19.6% of cap.
-  // A human (isBot false) gets none of it, exactly as their Human branch
-  // applies no multiplier at all. The behavioural half of each tier is
-  // AI.PROFILES.
+  // Medium is the fallback for a missing or unrecognised setting. All three
+  // convert through POP_SCALE. A human (isBot false) gets none of it. The
+  // behavioural half of each tier is AI.PROFILES.
   DIFFICULTIES: ['easy', 'medium', 'hard'],
   DEFAULT_DIFFICULTY: 'medium',
   NATION_DIFFICULTY: {
@@ -105,13 +86,10 @@ Object.assign(Game, {
   // strength is the question; it is NOT what drives growth.
   totalTroops(p) { return p.troops + this.marchingTroops(p.id); },
 
-  // Absolute troops/sec a player is currently gaining, for both simulation
-  // and the HUD readout to consume identically.
-  // Fill ratio at which growth peaks — the level worth sitting at rather than
-  // banking past. It lands at ~42% (OpenFront's documented figure) but drifts a
-  // little with cap because of the constant `10 +` term, so it is solved from
-  // the curve rather than hardcoded. Cached per cap; the scan is far too costly
-  // to repeat every frame.
+  // Fill ratio at which growth peaks: the level worth sitting at rather
+  // than banking past. About 42%, but it drifts a little with cap because
+  // of the constant `10 +` term, so it is solved from the curve and cached
+  // per cap.
   peakGrowthRatio(p) {
     const max = this.maxTroops(p);
     if (this._peakCap && Math.abs(max - this._peakCap) / this._peakCap < 0.02) {
@@ -134,12 +112,10 @@ Object.assign(Game, {
     return bestR;
   },
 
-  // Growth reads the home reserve alone — troops out on campaign have left the
-  // population that reproduces, exactly as OpenFront's troopIncreaseRate works
-  // off player.troops(). Committing an army therefore drops you back down the
-  // curve, and if that puts you under the ~42% peak your regrowth accelerates.
-  // Keying this to the reserve is also what keeps the bar, the colour and the
-  // rate all describing the same number.
+  // Absolute troops/sec a player is gaining, for the sim and the HUD alike.
+  // Growth reads the home reserve alone: troops out on campaign have left
+  // the population that reproduces, so committing an army drops you back
+  // down the curve.
   growthPerSecond(p) {
     const max = this.maxTroops(p);
     const pop = p.troops;
@@ -156,37 +132,19 @@ Object.assign(Game, {
   },
 
   // --- Economy -------------------------------------------------------------
-  // Gold is the second resource, and everything built later is priced in it.
-  //
-  // OpenFront does not pay gold for holding land: population is split by a
-  // slider into troops and WORKERS, and income is derived from the worker half
-  // (plus ports, trade and the rest of the structure layer). None of that
-  // exists here yet — there is no worker split and nothing to build — so this
-  // first step is deliberately the simplest thing that is still true of every
-  // nation: a flat rate, identical for everyone, paid every tick you are alive.
-  //
-  // Keeping it flat matters for what comes next. When income becomes a function
-  // of workers or of what you have built, the difference between two nations'
-  // treasuries will be the whole point; starting from a rate nobody can
-  // influence gives that change a clean baseline to be measured against.
-  //
-  // The number itself is a dial, not a ported constant. It is set so a match
-  // accumulates a treasury worth spending — about 600k over a ten-minute game,
-  // which is the order of magnitude OpenFront's structures are priced in — so
-  // that when costs arrive they can be taken from their config directly rather
-  // than re-derived. Gold is NOT scaled by POP_SCALE: that factor exists to
-  // shrink armies to this map's size, and prices have no such constraint.
+  // Gold is the second resource, and everything built is priced in it. The
+  // base income is a flat rate, identical for everyone, paid every tick; the
+  // rate is a dial, set so a match accumulates a treasury worth spending.
+  // Gold is NOT scaled by POP_SCALE.
   START_GOLD: 0,
   GOLD_PER_SEC: 1000,
 
-  // Per-player so the worker-derived formula can replace the body without
-  // touching a single call site, exactly as growthPerSecond is shaped.
+  // Per-player, like growthPerSecond, so the formula can change without
+  // touching call sites.
   //
-  // Income is gated on holding land, not on the `alive` flag. A nation whose
-  // last tile has been taken can stay technically alive for a while — the death
-  // sweep also wants its troops under 20 — and a rump state with an army in the
-  // field and no country left has nothing to tax. Land is the test the
-  // leaderboard already applies to decide who is still in the game.
+  // Income is gated on holding land, not on the `alive` flag: a nation
+  // whose last tile is gone can stay technically alive for a while (the
+  // death sweep also wants its troops under 20) and has nothing to tax.
   goldPerSecond(p) {
     return p && p.alive && p.tiles.size > 0 ? this.GOLD_PER_SEC : 0;
   },

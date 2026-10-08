@@ -13,11 +13,9 @@ const GameMap = {
   shoreDist: null,  // Uint8Array, water tiles only: tile-distance to nearest land
   landTiles: 0,
 
-  // Default share of the grid that should end up as land. A fixed sea level
-  // let the noise decide how much land a seed produced, and it varied 4-5x at
-  // the same map size — an Extra Large roll could come out smaller than a
-  // median Large and play like one. Match length follows land area, so that
-  // variance landed straight on pacing. Each landform scales this (see
+  // Default share of the grid that should end up as land. Searched for
+  // rather than left to a fixed sea level, because land area varied 4-5x by
+  // seed and match length follows it. Each landform scales this (see
   // landformPlan), and the lobby's Land knob scales it again (LAND_SCALE).
   LAND_FRACTION: 0.40,
 
@@ -76,14 +74,12 @@ const GameMap = {
     };
   },
 
-  // Every landform is built from "plates": seed points that each grow one
-  // landmass under a radial falloff (d = 1 at the plate's radii). With more
-  // than one plate, every tile belongs to its nearest plate, and a strait is
-  // sunk along the borders between them, so the landmasses never fuse and
-  // crossing one always means a naval landing. Plate positions, sizes and
-  // counts are fractions of the map, never tile counts, so the same seed and
-  // options draw the same shapes at every map size (the lobby preview relies
-  // on that).
+  // Every landform is built from 'plates': seed points that each grow one
+  // landmass under a radial falloff. With more than one plate, every tile
+  // belongs to its nearest plate and a strait is sunk along the borders, so
+  // landmasses never fuse. Plate positions and sizes are fractions of the
+  // map, so the same seed and options draw the same shapes at every size
+  // (the lobby preview relies on that).
   landformPlan(seed, landform, width, height) {
     const h = n => this.seedHash(seed, 200 + n);
     const cx = width / 2, cy = height / 2;
@@ -244,14 +240,10 @@ const GameMap = {
     const plateOf = P > 1 ? new Uint8Array(size) : null;
     const lakeScale = scale * 2.6, inner = plan.innerSea;
 
-    // Independent field driving terrain *tier* (plains vs highland vs
-    // mountain) — deliberately decoupled from `elevation` below.
-    // classifyTerrain used to slice tiers off elevation's own percentiles,
-    // but elevation is dominated by the radial falloff (built to shape the
-    // coastline, high in the middle by construction), so mountains and
-    // highlands always collapsed into one contiguous blob near the landmass
-    // centre. This is a height field of its own, built to read like a
-    // topographic map — see rangeRoughness for the rules it follows.
+    // Independent field driving terrain *tier* (plains, highland, mountain),
+    // decoupled from `elevation`: elevation is dominated by the radial
+    // falloff, so tiers cut from it collapse into one blob at the landmass
+    // centre. See rangeRoughness.
     this.roughness = new Float32Array(size);
     const shape = this.rangeShape(seed);
     const low = this.rangeLowFreq(width, height, seed, scale * 1.6, shape);
@@ -349,15 +341,11 @@ const GameMap = {
     return this.landTiles;
   },
 
-  // Gives each plate its share of the land before the global sea level search,
-  // so no plate comes out swamped or bone dry just because its noise ran wetter
-  // or drier. Each plate should cover about the same fraction of its own cell,
-  // scaled by its weight, and its elevation is shifted so the level that
-  // floods all but that fraction lands on one common value. The strait tiles
-  // between plates hide the steps this leaves at the borders. Capped well
-  // short of a full cell, or a plate fills it and its coast is just the
-  // straight strait edge. Percentiles come off a strided sample, like
-  // classifyTerrain's.
+  // Gives each plate its share of the land before the global sea level
+  // search: its elevation is shifted so the level that floods all but its
+  // fraction of its cell lands on one common value. Capped well short of a
+  // full cell, or a plate's coast is just the straight strait edge.
+  // Percentiles come off a strided sample.
   balancePlates(plateOf, plates, target) {
     const size = this.width * this.height, P = plates.length;
     const counts = new Float64Array(P);
@@ -424,21 +412,14 @@ const GameMap = {
   },
 
   // Roughness at (u, v) in noise space; classifyTerrain slices tiers off it.
-  // Tiers are level sets of a real height field, so they follow the rules of
-  // a topographic map rather than the rules of noise:
-  //  - No swirls or folds. The field is never bent hard: the warp only nudges
-  //    the sample point (capped in rangeShape), because bending past about a
-  //    third of a feature size folds the terrain into marbled whorls.
-  //  - One grain across the whole map. Ranges, ridges and spurs in a real
-  //    region all run the same way, so coordinates are stretched along a
-  //    single seed-wide direction. It must be uniform — rotating it from place
-  //    to place shears the noise into combed-hair swirls.
+  // Tiers are level sets of a real height field:
+  //  - No swirls or folds: the warp only nudges the sample point (capped in
+  //    rangeShape).
+  //  - One grain across the whole map: coordinates are stretched along a
+  //    single seed-wide direction. It must be uniform.
   //  - Steep ground is smooth, gentle ground is detailed (Noise.eroded).
-  //  - Valleys drain outward. Ridged noise put ridges on a field's
-  //    zero-crossings, which are always closed loops, so every range ringed a
-  //    plain and maps were full of same-shaped sealed "bowls". A height field
-  //    has real peaks and slopes instead: mountains sit inside highland,
-  //    highland inside plains, and low ground runs out to the coast.
+  //  - Valleys drain outward: mountains sit inside highland, highland inside
+  //    plains, and low ground runs out to the coast.
   rangeRoughness(u, v, seed, shape, low, x, y) {
     // Bilinear read of the coarse warp grid at tile (x, y).
     const { stride, gw, grid } = low;
@@ -454,12 +435,9 @@ const GameMap = {
     return Noise.eroded(a * shape.scale, b * shape.scale, seed + 7000, 5, 0.5, 0.45);
   },
 
-  // Below this, a landmass is dropped to water rather than kept as an island.
-  // findSpawns' own landAround(x,y,5) >= 90 gate already requires a candidate
-  // spawn centre to sit in a locally dense 11x11 patch of land, so anything
-  // this small could never host a spawn anyway — this floor exists purely to
-  // keep pixel-speck islands (and the coastline noise they'd add to sea
-  // pathfinding) out of the map, not to gate spawning.
+  // Below this, a landmass is dropped to water. Keeps pixel-speck islands
+  // (and the coastline noise they add to sea pathfinding) off the map; it
+  // is not a spawn gate.
   MIN_LANDMASS_TILES: 70,
 
   // Raw bytes + manifest for OpenFront's real "World" map, handed off by
@@ -468,13 +446,11 @@ const GameMap = {
   // rather than taking a URL, so the file stays free of any network call.
   worldData: null,
 
-  // Parses OpenFront's baked map.bin format (1 byte/tile, row-major):
-  // bit 7 = land, bit 6 = shoreline, bit 5 = ocean, bits 0-4 = magnitude
-  // (elevation on land, distance-to-land on water — see map-generator's
-  // packTerrain in the OpenFrontIO repo). Land/water and magnitude are all
-  // this needs; shoreline/ocean flags and the water magnitude are re-derived
-  // by computeShoreDist/computeWaterComponents below exactly as generate()
-  // does for a procedural map, so both paths feed Game.seaPath identical data.
+  // Parses the baked map.bin format (1 byte/tile, row-major): bit 7 =
+  // land, bits 0-4 = magnitude (elevation on land). Shoreline, ocean and
+  // water magnitude are re-derived by computeShoreDist/
+  // computeWaterComponents, as generate() does, so both paths feed
+  // Game.seaPath identical data.
   loadWorld(bytes, manifest) {
     const width = manifest.width, height = manifest.height;
     const size = width * height;
@@ -517,36 +493,11 @@ const GameMap = {
   },
 
   // Finds the sea level whose largest connected landmass lands closest to
-  // `target` tiles. Plain bisection (the old approach) assumed the largest-
-  // component size shrinks smoothly as the threshold rises; measuring it
-  // directly against real seeds turned up two ways that's not safe to assume:
-  //
-  //  1. The curve genuinely jumps. Lowering the sea level can fuse two
-  //     islands, and the largest-component size leaps from one plateau to a
-  //     much bigger one with nothing achievable in between — measured on one
-  //     seed, 54% of the grid dropped straight to 26% between two thresholds
-  //     0.02 apart. Bisection converges toward the crossing point assuming a
-  //     value near the target exists there; across a jump like this, no such
-  //     value exists, and which side it lands on is close to a coin flip.
-  //  2. The old fixed floor (0.30) isn't always low enough to bracket the
-  //     target at all. Measured directly: for some seeds the largest
-  //     reachable landmass AT that floor — the most generous point the old
-  //     search ever tried — topped out under 23%, because that seed's whole
-  //     elevation field runs drier. No amount of searching inside
-  //     [0.30, 0.85] finds 40% if 40% was never reachable in that range to
-  //     begin with; bisection just converges on the floor and calls it the
-  //     best it found. That's the exact shape of the ~15% severe-undershoot
-  //     failures measured across both old and new map sizes — the same seeds
-  //     had land comfortably past 40% available at a lower threshold the
-  //     search never tried.
-  //
-  // The fix: widen the floor downward first, until the largest landmass AT it
-  // actually clears the target — so the range brackets the target at all —
-  // then sweep broadly rather than bisect, so a jump anywhere in that range
-  // gets sampled on both sides instead of assumed not to exist. Every sample
-  // taken, during widening, the coarse sweep, or the fine refinement,
-  // updates one running best-so-far, so the result is never worse than the
-  // best single point actually tried.
+  // `target` tiles. Not bisection: the largest-component size jumps when
+  // islands fuse, and a fixed floor does not always bracket the target.
+  // So the floor is widened downward until the landmass at it clears the
+  // target, then the range is swept (coarse, then fine). Every sample
+  // updates one running best, so the result is the best point tried.
   //
   // What counts toward `target` is set by `_measureKept` (see generate).
   findSeaLevel(target) {
@@ -597,11 +548,9 @@ const GameMap = {
     return bestT;
   },
 
-  // Share of land at each tier. Fixed proportions rather than fixed elevation
-  // cutoffs, for the same reason the sea level is searched rather than fixed:
-  // the noise's absolute range wanders by seed, so a hard cutoff would give one
-  // map alpine spines and the next none at all. These are the defaults (the
-  // World map uses them); generate() sets highlandShare/mountainShare from the
+  // Share of land at each tier. Fixed proportions, not elevation cutoffs,
+  // because the noise's absolute range wanders by seed. These are the
+  // defaults (the World map uses them); generate() sets them from the
   // lobby's Terrain knob.
   HIGHLAND_SHARE: 0.26,
   MOUNTAIN_SHARE: 0.10,
@@ -657,14 +606,9 @@ const GameMap = {
     this.computeCoastDist();
     const coastDist = this._coastDist;
 
-    // Percentiles off a sample — sorting every land tile on an XL map is far
-    // more work than the answer needs. Off `roughness`, not `elevation`: see
-    // its comment in generate() — using elevation here is what produced one
-    // contiguous highland/mountain mass instead of scattered ranges. This
-    // first pass also finds the sample's spread, so the coastal penalty is
-    // scaled to this seed's own roughness range rather than a hardcoded
-    // constant — the noise's absolute range wanders by seed just like
-    // elevation's does.
+    // Percentiles off a sample of `roughness` (not `elevation`; see
+    // generate()). This pass also finds the sample's spread, so the coastal
+    // penalty is scaled to this seed's own roughness range.
     const indices = [];
     const stride = Math.max(1, Math.floor(this.landTiles / 20000));
     let seen = 0, lo = Infinity, hi = -Infinity;
@@ -697,19 +641,15 @@ const GameMap = {
     }
   },
 
-  // Rivers: a few major ones per continent, found rather than drawn. A
-  // priority flood from the coast inland (lowest ground first, filling any
-  // closed hollow up to its rim) gives every land tile a downstream
-  // neighbour, so the whole landmass drains to the sea along the valleys the
-  // elevation noise already has. Counting how many tiles drain through each
-  // tile then shows where water collects: the biggest basins' trunks, down
-  // to a share of their mouth's flow, become the rivers.
+  // Rivers: a few major ones per continent. A priority flood from the
+  // coast inland gives every land tile a downstream neighbour; counting
+  // how many tiles drain through each tile shows where water collects, and
+  // the biggest basins' trunks become the rivers.
   //
-  // Rivers are ordinary water, the same as the sea they drain into: they
-  // block land attacks, carry boats and give their banks a coast. Each
-  // river is a tree rooted at the sea, so it never rings off a pocket of
-  // land by itself; where two happen to touch, the re-prune after carving
-  // tidies up. The last stretch widens into an estuary toward the mouth.
+  // Rivers are ordinary water: they block land attacks, carry boats and
+  // give their banks a coast. Each is a tree rooted at the sea; the
+  // re-prune after carving tidies up where two touch. The last stretch
+  // widens into an estuary.
   //
   // Returns whether any land was turned to water. Integer and IEEE-exact
   // throughout; ties break on tile index, so every client carves the same
@@ -723,12 +663,10 @@ const GameMap = {
   carveRivers(seed) {
     const w = this.width, h = this.height, size = w * h;
     const owner = this.owner, elev = this.elevation, rough = this.roughness;
-    // Water runs off the terrain's ranges (roughness, the field mountains
-    // are cut from), so rivers rise in the hills and follow the valleys
-    // between ranges instead of cutting across them. A little of the
-    // continent-shaping elevation keeps the broad slope pointing seaward.
-    // On top of both, a gentle meander field: flat plains otherwise give
-    // the flood nothing to follow and channels come out ruler-straight.
+    // Water runs off roughness (the field mountains are cut from), so
+    // rivers follow the valleys between ranges. A little elevation keeps
+    // the broad slope seaward, and a gentle meander field keeps channels
+    // on flat plains from running ruler-straight.
     const EW = this.RIVER_SLOPE_WEIGHT, MW = this.RIVER_MEANDER, ms = 12 / w;
     const height = i => rough[i] + elev[i] * EW +
       Noise.fractal((i % w) * ms, ((i / w) | 0) * ms, seed + 9000, 3) * MW;
@@ -781,12 +719,9 @@ const GameMap = {
         if (owner[nb[k]] === WATER) { seen[i] = 1; push(height(i), i); break; }
       }
     }
-    // Inside a filled hollow every tile would share its rim's height and
-    // drain in plain index order, in ruler-straight lines; the small step
-    // makes the fill spread outward from the rim like a flood instead.
-    // The step is jittered per tile (integer hash, identical everywhere) so
-    // the flood front, and the channels traced back through it, wander
-    // instead of running along grid rows.
+    // The small step makes a filled hollow flood outward from its rim
+    // instead of draining in index order. It is jittered per tile (integer
+    // hash, identical everywhere) so channels wander off the grid rows.
     const STEP = 1e-6;
     const jitter = i => {
       let x = Math.imul(i ^ 0x27D4EB2D, 0x85EBCA6B);
@@ -952,14 +887,10 @@ const GameMap = {
     return bestCount;
   },
 
-  // Drops every landmass under `minTiles` to water, exactly as the old
-  // pruneToLargest did for everything but the single biggest region — but
-  // keeps any other region that clears the floor as a real, separately
-  // identified island, now that naval invasions can actually reach one.
-  // Two passes rather than one: the first settles which tiles are land at
-  // all, so the second's coastline sampling (which asks "is my neighbour
-  // water") reads the final map instead of a partially-pruned one that would
-  // make the answer depend on iteration order.
+  // Drops every landmass under `minTiles` to water and keeps the rest as
+  // separately identified islands. Two passes: the first settles which
+  // tiles are land, so the second's coastline sampling reads the final map
+  // and does not depend on iteration order.
   pruneSmallLandmasses(minTiles) {
     const size = this.width * this.height;
     const region = this._region, sizes = this._regionSizes;
@@ -999,12 +930,9 @@ const GameMap = {
   },
 
   // Multi-source BFS distance (in tiles) from every water tile to the
-  // nearest land, seeded from the water tiles that actually touch a shore
-  // and flooded outward across open water — mirrors the "magnitude" field
-  // OpenFront bakes into its terrain data. Game.seaPath prices a route off
-  // this: hugging the coast is expensive, a band a few tiles out is free,
-  // and far blue water carries a small penalty of its own. Land tiles are
-  // left at 0 (unused; the BFS never assigns them).
+  // nearest land. Game.seaPath prices a route off this: hugging the coast
+  // is expensive, a band a few tiles out is free, and far open water has a
+  // small penalty. Land tiles are left at 0.
   computeShoreDist() {
     const size = this.width * this.height;
     const dist = this.shoreDist = new Uint8Array(size);
@@ -1032,13 +960,9 @@ const GameMap = {
     }
   },
 
-  // Connected-component id for every WATER tile, over the same 4-neighbour
-  // adjacency Game.seaPath's A* actually moves through — the sea's
-  // counterpart to landmassId. Computed once here so seaPath can reject an
-  // unreachable target instantly (two water tiles can only connect if they
-  // share a component) instead of exhausting its whole reachable side of
-  // the map — up to SEA_PATH_GUARD tiles — just to prove there's no route.
-  // Land tiles are left at -1 (unused; never looked up for one).
+  // Connected-component id for every WATER tile, over the 4-neighbour
+  // adjacency Game.seaPath moves through. Lets seaPath reject an
+  // unreachable target at once. Land tiles are left at -1.
   computeWaterComponents() {
     const size = this.width * this.height;
     const comp = this.waterComponentId = new Int32Array(size).fill(-1);
@@ -1096,30 +1020,19 @@ const GameMap = {
         if (!this.isLand(i)) continue;
         if (this.landAround(x, y, 5) < 90) continue;
 
-        // Each candidate draws its own required spacing rather than all
-        // sharing minDist verbatim, so the accepted spawns end up unevenly
-        // distanced — some clustered closer together, others further apart —
-        // instead of the rigid, roughly-Poisson-disc grid a single fixed
-        // threshold produces. 0.5x floor still blocks unfair on-top-of-each-
-        // other placements; 1.5x cap keeps this attempt's average spacing
-        // near minDist so the relaxation loop below still converges.
+        // Each candidate draws its own required spacing (0.5x to 1.5x
+        // minDist), so spawns end up unevenly distanced instead of on a
+        // rigid grid, while the average stays near minDist.
         const required = minDist * (0.5 + rng());
 
         let ok = true;
         for (const s of spawns) {
           const sx = s % this.width, sy = (s / this.width) | 0;
-          // sqrt(dx*dx + dy*dy), never Math.hypot. Every client generates the
-          // map itself from the shared seed, so a single tile of disagreement
-          // here is an instant, total desync of everything downstream — and
-          // Math.hypot is one of the calls ECMA-262 leaves
-          // implementation-approximated, so V8/SpiderMonkey/JavaScriptCore can
-          // differ in the last ulp and straddle the `< required` comparison.
-          // The multiplies, the add and the sqrt are all IEEE-754 operations
-          // that every engine must round identically, so this form is exact
-          // rather than merely quantized — which is why it is preferred to
-          // Game.det.hypot here, in what is easily the hottest loop that
-          // touches a hazardous call (up to 8000 candidate tiles x every
-          // spawn already placed, x 12 relaxation attempts).
+          // sqrt(dx*dx + dy*dy), never Math.hypot: Math.hypot is
+          // implementation-approximated and can differ in the last ulp across
+          // engines, which would desync map generation. The multiplies, add
+          // and sqrt are IEEE-exact. Inlined rather than Game.det.hypot
+          // because this is a very hot loop.
           const dx = sx - x, dy = sy - y;
           if (Math.sqrt(dx * dx + dy * dy) < required) { ok = false; break; }
         }

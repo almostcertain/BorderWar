@@ -38,14 +38,9 @@ const UI = {
   flashText: '',
   flashUntil: 0,
 
-  // Debug-panel nuke: 'debugnuke' is a distinct UI.placing value (armed via
-  // armDebugNuke, not togglePlacing/Game.UNITS) since it's a two-click flow
-  // — first click picks the launch point, second picks the target — rather
-  // than the single-click "strike here" the real atombomb/hydrogenbomb
-  // placing values use. debugNukeType holds which bomb is armed;
-  // debugNukeSrc is -1 while waiting for the first click, then the launch
-  // tile while waiting for the second. See onTap's 'debugnuke' branch and
-  // Game.debugNuke.
+  // Debug-panel nuke: a two-click flow (launch point, then target), so it
+  // has its own UI.placing value 'debugnuke'. debugNukeSrc is -1 until the
+  // first click. See onTap's 'debugnuke' branch and Game.debugNuke.
   debugNukeType: null,
   debugNukeSrc: -1,
   // Whether the debug panel is expanded; closed by default, toggled by #debugToggle.
@@ -61,12 +56,9 @@ const UI = {
   // pipeline (see the BYPASS notes in setup()).
   debugAllowed() { return this.DEBUG_HOST && Transport.isLocal; },
 
-  // The player's own warships currently selected via Input's shift-drag box
-  // (or a shift-click on a single one) — see selectWarshipsInBox/
-  // selectWarshipAt below. Holds direct object references straight into
-  // Game.warships, same identity-based pattern updateFronts already uses
-  // for attack/boat chips, so nothing here goes stale across a splice
-  // elsewhere in that array.
+  // The player's own warships selected by shift-drag or shift-click.
+  // Holds object references into Game.warships, so a splice elsewhere
+  // can't leave it stale.
   selectedWarships: new Set(),
   // The same for the player's own Scouts (fog matches only; empty otherwise).
   // A selection can hold both kinds: see the order branch in onTap.
@@ -178,20 +170,10 @@ const UI = {
     this.setupAccount();
     this.setupReplays();
 
-    // DEBUG BYPASS #1 — dev-only gold cheats.
-    //
-    // These write straight into the simulation, which is exactly what nothing
-    // else in this file is allowed to do any more (MP-1.5: every player action
-    // is an intent, and Executor is the only thing that mutates Game). It is a
-    // deliberate exception, and it is legitimate for one reason only: there is
-    // no gold intent and there is not going to be one — §4 lists the debug
-    // gold buttons among the things that are "singleplayer-only and must be
-    // hard disabled in multiplayer, not converted to intents". Handing one
-    // client a private +5M would desync the match on the next hash.
-    //
-    // So it is gated on Transport.isLocal, twice: here, and by hiding the whole
-    // panel in update(). The panel is also hidden until a match exists so it
-    // can't be pressed against an empty player list.
+    // DEBUG BYPASS #1: dev-only gold cheats. These write straight into the
+    // sim, which nothing else in this file may do (every player action is an
+    // intent). There is no gold intent (§4), so this would desync a networked
+    // match: gated on Transport.isLocal here and by hiding the panel in update().
     for (const btn of document.querySelectorAll('#debugPanel button[data-gold]')) {
       btn.addEventListener('click', () => {
         if (!this.debugAllowed()) return;
@@ -200,22 +182,9 @@ const UI = {
       });
     }
 
-    // Mean match length is ~630s over six seeds (see game/combat.js's "How fast a
-    // front advances" comment) — 300s of simulated time lands roughly at the
-    // midpoint, with
-    // nations built up, bots fighting, and territory well past the opening land
-    // grab. 300s is 3000 turns at Game.TICK_DT.
-    //
-    // NOT a bypass, unlike the two either side of it. This used to be
-    // Game.fastForward(300), a bare `for (…) Game.tick()` loop that reached
-    // past the whole pipeline — and, being synchronous, hung the tab for the
-    // length of the burst. LocalServer.burst emits the same 3000 turns through
-    // the ordinary path (bucketed as turns, queued in Runner, applied by
-    // Executor, one tick each), as fast as this client drains them and no
-    // faster, so the page keeps rendering the whole way through and what you
-    // watch is genuinely the same simulation you would have played. Still
-    // singleplayer-only in effect — a real server would ignore the request —
-    // but there is nothing here for it to desync.
+    // 300s of simulated time (3000 turns) lands near a match's midpoint.
+    // NOT a bypass: LocalServer.burst emits the turns through the ordinary
+    // pipeline, drained as fast as this client can, so the page keeps rendering.
     document.getElementById('debugFastForward').addEventListener('click', () => {
       if (!this.debugAllowed()) return;
       LocalServer.burst(Math.round(300 / Game.TICK_DT));
@@ -349,12 +318,8 @@ const UI = {
     this._barFog = null;
     this.rebuildBuildBar();
 
-    // The scrollbar is hidden (see #buildBar::-webkit-scrollbar in style.css),
-    // so on a narrow window a mouse user has no visible handle and no touch
-    // surface to reach the buttons past the fold — only a shift-scroll or a
-    // trackpad's horizontal gesture would move it otherwise. Redirecting a
-    // plain vertical wheel here is the same trick most horizontal carousels
-    // use to stay reachable with an ordinary mouse.
+    // The scrollbar is hidden, so a plain vertical wheel scrolls the bar
+    // sideways; otherwise a mouse user can't reach buttons past the fold.
     bar.addEventListener('wheel', e => {
       if (e.deltaY === 0 || bar.scrollWidth <= bar.clientWidth) return;
       e.preventDefault();
@@ -389,15 +354,10 @@ const UI = {
     updateFade();
   },
 
-  // (Re)writes the buttons. Entries marked fogOnly (the Scout) are in the bar
-  // only while the match has fog: the bar is first built at page load, before
-  // any match has said whether it has fog, so syncBuildBar redoes it when the
-  // answer changes from one match to the next. A fog-off bar comes out exactly
-  // as it always was.
-  //
-  // The bar follows Game.UNITS' order, except that The Drill and the Scout
-  // trade places, so the two fog entries sit together at the end. Done here
-  // rather than in the table: that is sim data and the goldens hash it.
+  // (Re)writes the buttons. fogOnly entries (the Scout) appear only in fog
+  // matches, so syncBuildBar redoes this when that changes between matches.
+  // The Drill and the Scout swap places so the fog entries sit together;
+  // done here because Game.UNITS is sim data the goldens hash.
   rebuildBuildBar() {
     const bar = document.getElementById('buildBar');
     const fog = this._barFog = !!Game.fog;
@@ -436,15 +396,10 @@ const UI = {
     if (this._updateBarFade) this._updateBarFade();
   },
 
-  // Hover descriptions. Any element carrying data-tip gets one, with optional
-  // data-tip-title and data-tip-key (a hotkey) for a heading; the build bar and
-  // the radial menu write theirs as they render, the fixed HUD has them in
-  // index.html. One delegated pointerover does the lot, because both of those
-  // rewrite their elements and a removed element sends no pointerout: every
-  // move onto a new element lands here, and either finds a tip or clears it.
-  //
-  // Mouse only. Touch has no hover, and a tip that appeared on press would sit
-  // under the finger and over the drag-to-place ghost.
+  // Hover descriptions: any element with data-tip (optional data-tip-title,
+  // data-tip-key). One delegated pointerover handles all of them, because
+  // the build bar and radial rewrite their elements and a removed element
+  // sends no pointerout. Mouse only.
   TIP_DELAY_MS: 350,
 
   setupTips() {
@@ -497,12 +452,9 @@ const UI = {
     if (this._barFog !== !!Game.fog) this.rebuildBuildBar();
   },
 
-  // Drag-to-place: pressing a build button and dragging up onto the map arms
-  // it and carries the placement ghost along; letting go places it there, as
-  // a tap on that spot would. Mostly for touch, which has no hover and so
-  // otherwise never sees the ghost before committing. Dragging sideways still
-  // scrolls the bar (touch-action: pan-x on .buildBtn), which is why only an
-  // upward drag starts one.
+  // Drag-to-place: dragging a build button up onto the map arms it and
+  // carries the ghost; letting go places it. Mostly for touch. Only an
+  // upward drag starts one; sideways still scrolls the bar.
   BAR_DRAG_START: 12,   // px, the same tolerance Input uses for tap-vs-drag
   // A finger covers the spot it is on, so on touch the ghost rides this far
   // above it.
@@ -572,12 +524,8 @@ const UI = {
     const railSnap = this.placing === 'city' ? Render.findRailSnapTile(sx, sy) : -1;
     const base = railSnap >= 0 ? railSnap : raw;
     // Structures keep STRUCTURE_MIN_DIST apart, so a click near one lands on
-    // the nearest tile that is clear of it (and, for a Port, on the coast).
-    // Warship placement has no click-time snap at all — a click can land
-    // anywhere on the map (Game.resolveWarshipLaunch snaps it to the nearest
-    // open water and picks a launching Port on its own) — and
-    // structureSiteNear answers -1 for it and every other non-structure, so
-    // those just get the raw tile.
+    // the nearest clear tile (the coast, for a Port). structureSiteNear
+    // answers -1 for warships and other non-structures, which get the raw tile.
     const site = Game.structureSiteNear(Game.me, this.placing, base);
     return site >= 0 ? site : base;
   },
@@ -660,13 +608,9 @@ const UI = {
     this.selectedScouts.clear();
   },
 
-  // The player's own warships and scouts whose drawn hull falls inside a
-  // shift-drag box, in CSS-pixel client coordinates (same space screenToTile/
-  // findStructureNear use) — replaces whatever was selected before, same as
-  // a fresh marquee in any RTS. An empty box (nothing of yours inside it)
-  // simply clears the selection. A scout the fog hides cannot be picked, like
-  // everything else the fog hides; one's own never is, since a scout lights up
-  // the water around it.
+  // The player's own warships and scouts whose hull falls inside a
+  // shift-drag box (CSS-pixel client coordinates). Replaces the previous
+  // selection; an empty box clears it. A scout the fog hides can't be picked.
   selectShipsInBox(x0, y0, x1, y1) {
     this.clearShipSelection();
     for (const w of Game.warships) {
@@ -703,12 +647,10 @@ const UI = {
   },
 
   // --- Fog of war: who the viewer may be told about ---------------------------
-  // docs/fog-of-war.md, "Meeting a nation". Contact is sim state
-  // (Game.hasMet); these two only read it. Everything in the UI that names a
-  // nation goes through nameOf(), and everything that shows a nation's details
-  // or acts on one asks knows() first, so the rule lives in one place. Both
-  // answer "yes, the real name" whenever Render.fogActive() is false: a fog-off
-  // match, the end of a match, and an eliminated viewer all see everything.
+  // docs/fog-of-war.md, 'Meeting a nation'. Contact is sim state
+  // (Game.hasMet). Everything that names a nation goes through nameOf();
+  // everything that shows details or acts on one asks knows() first. Both
+  // say yes whenever Render.fogActive() is false.
   UNKNOWN_NATION: 'Unknown nation',
 
   knows(id) {
@@ -769,10 +711,8 @@ const UI = {
     this._frontChipByRef = null;
     this._nukeRowByRef = null;
     this._nukeThreat = null;
-    // MP-3.5: whether this client has already reacted to Game.winnerId — see
-    // checkEndGame. A fresh match's Game.init() puts winnerId back to null,
-    // but reset() runs on that same restart, so this has to be cleared here
-    // too or a second match would find it still true from the first.
+    // Cleared here because a restart's Game.init() resets winnerId but not
+    // this latch (see checkEndGame).
     this.endGameHandled = false;
     // Cleared alongside endGameHandled for the same reason — see checkEndGame.
     this.lossShown = false;
@@ -787,12 +727,8 @@ const UI = {
     // screen until the new match's first frame after it.
     document.getElementById('leaderboard').innerHTML = '';
     this.lastLeaderboard = 0;
-    // MP-4.1: a fresh match starts with nothing queued — no reason for a
-    // stale "catching up" readout from whatever this client was doing before
-    // to still be on screen. updateCatchup would hide it on the next frame
-    // regardless (pendingTurns() is 0 right after Runner.reset()), but a
-    // restart shows the menu overlay for a beat first, so hide it explicitly
-    // here rather than leave it visible during that gap.
+    // A restart shows the menu overlay for a beat before updateCatchup runs,
+    // so hide any stale banner now.
     document.getElementById('catchupBanner').classList.add('hidden');
     Radial.hide();
     this.hideHoverPanel();
@@ -829,19 +765,14 @@ const UI = {
     document.getElementById('hud').classList.remove('hidden');
   },
 
-  // True between the two calls above. The banner used to come down on the
-  // click that placed the capital, because that click WAS the placement. It
-  // isn't any more — the tap sends a `spawn` intent and the capital appears a
-  // turn later (§5) — so the banner now comes down when the simulation says
-  // the spawn phase is over, which update() watches for. Tracked as a flag
-  // rather than read back off the DOM so there is one owner of the state.
+  // True between the two calls above. A tap only sends a `spawn` intent;
+  // the banner comes down when the sim says the spawn phase is over, which
+  // update() watches for.
   spawnBannerOpen: false,
 
-  // A spawn intent is in flight. Purely for what the banner says; a second tap
-  // is deliberately still allowed to send another (the first one to be applied
-  // wins and the rest are dropped by spawnBlockReason inside the Executor), so
-  // a spawn that is refused for any reason can never wedge the player on a
-  // banner that no longer does anything.
+  // A spawn intent is in flight; only changes the banner text. A second
+  // tap may still send another (first applied wins), so a refused spawn
+  // can't wedge the player.
   spawnSent: false,
 
   SPAWN_HINT: 'Tap the map to place your capital',
@@ -854,12 +785,9 @@ const UI = {
     this.spawnFlashUntil = performance.now() + 1400;
   },
 
-  // How many troops the ratio slider actually commits, next to the percent
-  // itself — the percent alone means nothing without a sense of scale, and
-  // this is the same Math.floor(me.troops * this.ratio) onTap and Radial's
-  // boat/attack launchers use, so the readout never promises a size the
-  // click doesn't deliver. Called both on slider input (immediate feedback)
-  // and every update() tick (troops change on their own between drags).
+  // Troops the ratio slider commits, shown next to the percent. Same
+  // Math.floor(me.troops * this.ratio) the launchers use. Called on slider
+  // input and every update().
   updateRatioTroops() {
     const troops = this._meTroops || 0;
     document.getElementById('ratioTroops').textContent =
@@ -874,11 +802,8 @@ const UI = {
       return;
     }
     banner.classList.remove('warn');
-    // MP-3.2: the spawn phase is now a fixed timed window (up to 15s with
-    // 2+ humans), not "ends the instant someone taps" — without a visible
-    // countdown that reads as the game having frozen. Game.spawnPhaseTicks is
-    // the phase's own turn counter (Game.ticks stays frozen at 0 throughout
-    // the whole spawn phase by design, so it can't drive this).
+    // Spawn-phase countdown. Game.spawnPhaseTicks drives it; Game.ticks stays
+    // at 0 for the whole spawn phase.
     const remaining = Math.max(0, Math.ceil((Game.SPAWN_PHASE_TURNS - Game.spawnPhaseTicks) * Game.TICK_DT));
     const hint = Game.fog ? this.SPAWN_FOG_HINT : this.spawnSent ? this.SPAWN_SENT_HINT
       : Tutorial.active ? Tutorial.SPAWN_HINT : this.SPAWN_HINT;
@@ -935,11 +860,8 @@ const UI = {
     document.getElementById('hpPopValue').textContent = formatPop(p.troops);
     document.getElementById('hpPopMax').textContent = formatPop(max);
 
-    // Treasuries are public in OpenFront — its leaderboard carries a gold
-    // column for every nation — so what a rival can afford is meant to be
-    // readable before you decide whether to fight them. The per-second rate
-    // is dropped here since it's the same formula for every nation and adds
-    // nothing a rival doesn't already know.
+    // Treasuries are public, so a rival's gold is shown. The per-second
+    // rate is left out: it is the same formula for everyone.
     document.getElementById('hpGoldValue').textContent = formatGoldTight(p.gold);
   },
 
@@ -972,11 +894,8 @@ const UI = {
     if (Game.spawning) {
       const tile = Render.screenToTile(sx, sy);
       if (tile < 0) return;
-      // Advisory, not authoritative: spawnBlockReason runs again inside the
-      // Executor when the intent comes back, and that verdict is the one that
-      // counts. Running it here too is what keeps an illegal tap refused
-      // instantly, with the reason on the banner, instead of costing a round
-      // trip to say nothing happened.
+      // Advisory: the Executor re-runs spawnBlockReason and its verdict
+      // counts. Running it here refuses an illegal tap at once, with the reason.
       const reason = Game.spawnBlockReason(tile);
       if (reason) { this.flashSpawn(reason); return; }
       Transport.sendIntent(Protocol.intent.spawn(tile));
@@ -987,11 +906,8 @@ const UI = {
     }
     if (!Game.running) return;
 
-    // Debug panel's two-click nuke: first tap sets the launch point and
-    // stays armed for the second, which fires it via Game.debugNuke and
-    // disarms — unlike the real atombomb/hydrogenbomb branch below, any tile
-    // at all works for both clicks since there's no Silo/cooldown/gold to
-    // resolve against.
+    // Debug two-click nuke: first tap sets the launch point, second fires
+    // via Game.debugNuke and disarms. Any tile works for both.
     if (this.placing === 'debugnuke') {
       const tile = Render.screenToTile(sx, sy);
       if (tile < 0) { this.flash('Off the map'); return; }
@@ -999,12 +915,9 @@ const UI = {
         this.debugNukeSrc = tile;
         return;
       }
-      // DEBUG BYPASS #2 — mutates the sim directly. There is no intent for
-      // this and §4 says there must not be one: Game.debugNuke fires a bomb
-      // with no Silo, no cooldown and no gold, from an arbitrary tile, which
-      // is a dev tool for looking at blast/fallout behaviour rather than a
-      // move a player can make. Singleplayer only — armDebugNuke refuses to
-      // arm it when the transport is not local, and update() hides the panel.
+      // DEBUG BYPASS #2: Game.debugNuke mutates the sim directly (no Silo,
+      // cooldown or gold) and has no intent, by design (§4). Singleplayer
+      // only: armDebugNuke refuses when the transport is not local.
       if (!this.debugAllowed()) return;
       Game.debugNuke(this.debugNukeType, this.debugNukeSrc, tile);
       this.placing = null;
@@ -1036,27 +949,17 @@ const UI = {
       return;
     }
 
-    // Warship placement is its own branch, not the generic land-structure one
-    // below: it's priced/placed via warshipBlockReason/buildWarship rather
-    // than buildBlockReason/build, since a Warship click means "launch one
-    // toward here," not "place one exactly here" — Game.resolveWarshipLaunch
-    // picks the nearest owned Port to launch from and snaps the click to the
-    // nearest open water on its own (per the user's explicit design request:
-    // no coast-clicking required, and a Port is a hard requirement).
-    // findStructureNear/upgrade never apply to it (Game.buildings has no
-    // warship entries — nothing to upgrade), and it spawns instantly rather
-    // than arming a construction timer.
+    // Warship: a click means 'launch one toward here'.
+    // Game.resolveWarshipLaunch picks the nearest owned Port and snaps the
+    // click to open water. No upgrade path, and it spawns instantly.
     if (this.placing === 'warship') {
       const tile = Render.screenToTile(sx, sy);
       const reason = Game.warshipBlockReason(Game.me, tile);
       if (reason) {
         this.flash(reason);
-        // "No open water there"/"No sea route there" are about THIS specific
-        // click, not about being unable to build one at all — stay armed so
-        // the player can just click elsewhere. Everything else (no Port, no
-        // gold, fleet capped) means the order can't succeed anywhere right
-        // now, so it disarms rather than leaving a placement armed that
-        // every subsequent tap would also refuse.
+        // Those two reasons are about this click only, so stay armed for
+        // another. Anything else (no Port, no gold, fleet capped) can't succeed
+        // anywhere right now, so disarm.
         if (reason !== 'No open water there' && reason !== 'No sea route there') {
           this.placing = null;
           this.placeHover = -1;
@@ -1107,19 +1010,9 @@ const UI = {
       return;
     }
 
-    // Atom/Hydrogen Bomb: same "click anywhere, the game resolves the
-    // launch point" shape as Warship above, via Game.resolveNukeLaunch/
-    // nukeBlockReason/launchNuke rather than buildBlockReason/build — a
-    // nuke click means "strike here," not "place one exactly here," and
-    // unlike a Warship purchase, any tile at all (land, water, even the
-    // player's own territory) is a legal target, so there's no snap-related
-    // reason text to special-case the way Warship's "No open water there"
-    // is.
-    // MIRV (ticket #28) rides this exact same branch — nukeBlockReason/
-    // Protocol.intent.buildUnit are both already generic over nukeType/unit,
-    // and the executor routes 'mirv' to Game.launchMirv on its own (see its
-    // own comment), so nothing here needs to know MIRV is a different shape
-    // once it's airborne.
+    // Atom/Hydrogen Bomb and MIRV: 'strike here'. Any tile is a legal
+    // target; Game.resolveNukeLaunch picks the launch point. The executor
+    // routes 'mirv' to Game.launchMirv.
     if (this.placing === 'atombomb' || this.placing === 'hydrogenbomb' || this.placing === 'mirv') {
       const tile = Render.screenToTile(sx, sy);
       const reason = Game.nukeBlockReason(Game.me, this.placing, tile);
@@ -1135,49 +1028,19 @@ const UI = {
       return;
     }
 
-    // A selected fleet consumes the next tap as a relocate order — shift-
-    // drag/shift-click select first (Input.onUp), then a plain click here
-    // moves them (see Game.moveWarships/warshipPatrol). moveWarships itself
-    // snaps a non-water click to the nearest open water (same leniency a
-    // purchase click gets) and returns false only when nothing reachable is
-    // nearby at all — that's read as the player pointing somewhere else on
-    // purpose, and the tap falls through to whatever it would normally do
-    // (attack, etc.) instead of silently eating it. Either way the selection
-    // is dropped right after this tap: an early version kept it armed for a
-    // follow-up order, but in practice a player who has already moved on to
-    // a normal tap has no way to tell the fleet is still selected — the only
-    // way out was Esc, which nothing on screen suggested. Selecting again is
-    // one shift-drag away if another order is actually wanted.
+    // A selected fleet consumes the next tap as a relocate order, then the
+    // selection is dropped. Whether the tap is consumed is decided up front
+    // (an intent can't answer): if no reachable water is near the tap, it
+    // falls through to a normal attack. Water nearby that no selected ship can
+    // route to still consumes the tap; the Executor drops that order.
     //
-    // MP-1.5 changed how "did this tap get consumed" is decided. It used to be
-    // Game.moveWarships' own return value, which is no longer available: an
-    // intent cannot answer, because the answer does not exist until the turn
-    // comes back. So the decision is made here, up front, from the same sim
-    // query moveWarships itself starts with — is there reachable water near
-    // the tap at all. That is the case the old return value was really
-    // reporting: a tap far inland is the player pointing at something else and
-    // should fall through to a normal attack.
-    //
-    // One deliberate behaviour change falls out of that. moveWarships also
-    // returns false when water is close by but no selected ship can find a sea
-    // route to it (an enclosed lake, the far side of a continent); that tap now
-    // consumes the selection and issues an order that the Executor quietly
-    // drops, rather than falling through to an attack. Re-running seaPath for
-    // every selected ship on the click — a full water search across the map,
-    // done twice, once here and once for real a turn later — is not worth
-    // buying that case back.
-    //
-    // Fog of war: the selection can hold scouts too, and the tap orders both.
-    // A scout goes wherever the tap was (moveScout never refuses a tile, so
-    // the tap is always consumed). A warship still needs a tap on discovered
-    // water, so in a mixed selection it simply stays put when the tap is in
-    // the black, and the hint line says so.
+    // Fog: scouts go wherever the tap was (always consumed). A warship needs
+    // discovered water, so it stays put on a tap in the black and the hint
+    // line says so.
     if (this.selectedWarships.size || this.selectedScouts.size) {
       const tile = Render.screenToTile(sx, sy);
-      // Objects can't cross a wire, so the order names ids (MP-1.2). Ships
-      // that have sunk since the selection was made are skipped here; the
-      // Executor drops any that sink in the ~100 ms after, so an order over a
-      // fleet that is losing ships still moves the ones that are left.
+      // The order names ids, not objects. Ships already sunk are skipped
+      // here; the Executor drops any that sink before the turn lands.
       const unitIds = [], scoutIds = [];
       for (const w of this.selectedWarships) if (Game.warshipById(w.id)) unitIds.push(w.id);
       for (const s of this.selectedScouts) if (Game.scoutById(s.id)) scoutIds.push(s.id);
@@ -1202,17 +1065,10 @@ const UI = {
     }
 
     if (this.placing) {
-      // Tapping anywhere across an existing same-type structure's drawn disc
-      // — not just its exact backing tile — upgrades it instead of placing a
-      // new one, matching how big the icon actually looks on screen. Checked
-      // ahead of screenToTile's exact-tile hit test (and its own tile<0
-      // guard) since the disc's buffer can extend past what that single tile
-      // would resolve to. The same button doing double duty this way matches
-      // OpenFront's own build menu (its buildableUnits() resolves to either
-      // canBuild or canUpgrade depending on what's already standing there).
-      // OpenFront also reads a click anywhere inside the minimum spacing
-      // around one (Game.upgradeTargetNear) the same way, since nothing new
-      // could be built that close to it anyway.
+      // A tap anywhere on an existing same-type structure's drawn disc, or
+      // within the minimum spacing around it (Game.upgradeTargetNear), upgrades
+      // it instead of placing a new one. Checked before screenToTile because
+      // the disc extends past its backing tile.
       const existing = Render.findStructureNear(sx, sy, this.placing) ||
         Game.upgradeTargetNear(Game.me, this.placing, Render.screenToTile(sx, sy));
       if (existing) {
@@ -1236,21 +1092,13 @@ const UI = {
       const reason = Game.buildBlockReason(Game.me, this.placing, tile);
       if (reason) {
         this.flash(reason);
-        // Most refusals stay armed and just say why — a fat-fingered tap can
-        // land on an occupied tile or you can be a coin short, and disarming
-        // on every one of those would make placing anything a chore. But a
-        // tap off your own land entirely (including off the map, which also
-        // reads as tile < 0 and lands here) isn't a near miss, it's the player
-        // pointing somewhere else on purpose — so that one cancels placement
-        // instead of also needing the hotkey/button.
+        // Most refusals stay armed and say why, since near misses are common.
+        // A tap off your own land (or off the map) is deliberate, so it cancels.
         if (reason === 'Your own land only') { this.placing = null; this.placeHover = -1; }
         return;
       }
-      // The snapped tile is what travels — unlike the warship/boat cases, the
-      // snapping here is click interpretation (findRailSnapTile literally
-      // reads screen pixels) rather than a rule of the sim, so it stays on the
-      // client and the resolved tile goes on the wire. executor.js's
-      // build_unit comment says the same thing from the other end.
+      // The snapped tile is what goes on the wire: findRailSnapTile reads
+      // screen pixels, so the snap is click interpretation, not a sim rule.
       Transport.sendIntent(Protocol.intent.buildUnit(this.placing, tile));
       // One build per arming, as OpenFront's menu does — the next city costs
       // double, which should be a decision rather than something you walk into
@@ -1269,60 +1117,33 @@ const UI = {
     const target = GameMap.owner[tile];
     if (target === WATER || target === Game.me) return;
 
-    // A tile whose whole connected patch of territory is walled in by our
-    // own land falls for free — no siege, no troops — per OpenFront's rule,
-    // and *every* such patch of theirs falls on the same tap, not just the
-    // one that got clicked. That second half is what makes cleaning up after
-    // a nuke bearable: the blast leaves their survivors scattered through
-    // irradiated ground, and once we have resettled that ground each survivor
-    // is its own sealed one-tile pocket. Taking only the tapped one meant
-    // picking the rest off pixel by pixel.
+    // A patch of their territory walled in by our land falls for free, and
+    // every such patch of theirs falls on the same tap (this is what makes
+    // post-nuke cleanup bearable).
     //
-    // No early return: whatever of theirs is still standing against our
-    // border — the specks the blast left touching unclaimed fallout, their
-    // mainland — falls through to the ordinary attack below, so one tap goes
-    // after everything of theirs we are touching. launchAttack costs nothing
-    // if there is no longer anything to touch (its frontier scan comes up
-    // empty and it commits no troops), which is exactly the case when the
-    // annexation above just finished them off.
+    // No early return: whatever of theirs still touches our border falls
+    // through to the ordinary attack below, which costs nothing if no frontier
+    // is left.
     //
-    // The intent carries the tapped tile and nothing else. The enclosed region
-    // is not computed here and shipped: enclosedPocketsOf runs inside the
-    // Executor, off sim state, so every client derives the same pockets on the
-    // same turn — and the target nation comes back out of GameMap.owner[tile]
-    // there too, rather than being a second thing on the wire that could
-    // disagree with the first.
+    // The intent carries only the tapped tile; the Executor derives the
+    // pockets and the target from sim state, so every client agrees.
     if (target >= 0) Transport.sendIntent(Protocol.intent.annexRegion(tile));
 
-    // Land only: it expands the whole border we share with that nation or
-    // neutral land on the tapped tile's own landmass, regardless of precisely
-    // which tile on that landmass got tapped, and simply does nothing if we
-    // don't touch them there. This deviates from OpenFront's plain-click
-    // (which expands every border touching that nation, on any landmass) so
-    // that fighting the same enemy across two separate islands stays two
-    // separate fronts — see Game.launchAttack's landmassId comment. A boat is
-    // a deliberate action from here — right-click or hold the tile for the
-    // radial menu — except a short hop, which the quick-boat check below
-    // sends straight away.
+    // Land only: expands our whole border with that nation (or neutral land)
+    // on the tapped tile's own landmass, so the same enemy on two islands is
+    // two fronts (see Game.launchAttack's landmassId). Boats come from the
+    // radial, except the quick-boat short hop below.
     //
-    // Both intents go out on the same tap and in this order, which is the
-    // order they will be applied in: a turn's intents are an ordered list and
-    // the server buckets them as they arrive (§1). So the annexation still
-    // resolves before the attack scans the frontier, exactly as when both were
-    // direct calls.
+    // Both intents go out in this order, which is the order they are applied:
+    // the annexation resolves before the attack scans the frontier.
     //
-    // The troop count is absolute, not the ratio: the slider is client-local
-    // view state and its value travels inside the intent (§4).
+    // The troop count is absolute; the slider ratio is client-local (§4).
     const me = Game.players[Game.me];
     const troops = Math.floor(me.troops * this.ratio);
 
-    // Quick boat (ticket #27): a tap on a target we don't touch by land on
-    // that landmass, but that sits a short sail from our coast, sends the
-    // same `boat` intent the radial's Boat wedge does instead of a land attack
-    // that would find no frontier and do nothing. Anything farther than
-    // QUICK_BOAT_MAX_STEPS still needs the radial, so a long crossing is
-    // always a deliberate choice. Checked only here, on the click itself —
-    // never on hover.
+    // Quick boat: a tap on a target we don't touch by land but that is a
+    // short sail away sends the radial's `boat` intent. Past
+    // QUICK_BOAT_MAX_STEPS it needs the radial. Checked on click, never hover.
     if (!this.touchesByLand(tile, target)) {
       const hop = this.quickBoatCheck(tile, troops);
       if (hop === 'go') { Transport.sendIntent(Protocol.intent.boat(tile, troops)); return; }
@@ -1367,12 +1188,9 @@ const UI = {
     const me = Game.players[Game.me];
     if (!me) return;
 
-    // Dev-only cheats: live for the whole match, including spawn selection,
-    // same as the leaderboard — gone before a match exists, and gone entirely
-    // once the transport is not local, because two of the three controls on
-    // the panel reach past the intent pipeline into the sim (see the DEBUG
-    // BYPASS notes in setup()) and would desync a networked match.
-    // The panel itself additionally stays closed until the toggle opens it.
+    // Dev-only cheats: shown for the whole match, hidden before one exists
+    // and whenever the transport is not local (see the DEBUG BYPASS notes in
+    // setup()). The panel stays closed until the toggle opens it.
     const debugToggle = document.getElementById('debugToggle');
     debugToggle.classList.toggle('hidden', !this.debugAllowed());
     debugToggle.textContent = this.debugOpen ? 'Debug ▾' : 'Debug ▸';
@@ -1784,21 +1602,13 @@ const UI = {
     return Render.canSee(t) ? { x: t % w + 0.5, y: ((t / w) | 0) + 0.5 } : null;
   },
 
-  // Every attack or boat touching the player, either direction: pushes and
-  // boats they sent (with an X to retreat/recall them) and ones aimed at
-  // them (read-only — a defense line, not a control).
+  // Every attack or boat touching the player: ones they sent (with an X to
+  // retreat/recall) and ones aimed at them (read-only).
   //
-  // Chips are reconciled by the underlying attack/boat object's identity
-  // rather than rebuilt wholesale each frame. An innerHTML rewrite every
-  // tick — the first cut of this did exactly that — replaces the X button
-  // with a brand new element on every single frame; a real mouse press and
-  // release spans several of those frames, and a click event needs the same
-  // element to still be there when it releases. Keeping each chip's DOM node
-  // (and its listener) alive for as long as its attack/boat is means a click
-  // can never race a rebuild out from under it. Only the mutable bits —
-  // troop count, retreating state, whether the X is shown — are touched
-  // in place; new chips are created only for fronts that just appeared, and
-  // old chips are removed only once their front is actually gone.
+  // Chips are reconciled by the attack/boat object's identity, never
+  // rebuilt wholesale: an innerHTML rewrite each frame replaces the X button
+  // mid-press and the click never fires. Only the mutable bits are updated
+  // in place.
   updateFronts() {
     const el = document.getElementById('frontsRow');
     const items = [];
@@ -1884,14 +1694,9 @@ const UI = {
         const btn = document.createElement('button');
         btn.className = 'frontClose';
         btn.textContent = '✕';
-        // Closed over `it.ref` at creation time, not looked up by index —
-        // there's no array position to go stale. The intent carries the
-        // attack's/boat's id rather than the object (MP-1.2 gave every one of
-        // them an id precisely because a reference cannot cross a wire); the
-        // Executor looks it up again and checks we are the one who launched
-        // it. An id whose attack has already ended by the time the turn lands
-        // is dropped there, which is the ordinary case for a chip clicked as
-        // its front resolves, not an error.
+        // Closes over `it.ref`, not an index. The intent carries the attack's or
+        // boat's id; the Executor looks it up and checks we launched it. An id
+        // whose attack already ended is dropped there, which is normal.
         btn.addEventListener('click', (e) => {
           // Otherwise this bubbles to the chip's own click listener and jumps
           // the camera to the front in the same gesture that just cancelled it.
@@ -1921,25 +1726,17 @@ const UI = {
     this._frontChipByRef = nextByRef;
   },
 
-  // Ticket #25: incoming-nuke warning. Read-only over Game.nukes — nothing
-  // here writes sim state. A nuke has no id, but it stays the same object from
-  // launch until stepNukes (landed) or stepSAMs (shot down) splices it
-  // out, so the object itself is the key: one row per nuke, never duplicated,
-  // and the row disappears the frame the nuke leaves Game.nukes.
+  // Incoming-nuke warning. Read-only over Game.nukes. A nuke has no id but
+  // stays the same object until it is spliced out, so the object is the
+  // key: one row per nuke, gone the frame the nuke is.
   updateNukeAlert() {
     const el = document.getElementById('nukeAlert');
     const prev = this._nukeRowByRef || new Map();
     const next = new Map();
 
-    // MIRV (ticket #28): warn on the mothership itself, same as any other
-    // nuke, from the moment it launches — matching real OpenFront's own
-    // displayIncomingUnit call, which fires the instant the missile spawns,
-    // not once it splits. Skipped in the this.nukes loop below is the
-    // opposite case — once it splits into MIRV_WARHEAD_COUNT individual
-    // mirvwarhead entries, those do NOT each get their own alert row (see
-    // that loop's own comment): the player already knows a strike is
-    // inbound from this row, and 40 simultaneous rows replacing it the
-    // instant it splits would be pure noise, not information.
+    // MIRV: warn on the mothership from launch. Once it splits, the
+    // warheads do NOT get rows of their own (see the loop below); 40 rows at
+    // once would be noise.
     for (const m of Game.mirvs) {
       if (!this.nukeThreatensMe(m)) continue;
       let row = prev.get(m);
@@ -2000,12 +1797,9 @@ const UI = {
     row._textEl.innerHTML = `${iconHtml(icon)} ${what} incoming from ${escapeHtml(name)}!`;
   },
 
-  // Ticket #36: a toast whenever a teammate donates gold or troops to you.
-  // Fx.donationToasts is pushed unconditionally by Game.donateGold/
-  // donateTroops for every recipient (see Fx's own file comment on the
-  // sim/Fx contract); this filters to Game.me and ages rows out on its own,
-  // same one-row-per-event diffing as updateNukeAlert but keyed to a fixed
-  // lifetime instead of "while the threat exists".
+  // A toast when a teammate donates gold or troops to you. The sim pushes
+  // Fx.donationToasts for every recipient; this filters to Game.me and ages
+  // rows out after a fixed lifetime.
   updateDonationAlert() {
     const el = document.getElementById('donationAlert');
     const prev = this._donationRowByRef || new Map();
@@ -2186,28 +1980,15 @@ const UI = {
     return null;
   },
 
-  // MP-3.5: purely reactive. The win condition itself lives in Game.tick()
-  // (see the block right after its elimination sweep) as a global,
-  // Game.me-blind fact — Game.winnerId — set identically on every client on
-  // the same turn. This function never computes anything and never writes to
-  // Game: it only reads Game.winnerId/Game.players/Game.placements and
-  // decides, locally, which overlay *this* client should show, then casts
-  // this client's one vote.
+  // Purely reactive: Game.winnerId is set by the sim identically on every
+  // client. This only reads sim state, picks which overlay this client
+  // shows, and casts this client's one vote.
   //
-  // This client's own elimination is split out from that vote on purpose.
-  // Game.winnerId only exists once the whole match is decided, which can be
-  // long after this player is out — bots keep fighting each other, or a
-  // multiplayer match keeps running for everyone else — so waiting for it
-  // would leave a defeated player watching a nation they no longer control
-  // for the rest of the match. `lossShown` fires the instant `me.alive` goes
-  // false, independent of winnerId, so the defeat screen (with the
-  // placement Game.eliminatePlayer recorded) shows right away. The
-  // network-visible part — casting this client's `winner` vote — still
-  // waits for Game.winnerId itself to be decided; voting a still-null
-  // winner here would tell the server the match ended before it has.
-  // `endGameHandled`/`lossShown` (both cleared by reset(), which every
-  // restart runs) are the "already reacted" latches so each half fires once
-  // per match instead of every frame main.js calls this.
+  // Our own elimination is handled separately: `lossShown` fires as soon as
+  // `me.alive` goes false, since winnerId can come much later. The `winner`
+  // vote still waits for winnerId; voting null would tell the server the
+  // match had ended. `endGameHandled`/`lossShown` are one-shot latches,
+  // cleared by reset().
   checkEndGame() {
     const me = Game.players[Game.me];
 
@@ -2272,18 +2053,12 @@ const UI = {
     overlay.classList.remove('hidden');
   },
 
-  // --- Lobby (MP-2.3) ---------------------------------------------------------
+  // --- Lobby ------------------------------------------------------------------
   //
-  // Pure DOM: mode-tab switching, roster rendering, and reading/writing the
-  // lobby form fields. No Transport call lives here — js/main.js owns every
-  // click that actually opens a connection (hostCreateBtn/hostStartBtn/
-  // joinBtn), the same division it already uses for the existing startBtn/
-  // restartBtn. This file only shows what the network told main.js, or hands
-  // main.js what the host/join forms currently say.
-  //
-  // #spMode (map/bots/tribes/#startBtn) is the pre-existing singleplayer
-  // panel, untouched — this section only adds the menu rows around it and
-  // the screens beside it. Host and join share one screen (#friendsMode).
+  // Pure DOM: mode switching, roster rendering, reading and writing the
+  // lobby form fields. No Transport call lives here; js/main.js owns every
+  // click that opens a connection. Host and join share one screen
+  // (#friendsMode).
 
   setupLobby() {
     const tabs = Array.prototype.slice.call(document.querySelectorAll('.modeTab'));
@@ -2707,11 +2482,8 @@ const UI = {
     return '[' + tag + '] ' + (name || 'Player');
   },
 
-  // Read the host panel's map/bot/tribe controls into the shape `start_game`
-  // carries (protocol.js's {map, mapSize, bots, tribes}). Clamped the same way
-  // main.js's singleplayer start() clamps its own controls (BOT_CAP/TRIBE_CAP
-  // there), so a host cannot send the server a config outside what the sim
-  // actually supports.
+  // Read the host panel's controls into the shape `start_game` carries
+  // ({map, mapSize, bots, tribes}), clamped like main.js's singleplayer start().
   getHostConfig() {
     const map = document.getElementById('hostMapType').value === 'world' ? 'world' : 'procedural';
     const mapSize = document.getElementById('hostMapSize').value;
@@ -2948,14 +2720,9 @@ const UI = {
     return !!document.getElementById('hostPublic').checked;
   },
 
-  // Main menu redesign: the hero card above the mode tabs. `entry` is the
-  // GET /lobbies result's one `isAuto` row (main.js's refreshLobbyList picks
-  // it out), or null while the poll hasn't resolved yet / genuinely no auto
-  // lobby exists (should not happen in practice — GameManager always keeps
-  // one — but a server that's down or between restarts is exactly the case
-  // this falls back for, per Transport.fetchLobbyList's own "resolves to []
-  // on any network failure" contract). The button stays live either way:
-  // with nothing to join it starts a match against bots (main.js).
+  // The hero card above the mode tabs. `entry` is GET /lobbies' one
+  // `isAuto` row, or null (poll pending, or server down). The button stays
+  // live either way: with nothing to join it starts a match against bots.
   renderQuickJoin(entry) {
     const info = document.getElementById('quickJoinInfo');
     const btn = document.getElementById('quickJoinBtn');
@@ -3007,18 +2774,9 @@ const UI = {
     wrap.classList.remove('hidden');
   },
 
-  // Issue #9: renders GET /lobbies' result into the Join screen's browser
-  // list. `onPick(gameID)` is called on click — main.js owns what that
-  // means (fill the join code and connect), same division as everywhere
-  // else in this file. Re-rendered wholesale on every refresh; this list is
-  // never large enough (§6.1: "never many concurrent games on a self-hosted
-  // box") to need the incremental diffing updateLobbyFromInfo does for the
-  // in-lobby roster.
-  //
-  // Main menu redesign: `list` is expected to have the `isAuto` entry
-  // already filtered out by main.js's refreshLobbyList — that one lobby now
-  // gets its own hero card (renderQuickJoin above) instead of a row here, so
-  // this only ever renders manually-hosted lobbies.
+  // Renders manually-hosted public lobbies into the Join screen's list;
+  // main.js filters the `isAuto` entry out first (it gets the hero card).
+  // `onPick(gameID)` is called on click. Re-rendered wholesale each refresh.
   renderPublicLobbies(list, onPick) {
     const ul = document.getElementById('publicLobbyList');
     ul.innerHTML = '';
@@ -3043,10 +2801,8 @@ const UI = {
     });
   },
 
-  // Called by main.js's hostLobby() the moment Transport.connect is issued —
-  // shows the join code immediately so it can be shared while the socket is
-  // still opening (§6.1 derivation, backpressure buffering in transport.js
-  // both mean this is safe to show before the server has said anything).
+  // Called the moment Transport.connect is issued, so the join code can be
+  // shared while the socket is still opening.
   showHostLobby(gameID) {
     this.setLobbyError('');
     this._lobbyKnownIDs = null;
@@ -3069,7 +2825,133 @@ const UI = {
     document.getElementById('joinRoster').innerHTML = '';
     document.getElementById('joinPlayerCount').textContent = '';
     this.setLobbyStatus('join', 'Connecting to server…', false);
+    this._setOpenLobby(false);
     this._hidePreLobbyChrome();
+  },
+
+  // The open game's wait screen (#joinLobby.isOpen): what the match is, when
+  // it starts, and a few tips to read meanwhile. Two pages of three, turned
+  // every OPEN_LOBBY_TIP_MS. Open games always run with fog, so nothing here
+  // mentions picking a spawn or shows the map.
+  OPEN_LOBBY_TIP_MS: 9000,
+  OPEN_LOBBY_TIPS: [
+    { icon: 'troops', title: 'Grow your nation', text: 'Tap unclaimed land next to your border. Your troops march out and claim it.' },
+    { icon: 'attack', title: 'Take tribes early', text: 'Beige land belongs to tribes. They make no alliances, so nobody comes to their defence.' },
+    { icon: 'radio', title: 'The map starts hidden', text: 'You only see what you have discovered. Scouts, warships and Radio Towers reveal more.' },
+    { icon: 'city', title: 'Build Cities', text: 'Cities raise your maximum troops.' },
+    { icon: 'port', title: 'Build a Port', text: 'Ports earn gold from trade ships and launch your navy.' },
+    { icon: 'ally', title: 'Make peace', text: 'Right-click a nation, or press and hold on a phone, and choose Peace. Allies cannot attack each other.' }
+  ],
+
+  // Play now, into the open game: switch to the wait screen straight away
+  // from the menu's /lobbies entry, rather than when the first lobby_info
+  // lands. Call after showJoinLobby, which resets it.
+  showOpenLobby(entry) {
+    this._setOpenLobby(true);
+    this._renderOpenLobbyFacts(entry);
+  },
+
+  _setOpenLobby(on) {
+    document.getElementById('joinLobby').classList.toggle('isOpen', on);
+    if (this._olTipIntervalID) { clearInterval(this._olTipIntervalID); this._olTipIntervalID = null; }
+    this._olCountdown = null;
+    if (!on) return;
+    document.getElementById('olTimerLabel').textContent = 'Connecting…';
+    document.getElementById('olTimerNum').textContent = '';
+    document.getElementById('olBarFill').style.width = '0';
+    document.getElementById('olBots').textContent = '';
+    this._renderOpenLobbyTips(0);
+    this._restartOpenLobbyTipTimer();
+    // Tapping the card turns the page; the dots jump to theirs.
+    document.getElementById('olTips').onclick = (e) => {
+      if (e.target.closest('.olDot')) return;
+      this._turnOpenLobbyTips(this._olTipPage + 1);
+    };
+  },
+
+  _renderOpenLobbyFacts(lobby) {
+    const mapLabel = String(lobby.mapSize || '').replace(/^./, (c) => c.toUpperCase());
+    document.getElementById('olFacts').textContent =
+      (mapLabel ? mapLabel + ' map · ' : '') + (lobby.maxPlayers ? lobby.maxPlayers + ' nations · ' : '') + 'Fog of war';
+  },
+
+  // A page turned by hand gets its full time before the next automatic turn.
+  _restartOpenLobbyTipTimer() {
+    if (this._olTipIntervalID) clearInterval(this._olTipIntervalID);
+    this._olTipIntervalID = setInterval(() => this._renderOpenLobbyTips(this._olTipPage + 1), this.OPEN_LOBBY_TIP_MS);
+  },
+
+  _turnOpenLobbyTips(page) {
+    this._renderOpenLobbyTips(page);
+    this._restartOpenLobbyTipTimer();
+  },
+
+  // Every page is laid out, stacked in one grid cell with only the current
+  // one visible, so the card is as tall as its tallest page and never resizes.
+  _renderOpenLobbyTips(page) {
+    const PER_PAGE = 3;
+    const pages = Math.ceil(this.OPEN_LOBBY_TIPS.length / PER_PAGE);
+    page = ((page % pages) + pages) % pages;
+    this._olTipPage = page;
+    const list = document.getElementById('olTipList');
+    list.innerHTML = '';
+    this.OPEN_LOBBY_TIPS.forEach((tip, n) => {
+      if (n % PER_PAGE === 0) {
+        const group = document.createElement('div');
+        group.className = 'olTipPage' + (n / PER_PAGE === page ? ' on' : '');
+        list.appendChild(group);
+      }
+      const row = document.createElement('div');
+      row.className = 'olTip';
+      const img = document.createElement('img');
+      img.className = 'ic';
+      img.src = 'assets/icons/' + tip.icon + '.svg';
+      img.alt = '';
+      img.draggable = false;
+      const body = document.createElement('div');
+      const title = document.createElement('b');
+      title.textContent = tip.title;
+      const text = document.createElement('span');
+      text.textContent = tip.text;
+      body.appendChild(title);
+      body.appendChild(text);
+      row.appendChild(img);
+      row.appendChild(body);
+      list.lastChild.appendChild(row);
+    });
+    const dots = document.getElementById('olTipDots');
+    dots.innerHTML = '';
+    for (let i = 0; i < pages; i++) {
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'olDot' + (i === page ? ' on' : '');
+      dot.setAttribute('aria-label', 'Tips page ' + (i + 1));
+      dot.addEventListener('click', () => this._turnOpenLobbyTips(i));
+      dots.appendChild(dot);
+    }
+  },
+
+  // `autoStartAt` is null until enough players are in. The bar drains from
+  // wherever the countdown stood when this client first saw it.
+  _renderOpenLobbyTimer(autoStartAt, waitingText) {
+    const label = document.getElementById('olTimerLabel');
+    const num = document.getElementById('olTimerNum');
+    const fill = document.getElementById('olBarFill');
+    if (typeof autoStartAt !== 'number') {
+      this._olCountdown = null;
+      label.textContent = waitingText;
+      num.textContent = '';
+      fill.style.width = '0';
+      return;
+    }
+    const left = Math.max(0, autoStartAt - Date.now());
+    if (!this._olCountdown || this._olCountdown.at !== autoStartAt) {
+      this._olCountdown = { at: autoStartAt, total: Math.max(left, 1) };
+    }
+    const secs = Math.round(left / 1000);
+    label.textContent = 'Starts in';
+    num.textContent = Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
+    fill.style.width = (100 * left / this._olCountdown.total) + '%';
   },
 
   // Play now, into the open game: the menu's hero card is hidden once
@@ -3088,12 +2970,8 @@ const UI = {
     wrap.classList.remove('hidden');
   },
 
-  // Once connected to a lobby (host or join), the other ways to start a
-  // match no longer make sense to show — clicking the hero "Play now"
-  // button or another mode row wouldn't leave this lobby, just show a
-  // confusingly unconnected panel next to a still-live one. Hidden rather
-  // than disabled so the lobby screen (roster, code/status, leave button)
-  // is the only thing on screen while connected.
+  // While connected to a lobby, hide the other ways to start a match so
+  // the lobby screen is the only thing on screen.
   _hidePreLobbyChrome() {
     document.getElementById('nameRow').classList.add('hidden');
     document.getElementById('quickJoin').classList.add('hidden');
@@ -3111,6 +2989,7 @@ const UI = {
       this._autoLobbyCountdownIntervalID = null;
     }
     this._autoLobbyCountdown = null;
+    this._setOpenLobby(false);
     document.getElementById('hostLobby').classList.add('hidden');
     document.getElementById('hostCreateBtn').classList.remove('hidden');
     document.getElementById('joinLobby').classList.add('hidden');
@@ -3141,14 +3020,9 @@ const UI = {
     }, () => { /* clipboard blocked */ });
   },
 
-  // Rendered from a `lobby_info` broadcast (protocol.js's {lobby, myClientID})
-  // relayed by main.js's onServerMessage. `role` is 'host' or 'join' — which
-  // panel's roster to update — and `isHost` (myClientID === lobby's recorded
-  // creatorClientId, computed by main.js) gates whether #hostStartBtn shows
-  // at all: per the task spec, a joiner's screen must have no way to start
-  // the match, so on the join panel there is no Start button in the DOM to
-  // begin with, and on the host panel it stays hidden for anyone who is not
-  // (yet, or ever, on this connection) the recorded creator.
+  // Rendered from a `lobby_info` broadcast. `role` ('host' or 'join')
+  // picks which panel's roster to update; `isHost` gates #hostStartBtn. The
+  // join panel has no Start button in the DOM at all.
   updateLobbyFromInfo(lobby, role, isHost, myClientID) {
     const players = (lobby && lobby.players) || [];
     const creatorClientId = lobby && lobby.creatorClientId;
@@ -3165,35 +3039,41 @@ const UI = {
       : { roster: 'joinRoster', count: 'joinPlayerCount' };
     // No human host to badge in an auto lobby (issue #12) — creatorClientId
     // here is just whichever player happened to join first, not a role.
+    const open = role === 'join' && !!(lobby && lobby.isAuto);
     this.renderLobbyRoster(document.getElementById(ids.roster), players,
-      (lobby && lobby.isAuto) ? null : creatorClientId, myClientID, fresh);
+      (lobby && lobby.isAuto) ? null : creatorClientId, myClientID, fresh, open);
     document.getElementById(ids.count).textContent = '(' + players.length + ')';
+
+    // The open game's wait screen. Also reached by typing the open game's
+    // code into the join form, which showOpenLobby never saw.
+    const humans = players.filter((p) => !p.spectator).length;
+    if (open) {
+      if (!document.getElementById('joinLobby').classList.contains('isOpen')) this._setOpenLobby(true);
+      this._renderOpenLobbyFacts(lobby);
+      const need = Math.max(0, (lobby.minPlayers || 2) - humans);
+      this._renderOpenLobbyTimer(lobby.autoStartAt,
+        need > 0 ? 'Waiting for ' + need + ' more player' + (need === 1 ? '' : 's') : 'Starting soon');
+      const bots = Math.max(0, (lobby.maxPlayers || 0) - humans);
+      document.getElementById('olBots').textContent =
+        bots > 0 ? '+ ' + bots + (bots === 1 ? ' bot fills' : ' bots fill') + ' the rest' : '';
+    }
 
     let status;
     const newcomer = players.find((p) => fresh.has(p.clientID));
     if (newcomer) status = (newcomer.username || 'A player') + ' joined the lobby.';
     else if (role === 'host') status = players.length > 1 ? 'Ready when you are.' : 'Lobby open — waiting for players to join.';
-    // Issue #12: this lobby has no human host to start it — say so instead
-    // of the generic join message, and show the countdown once one is
-    // running (lobby.autoStartAt, set by GameServer._maybeAdvanceAutoLobby)
-    // so a joiner isn't left guessing when the match will begin.
+    // An auto lobby has no host: say so, and show the countdown once
+    // lobby.autoStartAt is set.
     else if (lobby && lobby.isAuto) {
-      if (typeof lobby.autoStartAt === 'number') {
-        const secs = Math.max(0, Math.round((lobby.autoStartAt - Date.now()) / 1000));
-        status = 'Starting in ' + secs + 's…';
-      } else {
-        status = 'Open lobby — starts once ' + (lobby.minPlayers || 2) + ' or more players join.';
-      }
+      status = typeof lobby.autoStartAt === 'number'
+        ? 'Match starting soon.'
+        : 'Open lobby — starts once ' + (lobby.minPlayers || 2) + ' or more players join.';
     }
     else status = 'Connected to the lobby.';
     this.setLobbyStatus(role, status, true);
 
-    // The status text above is only recomputed when a `lobby_info` broadcast
-    // arrives (roster changes, or the countdown starting/stopping) — between
-    // those it would sit frozen at whatever second it last showed. Tick it
-    // locally once a second from the same lobby.autoStartAt so the number
-    // actually counts down; _tickAutoLobbyCountdown clears itself once the
-    // countdown is no longer running.
+    // lobby_info only arrives on roster or countdown changes, so tick the
+    // text locally once a second from lobby.autoStartAt.
     this._autoLobbyCountdown = (lobby && lobby.isAuto && typeof lobby.autoStartAt === 'number')
       ? { role: role, autoStartAt: lobby.autoStartAt }
       : null;
@@ -3205,32 +3085,36 @@ const UI = {
     }
 
     if (role === 'host') document.getElementById('hostStartBtn').classList.toggle('hidden', !isHost);
-    // index.html's static join-panel caption assumes a human host; an auto
-    // lobby (issue #12) has none, and joinStatus above already carries the
-    // real status for it, so the caption is blanked rather than left saying
-    // something untrue.
+    // The static join caption assumes a human host; blank it for an auto lobby.
     if (role === 'join') {
       document.getElementById('joinWaiting').textContent =
         (lobby && lobby.isAuto) ? '' : 'Waiting for the host to start…';
     }
   },
 
-  // Runs once a second while an auto lobby's countdown is live (started by
-  // updateLobbyFromInfo above). Recomputes the same "Starting in Ns…" text
-  // from the stored autoStartAt without waiting for the next lobby_info
-  // broadcast — otherwise the number sits frozen between roster changes.
+  // Runs once a second while an auto lobby's countdown is live; recomputes
+  // the 'Starting in Ns…' text from the stored autoStartAt.
   _tickAutoLobbyCountdown() {
     const state = this._autoLobbyCountdown;
     if (!state) return;
-    const secs = Math.max(0, Math.round((state.autoStartAt - Date.now()) / 1000));
-    this.setLobbyStatus(state.role, 'Starting in ' + secs + 's…', true);
+    this._renderOpenLobbyTimer(state.autoStartAt, '');
   },
 
-  renderLobbyRoster(ul, players, creatorClientId, myClientID, fresh) {
+  // `swatches` (open game only): each player's nation colour. Game.init gives
+  // human N, counted in roster order without spectators, PLAYER_COLORS[N]; a
+  // free-for-all never recolours them. Someone ahead leaving shifts the rest.
+  renderLobbyRoster(ul, players, creatorClientId, myClientID, fresh, swatches) {
     ul.innerHTML = '';
+    let slot = 0;
     for (const p of players) {
       const li = document.createElement('li');
       li.textContent = p.username || ('Player ' + p.clientID);
+      if (swatches && !p.spectator) {
+        const sw = document.createElement('span');
+        sw.className = 'rosterSwatch';
+        sw.style.background = 'rgb(' + PLAYER_COLORS[slot++ % PLAYER_COLORS.length].join(',') + ')';
+        li.prepend(sw);
+      }
       if (p.clientID === creatorClientId) li.classList.add('isHost');
       if (p.clientID === myClientID) li.classList.add('isYou');
       if (fresh && fresh.has(p.clientID)) li.classList.add('justJoined');
@@ -3245,16 +3129,9 @@ const UI = {
     el.classList.remove('hidden');
   },
 
-  // MP-4.2: diagnostic-only notice that the server's hash tally
-  // (GameServer._tallyHashes) flagged this client — either its own hash
-  // disagreed with the trusted plurality, or the active clients couldn't
-  // agree on any plurality at all (everyone gets flagged in that case). This
-  // is purely informational: main.js's onServerMessage does not disconnect
-  // or otherwise act on a `desync` message, it only calls this. Shown once
-  // and left up for the rest of the match — the server never re-notifies a
-  // client it has already flagged, so there is nothing later to reconcile
-  // the banner against, and clicking it away is just a convenience, not an
-  // acknowledgement the server needs to hear about.
+  // Diagnostic notice that the server's hash tally flagged this client.
+  // Informational only: shown once and left up for the rest of the match
+  // (the server never re-notifies); clicking it away is a convenience.
   showDesyncWarning(text) {
     const el = document.getElementById('desyncBanner');
     const textEl = document.getElementById('desyncBannerText');
@@ -3263,23 +3140,13 @@ const UI = {
     el.classList.remove('hidden');
   },
 
-  // MP-4.1: how many turns behind counts as "catching up" rather than
-  // ordinary same-frame jitter. At Protocol.TURN_INTERVAL_MS (100ms/turn)
-  // this is ~1s of missed game time — comfortably past the odd turn a slow
-  // frame leaves queued, well short of the hundreds of turns a real rejoin
-  // backlog is for a match that's been running a while.
+  // How many turns behind counts as 'catching up' rather than jitter:
+  // about 1s of game time at 100ms/turn.
   CATCHUP_THRESHOLD: 10,
 
-  // Called once a frame (main.js's loop, right after the frame-budgeted
-  // drain) with however many turns Runner still has queued. Owns no drain
-  // logic itself — Runner.executeNextTurn/the loop's own while-condition do
-  // that regardless of whether this is ever called — this is purely the
-  // readout: show/update the banner while meaningfully behind, hide it the
-  // moment the backlog is gone. Driven by the count alone rather than any
-  // "am I reconnecting" flag, so it works the same way whether the backlog
-  // came from a rejoin (MP-4.1's actual case) or, in principle, an ordinary
-  // multi-turn burst — one fewer piece of state to keep in sync with
-  // Transport's own reconnect bookkeeping.
+  // Called once a frame with Runner's queued turn count. Readout only:
+  // show the banner while meaningfully behind, hide it when the backlog
+  // is gone. Driven by the count alone, not a reconnect flag.
   updateCatchup(pendingTurns) {
     const el = document.getElementById('catchupBanner');
     if (!el) return;

@@ -1,38 +1,23 @@
-// Client-local presentation effects. Nothing in here is simulation state.
+// Client-local presentation effects. Nothing in here is simulation state:
+// Fx is not part of Game, so the state hash cannot see it and it can hold
+// per-viewer detail freely.
 //
-// Why this file exists at all: under deterministic lockstep every client runs
-// the identical simulation and a state hash (MP-0.5) compares them turn by
-// turn. Anything living on `Game` is therefore a candidate for that hash, and
-// anything on `Game` that legitimately *differs* per client — because it is
-// filtered by who happens to be watching — is either a permanent exception to
-// remember or a source of false desync alarms. `Fx` sidesteps both: it is not
-// part of `Game`, so the hash cannot see it, and it can hold per-viewer detail
-// freely.
-//
-// The contract with the simulation is one-directional and deliberately thin:
-//   - the sim CALLS INTO Fx, unconditionally, for every player alike, passing
-//     along whose event it was;
+// The contract with the simulation is one-directional:
+//   - the sim CALLS INTO Fx, unconditionally, for every player alike,
+//     passing along whose event it was;
 //   - the sim NEVER READS anything back out of Fx;
-//   - the renderer decides what the local viewer (`Game.me`) actually sees.
-// Keep it that way. The moment a sim branch reads Fx, Fx becomes sim state.
+//   - the renderer decides what the local viewer (`Game.me`) sees.
+// The moment a sim branch reads Fx, Fx becomes sim state.
 const Fx = {
   // Seconds a "+gold" label drifts upward and fades before it disappears.
   // Lives here rather than on Game because nothing but the renderer has any
   // use for it — the sim no longer ages these at all.
   GOLD_POPUP_LIFETIME: 1.2,
 
-  // Hard ceiling on live popups, oldest dropped first.
-  //
-  // This matters more than it looks. Popups used to be pushed only for the
-  // local player, so a big map produced a trickle; now every owner's payouts
-  // are recorded (the filtering having moved to draw time), which is ~30x the
-  // volume on a crowded map. Normally that is still self-limiting because
-  // expiry prunes them continuously — but `Game.fastForward` runs thousands of
-  // ticks synchronously with no frame in between, so nothing would be pruned
-  // for the whole burst. prune() below handles that case on its own (it ages
-  // against the sim clock, which does advance during a burst), and this cap is
-  // the belt-and-braces guarantee that the array can never grow without bound
-  // no matter how the caller drives the sim.
+  // Hard ceiling on live popups, oldest dropped first. Every owner's
+  // payouts are recorded (filtering happens at draw time), and a burst runs
+  // many ticks with no frame to prune in, so the array must be bounded
+  // however the sim is driven.
   MAX_GOLD_POPUPS: 512,
 
   // { tile, amount, ownerId, born } — `born` in Game.elapsed seconds, matching
@@ -145,13 +130,9 @@ const Fx = {
     list.push({ tile, amount, ownerId, born });
   },
 
-  // Drop everything that has finished fading as of `now`. Called on push (with
-  // the sim clock) and before drawing (with the render clock) — never from
-  // inside tick(), which is the whole point: cosmetic ageing is off the
-  // simulation's critical path and out of its state.
-  //
-  // `born` only ever increases, so the expired entries are a prefix and one
-  // splice clears them.
+  // Drop everything that has finished fading as of `now`. Called on push
+  // (sim clock) and before drawing (render clock), never from inside tick().
+  // `born` only increases, so the expired entries are a prefix.
   prune(now) {
     const list = this.goldPopups, life = this.GOLD_POPUP_LIFETIME;
     let i = 0;

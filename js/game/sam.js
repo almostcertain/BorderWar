@@ -3,37 +3,20 @@
 // former js/game.js; see docs/game-split-plan.md.
 Object.assign(Game, {
   // --- SAM Launcher & Interceptors ------------------------------------------
-  // Ported against OpenFront's real SAMLauncherExecution.ts/
-  // SAMMissileExecution.ts/Config.ts source (github.com/openfrontio/
-  // OpenFrontIO), not guessed — see feedback-openfront-source-porting memory.
+  // Charges: a SAM's `samQueue` holds one elapsed-time entry per charge
+  // mid-reload, capped at its `level`; `queue.length === level` means no free
+  // charge. A level-2 SAM therefore has two independent SAM_COOLDOWN timers.
+  // A level-up's new charge starts out reloading (see updateConstruction's
+  // upgrade branch).
   //
-  // Charges: verbatim UnitImpl's own model. A SAM's `samQueue` holds one
-  // elapsed-time entry per charge currently mid-reload, capacity-capped at
-  // its `level` — `queue.length === level` means fully saturated (no free
-  // charge), exactly matching real UnitImpl.isInCooldown(). A level-2 SAM
-  // therefore has two independent SAM_COOLDOWN timers, not one shared one:
-  // firing both at once (two nukes converging in the same tick) reloads them
-  // back-to-back rather than serially, and firing just one leaves the other
-  // charge free to answer a second launch immediately. Leveling up doesn't
-  // hand over its new charge for free either — increaseLevel pushes a fresh
-  // queue entry the same way a real launch does, so the extra capacity has
-  // to reload once before it's usable (see updateConstruction's upgrade
-  // branch, which does the equivalent push).
+  // Range: samRange(level) is a rational curve approaching SAM_MAX_RANGE
+  // (level 1 = 70, level 3 = 90, level 5 = 102 tiles). After an upgrade,
+  // dynamicSamRange ramps it linearly over SAM_UPGRADE_RAMP seconds.
   //
-  // Range: samRange(level) is their exact rational curve, asymptotically
-  // approaching SAM_MAX_RANGE (150 tiles, unscaled — see NUKE_MAGNITUDES'
-  // own comment on why OpenFront's map dimensions need no rescaling here):
-  // level 1 = 70, level 3 = 90, level 5 = 102. It also doesn't jump the
-  // instant an upgrade completes — dynamicSamRange ramps it linearly over
-  // SAM_UPGRADE_RAMP seconds, matching their own samLauncherState/
-  // dynamicSamRange pair.
-  //
-  // Interception deliberately departs from OpenFront (ticket #21): there is
-  // no interceptor projectile. Any hostile nuke whose current position is
-  // inside a SAM's dynamic range is destroyed the same tick, as long as that
-  // SAM has a free charge — see stepSAMs. Charges, cooldown, level-scaled
-  // range and the ally/own-nuke exemption all still apply; only the missile
-  // flight (and its lead-the-target intercept solve) is gone.
+  // Interception: there is no interceptor projectile. Any hostile nuke whose
+  // current position is inside a SAM's dynamic range is destroyed the same
+  // tick, if that SAM has a free charge (see stepSAMs). Allied and own
+  // nukes are exempt.
 
   SAM_MAX_RANGE: 150,
   // Config.ts's SAMCooldown(): 90 ticks, same conversion SILO_COOLDOWN's own
@@ -53,27 +36,16 @@ Object.assign(Game, {
     return this.SAM_MAX_RANGE - 480 / (level + 5);
   },
 
-  // Config.ts's dynamicSamRange: while a level-up is still ramping (see
-  // updateConstruction's `b.samRangeUpgrade` hook), the effective range
-  // slides linearly from whatever range was actually in effect the instant
-  // the upgrade landed, up to the new level's — otherwise it's just the
-  // static value for the current level. `now` is passed explicitly (rather
-  // than always reading this.elapsed) so render.js can ask with its own
-  // Game.renderElapsed clock while stepSAMs asks with the sim's.
+  // While a level-up is ramping (`b.samRangeUpgrade`), the effective range
+  // slides linearly from the range in effect when the upgrade landed up to
+  // the new level's; otherwise it is the static value for the level. `now`
+  // is passed explicitly so render.js can ask with Game.renderElapsed while
+  // stepSAMs asks with the sim clock.
   //
-  // Clamped on BOTH ends, not just the upper one: render.js reads this with
-  // Game.renderElapsed, which only tracks Game.elapsed frame-by-frame inside
-  // main.js's normal animation loop (see renderElapsed's own comment) — but
-  // Game.fastForward() drives many ticks through Game.tick() directly,
-  // without ever touching renderElapsed. An upgrade whose `startAt` lands
-  // mid-burst leaves renderElapsed sitting BEFORE state.startAt until the
-  // next real animation frame catches up, which un-clamped produced a large
-  // negative `elapsed` here — extrapolating the ramp backwards into a
-  // negative range and crashing ctx.arc's radius in drawStructures (caught
-  // live via a fastForward-shaped repro while verifying this feature).
-  // Clamping elapsed<=0 to the pre-upgrade startRange is the correct
-  // behavior anyway, not just a crash guard: from that reader's-clock
-  // perspective the ramp hasn't started yet.
+  // Clamped on BOTH ends: renderElapsed can sit BEFORE state.startAt (a
+  // burst of ticks with no frame in between), and an unclamped negative
+  // `elapsed` extrapolates the ramp to a negative range, which crashes
+  // ctx.arc in drawStructures.
   dynamicSamRange(b, now) {
     const state = b.samRangeUpgrade;
     if (!state) return this.samRange(b.level);
@@ -84,13 +56,10 @@ Object.assign(Game, {
     return state.startRange + (targetRange - state.startRange) * elapsed / this.SAM_UPGRADE_RAMP;
   },
 
-  // Config.ts's SAMTargetingSystem.computeTargetScore, translated off this
-  // game's own nuke shape (dst/nukeType/born/duration rather than a
-  // trajectory array) — decides which nukes a SAM spends its limited charges
-  // on when more hostile nukes are inside its range the same tick than it
-  // has free charges: Hydrogen Bombs outrank Atom Bombs, impacts closer to
-  // the SAM outrank farther ones, and soon-to-land nukes edge out ones with
-  // more time left.
+  // Which nukes a SAM spends its charges on when more hostile nukes are in
+  // range than it has free charges: Hydrogen Bombs outrank Atom Bombs,
+  // impacts closer to the SAM outrank farther ones, and soon-to-land nukes
+  // edge out ones with more time left.
   samTargetScore(b, nuke) {
     const w = GameMap.width;
     const dstX = nuke.dst % w, dstY = (nuke.dst / w) | 0;
@@ -104,17 +73,14 @@ Object.assign(Game, {
   },
 
   // Each tick: reload any charges whose SAM_COOLDOWN has elapsed, settle a
-  // finished range ramp, then — while a charge remains free — destroy the
-  // highest-scoring hostile nuke whose current position lies inside the
-  // SAM's dynamic range. No projectile: the kill is instant and spends one
-  // charge. Nukes fly at most NUKE_SPEED/TICKS_PER_SEC (~4.5) tiles per
-  // tick against a range of 70+, so none can skip past a radius between
-  // ticks. Allied and own nukes are skipped, as before. Must run before
-  // stepNukes in Game.tick so a killed nuke never also detonates the same
-  // tick. buildings (a Map) and nukes (an array) both iterate in insertion
-  // order, so the SAM that claims a nuke two SAMs cover is the same on
-  // every client. samFlashes is cosmetic (Game.COSMETIC_STATE) — nothing
-  // reads it back.
+  // finished range ramp, then, while a charge is free, destroy the
+  // highest-scoring hostile nuke inside the SAM's dynamic range. The kill is
+  // instant and spends one charge. A nuke moves only a few tiles per tick
+  // against a range of 70+, so none can skip past between ticks. Must run
+  // before stepNukes in Game.tick so a killed nuke never also detonates.
+  // buildings (a Map) and nukes (an array) iterate in insertion order, so
+  // the SAM that claims a nuke is the same on every client. samFlashes is
+  // cosmetic (Game.COSMETIC_STATE).
   stepSAMs() {
     const w = GameMap.width;
     for (const b of this.buildings.values()) {

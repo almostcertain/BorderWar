@@ -3,14 +3,9 @@
 // former js/game.js; see docs/game-split-plan.md.
 Object.assign(Game, {
   // --- Naval invasions -------------------------------------------------------
-  // Ported against OpenFront's actual TransportShipExecution/TransportShipUtils
-  // source (github.com/openfrontio/OpenFrontIO), not guessed. A boat is a
-  // travel phase bolted onto the front of the same conquest-wave machinery
-  // land attacks already use above: it crosses open water, and on arrival
-  // takes the landing tile for free before opening a normal attack from
-  // there — see resolveLanding below for the exact arrival branching, which
-  // mirrors TransportShipExecution.tick's PathStatus.COMPLETE case tile for
-  // tile, malus included.
+  // A boat is a travel phase in front of the same conquest machinery land
+  // attacks use: it crosses open water, takes the landing tile for free on
+  // arrival, then opens a normal attack from there (see resolveLanding).
 
   // OpenFront moves a transport ship exactly 1 tile per tick (ticksPerMove=1
   // in TransportShipExecution), and their msPerTick is 100 — the same 10
@@ -28,40 +23,24 @@ Object.assign(Game, {
   SEA_PATH_GUARD: 200000,
 
   // A step-capped search (seaPath's maxSteps) also gets its node guard cut
-  // to this many visits per allowed step. Measured on The World: most
-  // successful AI routes explore well under 16 nodes per step, while
-  // searches that fail (target only reachable the long way round) ran the
-  // full 200k guard at ~140ms each. Ending those at ~16×limit is the bulk of
-  // the naval hitch fix; the few very long crossings that needed more count
-  // as "too indirect" to the AI and it picks another target. Halved from 16
-  // for xlarge with 50 nations, where failures still cost ~50 ms each; 8
-  // keeps the same number of successful AI routes (4 lost ~10%).
+  // to this many visits per allowed step. Successful AI routes explore few
+  // nodes per step, while failing ones ran the whole 200k guard; this ends
+  // those early. 8 keeps the same number of successful AI routes (4 loses
+  // about 10%).
   SEA_PATH_NODES_PER_STEP: 8,
 
   // Caps how much full (post-fast-reject) seaPath work starts in a single
-  // tick, in water tiles explored, reset in tick(). Ports rolling for trade ships, bots'
-  // navalThink and warship repathing all funnel into seaPath independently,
-  // so nothing stops several of them landing on the same tick — harmless on
-  // the procedural maps' simple single-landmass water, but on real-coastline
-  // maps (many separate seas/straits/bays) each search runs far longer
-  // before it succeeds or exhausts SEA_PATH_GUARD, and a burst of them in
-  // one tick was measured as the source of this game's periodic hitches on
-  // The World. Callers already treat a null path as "try again later" (port
-  // trade rerolls next second, navalThink reconsiders in 15-25s, warship
-  // chase repaths on its own cooldown), so deferring the overflow to later
-  // ticks is free correctness-wise and spreads the cost across frames
-  // instead of stalling one of them.
+  // tick, in water tiles explored; reset in tick(). Port trade rolls, bots'
+  // navalThink and warship repathing all call seaPath independently, and a
+  // burst of long searches in one tick is a visible hitch on real-coastline
+  // maps. Callers already treat a null path as 'try again later', so
+  // deferring the overflow is safe.
   //
-  // Counted in explored tiles, not searches: a warship chase explores ~30
-  // tiles and a first-time trade route ~10k (up to the 200k guard), so a
-  // search count let four long routes stack into one ~120ms tick while
-  // refusing cheap ones. A search only STARTS while the tick is under
-  // budget, and once started it runs to its own guard — aborting midway
-  // would waste the work and could starve long routes forever. Worst case
-  // is therefore the budget plus one full search (~6 + ~30 ms measured on
-  // The World at ~0.15µs/tile). Each search also pays SEA_PATH_SEARCH_COST
-  // up front for its fixed setup (clearing the map-sized arena flags).
-  // See docs/perf-frame-rate-profile.md.
+  // Counted in explored tiles, not searches. A search only STARTS while the
+  // tick is under budget, then runs to its own guard (aborting midway would
+  // waste the work and could starve long routes), so the worst case is the
+  // budget plus one full search. Each search also pays SEA_PATH_SEARCH_COST
+  // up front for its fixed setup. See docs/perf-frame-rate-profile.md.
   SEA_PATH_NODE_BUDGET_PER_TICK: 40000,
   SEA_PATH_SEARCH_COST: 500,
 
@@ -74,16 +53,13 @@ Object.assign(Game, {
   // the coast still invades sensibly instead of failing.
   NEAREST_COAST_MAX_DIST: 50,
 
-  // Terrain-agnostic BFS (Manhattan-ordered, ignores land/water) from `tile`
-  // out to the nearest tile that is coastal AND owned by whoever owns `tile`
-  // — matches SpatialQuery.bfsNearest's approach exactly: it's a geometric
-  // "closest shore" search, not a walkable-path search. Returns `tile`
-  // itself unchanged when it's already coastal (the common case).
+  // Terrain-agnostic BFS (Manhattan-ordered, ignores land/water) from
+  // `tile` to the nearest tile that is coastal AND owned by whoever owns
+  // `tile`: a geometric 'closest shore' search. Returns `tile` itself when
+  // it is already coastal.
   //
-  // A tile of open water has no owner of its own to match against — OpenFront
-  // resolves a water click to TerraNullius (unclaimed), so this does the
-  // same: right-clicking the ocean targets the nearest unclaimed shore near
-  // that point, not a specific nation.
+  // Open water has no owner, so a water click resolves to the nearest
+  // unclaimed shore near that point.
   nearestOwnedCoast(tile) {
     // isCoastal only means anything for land — a water tile bordering more
     // water would otherwise short-circuit here and "land" on itself.
@@ -123,14 +99,10 @@ Object.assign(Game, {
   // teleporting that far from where you tapped would not).
   PORT_SNAP_MAX_DIST: 6,
 
-  // Same terrain-agnostic BFS shape as nearestOwnedCoast, but for placing a
-  // Port: searches out from `fromTile` (which may be water, another
-  // player's land, or unclaimed — wherever the cursor happens to be) for the
-  // nearest tile that is land, coastal, AND already owned by `playerId`
-  // specifically — never "whoever owns the clicked tile," which is what
-  // nearestOwnedCoast derives instead and why this needed its own version.
-  // Returns -1 if nothing qualifies within maxDist, or if fromTile is off
-  // the map (-1 in from screenToTile).
+  // Like nearestOwnedCoast, but for placing a Port: searches out from
+  // `fromTile` (any tile) for the nearest land tile that is coastal AND
+  // owned by `playerId` specifically. Returns -1 if nothing qualifies
+  // within maxDist, or if fromTile is off the map.
   nearestOwnedCoastNear(playerId, fromTile, maxDist) {
     if (fromTile < 0) return -1;
     if (GameMap.owner[fromTile] === playerId && GameMap.isLand(fromTile) && GameMap.isCoastal(fromTile)) {
@@ -159,24 +131,16 @@ Object.assign(Game, {
     return best;
   },
 
-  // seaPath, seeded from just the attacker's own coastal tiles rather than
-  // their whole territory — only those can ever border open water. Scanning
-  // attacker.borderTiles instead of attacker.tiles is exactly equivalent (a
-  // WATER neighbour makes a tile coastal AND a border tile, by definition —
-  // coastal tiles are a subset of border tiles) but perimeter-sized instead
-  // of area-sized. This runs from navalInvasionBlockReason, which the radial
-  // menu calls to decide whether to grey out the Boat option, so a full
-  // territory scan here was a hitch on every check against a large empire,
-  // not just an actual boat launch.
+  // seaPath, seeded from the attacker's coastal tiles, found by scanning
+  // attacker.borderTiles (coastal tiles are a subset of border tiles) so the
+  // cost is perimeter-sized. The radial menu calls this through
+  // navalInvasionBlockReason.
   //
   // Found routes are memoised for the rest of the tick (cleared by tick()
-  // and by any setOwner), keyed by attacker and target: a single boat launch
-  // asks for the same route up to three times in a row (the AI's detour
-  // check, navalInvasionBlockReason, launchNavalInvasion itself), and on The
-  // World each search can cost 100ms+. Only successes are cached — a null
+  // and by any setOwner), keyed by attacker and target: one boat launch asks
+  // for the same route up to three times. Only successes are cached; a null
   // from a step-capped or over-budget search says nothing about an uncapped
-  // one. `maxSteps` (optional) prunes the search to routes at most that many
-  // tiles long; see seaPath.
+  // one. `maxSteps` (optional): see seaPath.
   nearestCoastPath(attackerId, targetTile, maxSteps) {
     const key = attackerId * GameMap.owner.length + targetTile;
     if (this._inTick) {
@@ -225,22 +189,17 @@ Object.assign(Game, {
   },
 
   // Sends a boat carrying `troops` from the attacker's nearest coast toward
-  // the nearest actual coastal tile near `targetTile` (see nearestOwnedCoast
-  // — the tap doesn't have to land exactly on a shore tile). Troops leave the
-  // home reserve immediately, exactly like launchAttack, and count against
-  // the pop cap via marchingTroops until the boat lands — so committing to an
-  // invasion reads on the HUD exactly like committing to a land attack.
+  // the nearest coastal tile near `targetTile` (see nearestOwnedCoast).
+  // Troops leave the home reserve immediately, like launchAttack, and count
+  // against the pop cap via marchingTroops until the boat lands.
   launchNavalInvasion(attackerId, targetTile, troops) {
     if (this.navalInvasionBlockReason(attackerId, targetTile, troops)) return false;
 
     const landingTile = this.nearestOwnedCoast(targetTile);
     const targetOwner = GameMap.owner[landingTile];
-    // navalInvasionBlockReason just ran this same search to validate the
-    // route exists, but SEA_PATH_NODE_BUDGET_PER_TICK caps search work per tick, so
-    // a route found there can still come back null here if other repaths
-    // spent the rest of this tick's budget in between. Bail out rather than
-    // push a boat with a null path — every caller of Game.boats (render.js's
-    // drawBoats, stepBoats) assumes path is always an array.
+    // navalInvasionBlockReason found this route, but
+    // SEA_PATH_NODE_BUDGET_PER_TICK can still make it come back null here.
+    // Bail out: every reader of Game.boats assumes path is an array.
     const path = this.nearestCoastPath(attackerId, landingTile);
     if (!path) return false;
 
@@ -318,16 +277,11 @@ Object.assign(Game, {
     // Fog of war: a landing is an attack, so the target has met the attacker.
     if (this.fog) this.markMet(boat.target, boat.attacker);
 
-    // A normal attack, seeded from the landing tile's own border — it's real
-    // owned territory now (setOwner just ran), so no special-casing is needed
-    // anywhere else; touchesPlayer already sees it.
-    // A beachhead is a real attack and gets a real attack id — the boat's own
-    // id dies with the landing, and the front it opens is separately
-    // cancellable from that moment on.
-    // landmassId is stamped from the landing tile itself, not left null, so a
-    // later click on this same island folds into the beachhead (same
-    // consolidation rule as launchAttack) instead of always opening a
-    // parallel front beside it.
+    // A normal attack, seeded from the landing tile's border (it is owned
+    // territory now). It gets a fresh attack id (the boat's id dies with
+    // the landing) and can be cancelled separately. landmassId is stamped
+    // from the landing tile, so a later click on this island folds into
+    // the beachhead instead of opening a parallel front.
     const a = { id: this.nextAttackId++, attacker: boat.attacker, target: boat.target, troops: boat.troops,
                 heapTile: [], heapPrio: [], border: new Set(), landmassId: GameMap.landmassId[tile],
                 frontSeed: ((this.rng() * 0x7fffffff) | 0) || 1 };

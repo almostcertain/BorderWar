@@ -11,22 +11,11 @@ const Noise = (() => {
   // grid cells meet.
   const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
 
-  // Gradient (Perlin-style) noise, not value noise. Value noise interpolates
-  // hashed *values* at each grid corner, and that interpolation is what gives
-  // it its telltale look: every cell settles smoothly toward whatever its
-  // four corners happen to be, so maxima/minima come out as round, plateau-
-  // topped blobs with no preferred direction — exactly the "blobby" coastline
-  // complaint this was written to fix. Gradient noise instead hashes a
-  // *direction* at each corner and dots it against the offset to the sample
-  // point, so each cell's contribution is a signed ramp/saddle rather than a
-  // bump — the classic fix for blob-prone terrain noise, independent of
-  // anything OpenFront-specific (OpenFront doesn't generate coastlines
-  // procedurally at all; see map.js's generate() for why).
+  // Gradient (Perlin-style) noise, not value noise: value noise gives
+  // round, plateau-topped blobs, which made blobby coastlines.
   //
-  // 8-direction gradient table (classic Perlin) instead of hashing an angle
-  // through cos/sin per corner: a map-sized grid needs 4 of these per octave
-  // per tile, and trig calls at that volume are measurably the difference
-  // between sub-second and multi-second generation.
+  // An 8-direction gradient table instead of cos/sin per corner: trig at
+  // four calls per octave per tile made generation several times slower.
   const GRADIENTS = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]];
   function grad(xi, yi, seed, dx, dy) {
     const g = GRADIENTS[(hash2(xi, yi, seed) * 8) | 0];
@@ -47,10 +36,8 @@ const Noise = (() => {
     const bottom = c + (d - c) * u;
     const n = top + (bottom - top) * v;
 
-    // Perlin noise ranges roughly [-0.7, 0.7] (bounded by sqrt(2)/2 for a
-    // unit gradient dotted against a diagonal offset); remap to 0..1 so
-    // every existing caller — which was written against value noise's
-    // native 0..1 range — keeps working unchanged.
+    // Perlin noise ranges roughly [-0.7, 0.7]; remap to 0..1, which every
+    // caller expects.
     return n * 0.7 + 0.5;
   }
 
@@ -104,16 +91,11 @@ const Noise = (() => {
   // on every client.
   const OCTAVE_ROT = [[1, 0], [0.8, 0.6], [0.28, 0.96], [-0.6, 0.8], [0.96, 0.28], [0.6, -0.8], [-0.8, 0.6], [0.36, 0.93]];
 
-  // Height field with the character of real terrain (what a topographic map
-  // draws), for slicing into mountain/highland/plains tiers. Plain fbm sums
-  // every octave at full strength, so steep flanks get the same fine wrinkles
-  // as flat ground and the result reads as lumpy noise. Here each octave is
-  // divided by 1 + damp * |slope so far|: steep ground stays smooth, and fine
-  // detail only builds up where the ground is already gentle. That is the
-  // erosion look — smooth-sided ridges and hills with gullies cut into the
-  // gentler ground between them — and it falls out of the noise alone, with
-  // no erosion simulation. Contours of it are smooth, never cross, and hills
-  // come out as elongated concentric ovals, as on a real map.
+  // Height field with the character of real terrain, for slicing into
+  // mountain/highland/plains tiers. Each octave is divided by
+  // 1 + damp * |slope so far|: steep ground stays smooth and fine detail
+  // builds up only where the ground is gentle (an erosion look, with no
+  // erosion simulation).
   function eroded(x, y, seed, octaves = 5, damp = 0.5, gain = 0.45) {
     let sum = 0, amp = 1, norm = 0, freq = 1, sx = 0, sy = 0;
     for (let i = 0; i < octaves; i++) {

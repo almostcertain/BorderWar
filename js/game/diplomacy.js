@@ -37,12 +37,9 @@ Object.assign(Game, {
     p.relations.set(otherId, Math.max(-100, Math.min(100, this.relation(p, otherId) + delta)));
   },
 
-  // Marching on someone is not free of consequences: the victim's opinion of the
-  // attacker craters, and the victim's allies — who now have a reason to fear
-  // the same treatment — cool toward the attacker too. Without this an attack
-  // was invisible to the relation system, so nobody ever became an enemy by
-  // being attacked and the AI had no standing to weigh. Attacking a traitor is
-  // exempt (everyone already wants them punished), and tribes hold no opinions.
+  // Attacking someone craters the victim's opinion of the attacker, and the
+  // victim's allies cool toward the attacker too. Attacking a traitor is
+  // exempt, and tribes hold no opinions.
   ATTACK_RELATION_HIT: -50,
   ATTACK_ALLY_RELATION_HIT: -20,
 
@@ -136,13 +133,11 @@ Object.assign(Game, {
     });
     // Fog of war: the two have now met, and share their maps while this lasts.
     if (this.fog) this.visionAllianceFormed(a.id, b.id);
-    // A deal signed while the armies are already in the field has to recall
-    // them, or the front carries on eating your new ally's land. Boats are
-    // deliberately NOT recalled here — OpenFront's own TransportShipExecution
-    // doesn't cancel an in-flight invasion when peace is signed either; it
-    // still takes its one landing tile for free on arrival, then just brings
-    // the rest of the troops home instead of attacking further (see
-    // resolveLanding's areAllied branch).
+    // A deal signed while armies are in the field has to recall them, or
+    // the front carries on eating the new ally's land. Boats are NOT
+    // recalled: one still takes its landing tile for free on arrival, then
+    // brings the rest of the troops home (see resolveLanding's areAllied
+    // branch).
     this.cancelAttacksBetween(a.id, b.id);
     // AllianceRequestExecution: only the automatic (attack) embargoes lift.
     // A deliberate one survives the handshake.
@@ -240,16 +235,13 @@ Object.assign(Game, {
     }
   },
 
-  // --- Embargoes, after OpenFront -------------------------------------------
-  // Ported from PlayerImpl (addEmbargo/stopEmbargo/endTemporaryEmbargo/
-  // canTrade), EmbargoExecution, EmbargoAllExecution and AttackExecution.
+  // --- Embargoes --------------------------------------------------------------
   // p.embargoes maps the embargoed player's id to {createdAt, temporary}.
-  // Either side holding one stops ALL trade between the pair — trade ships,
+  // Either side holding one stops ALL trade between the pair: trade ships,
   // and trains through each other's stations. Manual embargoes last until
   // lifted; the temporary one an attack triggers lapses after
-  // TEMPORARY_EMBARGO_DURATION, or the moment the two sides ally.
-  // OpenFront states these in ticks: temporaryEmbargoDuration 300*10 and
-  // embargoAllCooldown 10*10.
+  // TEMPORARY_EMBARGO_DURATION, or the moment the two sides ally. Durations
+  // are in seconds.
   TEMPORARY_EMBARGO_DURATION: 300,
   EMBARGO_ALL_COOLDOWN: 10,
 
@@ -369,23 +361,13 @@ Object.assign(Game, {
     }
   },
 
-  // --- Donations, after OpenFront -------------------------------------------
-  // Ported from PlayerImpl (canDonateGold/canDonateTroops/donateGold/
-  // donateTroops), DonateGoldExecution and DonateTroopExecution. OpenFront
-  // gates both on isFriendly(), which is isOnSameTeam() OR isAlliedWith() —
-  // areAllied() here, since game/teams.js puts teammates in each other's
-  // allies. Donations are also limited to team games for now (a design call,
-  // not OpenFront's rule): Game.teams only exists in a team match.
-  // OpenFront also refuses a donation while the game config's donateGold()/
-  // donateTroops() flag is off (a lobby-settings toggle) — this game has no
-  // per-lobby toggle for it, so that check is simply absent rather than
-  // hardcoded true.
+  // --- Donations --------------------------------------------------------------
+  // Gated on areAllied() (teammates are in each other's allies, see
+  // game/teams.js), and limited to team games for now (a design call):
+  // Game.teams only exists in a team match.
   //
-  // OpenFront's cooldown (donateCooldown(): 10*10 ticks at 10 ticks/sec) is
-  // 10 seconds; Game.elapsed is already in seconds, so it ports as a flat 10.
-  // One shared table (Player.lastDonationAt) covers both gold and troops, per
-  // recipient — exactly PlayerImpl.sentDonations, which canDonateGold and
-  // canDonateTroops both walk.
+  // The cooldown is in seconds. One shared table (Player.lastDonationAt)
+  // covers both gold and troops, per recipient.
   DONATE_COOLDOWN: 10,
 
   canDonate(fromId, toId) {
@@ -414,27 +396,19 @@ Object.assign(Game, {
     return null;
   },
 
-  // DonateTroopExecution's getMinTroopsForRelationUpdate, Medium column
-  // (the only tier this game's AI.PROFILES borrows verbatim rather than
-  // re-tuning — see AI.PROFILES' own header): a random 1/11..1/9 slice of the
-  // recipient's cap. Sending less than this still moves the troops but buys
-  // no goodwill — DonateTroopExecution's own anti-cheese rule ("Prevent
-  // players from just buying a good relation by sending 1% troops").
-  // Expressed as a fraction of Game.maxTroops(recipient), which is already in
-  // this game's own troop units, so the OpenFront ratio ports without any
-  // rescaling.
+  // The minimum troop donation that earns goodwill: a random 1/11..1/9
+  // slice of the recipient's cap (Game.maxTroops(recipient)). Sending less
+  // still moves the troops but buys no relation, so goodwill can't be
+  // bought with a token 1%.
   minDonationForRelation(toId) {
     const cap = this.maxTroops(this.players[toId]);
     const lo = cap / 11, hi = cap / 9;
     return lo + this.rng() * (hi - lo);
   },
 
-  // DonateTroopExecution.tick: move troops, capped to what the sender
-  // actually has and to the recipient's free headroom under their own cap
-  // (mg.config().maxTroops(recipient) - recipient.troops(), computed in
-  // upstream's init() before the transfer). A donation crossing the minimum
-  // above earns the recipient's goodwill; PlayerType.Nation-only auto-emoji
-  // reply is skipped — this game's Fx/emoji layer has no such reaction yet.
+  // Move troops, capped to what the sender has and to the recipient's free
+  // headroom under their own cap. A donation crossing the minimum above
+  // earns the recipient's goodwill.
   donateTroops(fromId, toId, troops) {
     if (!this.canDonate(fromId, toId)) return false;
     const from = this.players[fromId], to = this.players[toId];
@@ -451,16 +425,11 @@ Object.assign(Game, {
     return true;
   },
 
-  // DonateGoldExecution's getGoldChunkSize()/calculateRelationUpdate, rescaled:
-  // upstream's chunk sizes (2,500 Easy .. 25,000 Impossible) are tuned for
-  // OpenFront's own gold economy and don't transfer to this game's
-  // independently-dialed one (see economy.js's GOLD_PER_SEC comment — gold
-  // here is "a dial, not a ported constant"). Same shape ported instead: a
-  // difficulty-scaled chunk, growing with match progress, worth 5 relation per
-  // complete chunk donated, capped at 100. The chunk is sized off this game's
-  // own GOLD_PER_SEC so it stays meaningful across the tuned economy: 30
-  // seconds of baseline income for Medium, scaled the same 0.5/1/1.5x the
-  // Nation difficulty tiers already use for growth (NATION_DIFFICULTY).
+  // Gold donations earn 5 relation per complete chunk donated, capped at
+  // 100. The chunk is difficulty-scaled and grows with match progress; it is
+  // sized off GOLD_PER_SEC so it stays meaningful: 30 seconds of baseline
+  // income for Medium, scaled 0.5/1/1.5x like the Nation difficulty tiers
+  // (NATION_DIFFICULTY).
   GOLD_CHUNK_SECONDS: 30,
   GOLD_CHUNK_DIFFICULTY_MULT: { easy: 0.5, medium: 1, hard: 1.5 },
 
@@ -495,18 +464,13 @@ Object.assign(Game, {
     return true;
   },
 
-  // --- Target marking, after OpenFront (ticket #30) --------------------------
-  // Ported from TargetPlayerExecution and PlayerImpl's canTarget/target/
-  // targets/transitiveTargets. Marking an enemy tells your allies who to
-  // focus: allied nations pile onto it (AI.assistAllies), and you and your
-  // allies see 🎯 on its name. The target learns of it the hard way — its
-  // relation toward you drops by 40.
+  // --- Target marking --------------------------------------------------------
+  // Marking an enemy tells your allies who to focus: allied nations pile
+  // onto it (AI.assistAllies), and you and your allies see 🎯 on its name.
+  // The target's relation toward you drops by 40.
   //
-  // OpenFront's targetDuration() is 10*10 ticks and targetCooldown() 15*10,
-  // at 10 ticks/sec; Game.elapsed is in seconds, so they port as 10 and 15.
-  // The cooldown is on marking anyone at all, not per target — canTarget
-  // walks every entry. TargetPlayerExecution is inactive during the spawn
-  // phase, so marking is refused until the match starts.
+  // Duration and cooldown are in seconds. The cooldown is on marking anyone
+  // at all, not per target. Marking is refused during the spawn phase.
   TARGET_DURATION: 10,
   TARGET_COOLDOWN: 15,
   TARGET_RELATION_HIT: -40,

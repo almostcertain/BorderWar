@@ -6,17 +6,9 @@
   UI.setup();
   Tutorial.setup();
 
-  // How long one frame may spend advancing the simulation before it has to
-  // hand the frame back to the renderer (docs/multiplayer-architecture.md §5).
-  //
-  // Under lockstep the sim is driven by TURN ARRIVAL, not by elapsed time, so
-  // the loop below has no accumulator and no dt: it drains whatever turns the
-  // server has sent. Almost always that is zero or one turn and the budget is
-  // never reached. It exists for the case where a pile of turns arrives at
-  // once — a rejoin backlog (MP-4.1) or the debug burst — where executing the
-  // whole queue in one frame would freeze the tab for as long as the backlog
-  // is deep. This is the thing OpenFront buys instead by running its sim in a
-  // Web Worker; §8 divergence #2 explains why we take the budget instead.
+  // How long one frame may spend advancing the sim before handing back to the
+  // renderer (docs/multiplayer-architecture.md §5). Turns normally arrive one
+  // at a time; the budget matters for a backlog (a rejoin, the debug burst).
   const SIM_BUDGET_MS = 8;
 
   // The same budget while a replay is seeking (js/replay.js). A jump is a
@@ -28,35 +20,20 @@
   // Only ever used for render smoothing — see Game.renderElapsed below.
   let lastTurnAt = 0;
 
-  // A bigger board on its own barely lengthens a match: the same handful of
-  // conquests still decides it. What stretches a game is more nations, so each
-  // one you beat is a smaller share of the world — which is how OpenFront's
-  // large maps stay long. These defaults follow the map size, and are just
-  // defaults; the field stays editable.
-  //
-  // OpenFront itself doesn't tie a bot/player count to map size at all —
-  // config.bots() is a free host setting regardless of which map is loaded —
-  // so there's no real number to port here. The editable field's ceiling
-  // (js/ui.js's getHostConfig, and start() below) is BOT_CAP/TRIBE_CAP, sized
-  // so PLAYER_COLORS/BOT_NAMES (js/game/shared.js) has at least one entry per
-  // bot plus up to 4 humans.
+  // More nations, not a bigger board, is what lengthens a match, so the
+  // default counts follow map size. The fields stay editable up to
+  // BOT_CAP/TRIBE_CAP, sized so PLAYER_COLORS/BOT_NAMES (js/game/shared.js)
+  // has an entry per bot plus up to 4 humans.
   const BOT_CAP = 100;
   const TRIBE_CAP = 400;
 
-  // The real World map (js/game/core.js's Game.init, 2000x1000) seeds far
-  // more Nations/Tribes than the old procedural large defaults, following
-  // OpenFront's actual World map. Procedural large is the same 2000x1000
-  // grid, so it shares these numbers rather than keeping a separate, sparser
-  // default.
+  // World (2000x1000) counts. Procedural large is the same grid and shares them.
   const WORLD_BOTS = 82;
   const WORLD_TRIBES = 400;
 
-  // Nations/Tribes per tile, taken from World/large (2000x1000) — the density
-  // that feels right. Every other size's default is that same density applied
-  // to its own tile count, so halving width and height (quartering the tile
-  // count) quarters the counts too. Tribes stay roughly quadruple the Nation
-  // count at every size, as before — OpenFront's low-effort filler
-  // (openfront.wiki/Bots), weak and half-capped individually.
+  // Nations/Tribes per tile, taken from World/large. Every other size gets
+  // the same density for its own tile count. Tribes stay roughly quadruple
+  // the Nation count.
   const LARGE_TILES = Game.MAP_SIZES.large.width * Game.MAP_SIZES.large.height;
   const BOT_DENSITY = WORLD_BOTS / LARGE_TILES;
   const TRIBE_DENSITY = WORLD_TRIBES / LARGE_TILES;
@@ -87,11 +64,8 @@
   bindSizeDefaults(document.getElementById('hostMapSize'),
     document.getElementById('hostBotCount'), document.getElementById('hostTribeCount'));
 
-  // The "Map Size" row and the map options box only mean anything for the
-  // procedural generator — the real World map has one fixed resolution
-  // (js/game/core.js's Game.init). Hiding them rather than disabling them, so
-  // a host who picked World can't be confused by controls that would silently
-  // do nothing.
+  // Map Size and the map options box only apply to the procedural
+  // generator, so they are hidden (not disabled) when World is picked.
   function applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes, prefix) {
     const isWorld = mapType.value === 'world';
     sizeRow.classList.toggle('hidden', isWorld);
@@ -138,26 +112,18 @@
     }
   });
 
-  // --- Multiplayer lobby (MP-2.3) --------------------------------------------
+  // --- Multiplayer lobby ------------------------------------------------------
   //
-  // Host and Join are two more paths through the exact same Transport/
-  // onConnect/onServerMessage pipeline as singleplayer's start() below — §2's
-  // rule holds here too: still one connect(), one onConnect, one
-  // onServerMessage. All that differs is `local:false` plus a real gameID,
-  // and — for Host only — who is allowed to call Transport.sendStartGame
-  // afterward. Singleplayer's own start() is untouched below except for one
-  // added line resetting `myRole`, so a mode switch back to Singleplayer
-  // after visiting Host/Join cannot leave lobby state stale.
+  // Host and Join go through the same Transport/onConnect/onServerMessage
+  // pipeline as singleplayer's start(): `local:false` plus a real gameID.
 
   // Which lobby panel (if any) is in play, purely so onServerMessage knows
   // where to route a `lobby_info`/`error`. Never sent anywhere.
   let myRole = 'sp'; // 'sp' | 'host' | 'join'
 
-  // Whether THIS connection's clientID is the game's recorded creator, per
-  // the most recent `lobby_info`. Gates the host panel's Start button and
-  // startHostedGame's own guard below; the server enforces the real rule
-  // independently (GameServer.handleStartGame), so this is UI affordance,
-  // not the authority.
+  // Whether this connection is the game's creator, per the latest
+  // `lobby_info`. UI affordance only; the server enforces the real rule
+  // (GameServer.handleStartGame).
   let iAmHost = false;
 
   // Cosmetic randomness for a join code — not simulation state, so plain
@@ -266,18 +232,9 @@
     });
   }
 
-  // Issue #9 (public lobby browser) + the main menu redesign's hero card
-  // (#quickJoin — issue #12's open lobby is now the primary CTA, not tucked
-  // inside the Join tab). Polling, not a pushed update, to match this
-  // server's existing shape — GET /lobbies (server/index.js) is a stateless
-  // snapshot, no per-connection subscription to maintain.
-  //
-  // Runs whenever the menu is on screen and no lobby connection is in
-  // flight — no longer gated to the "join by code" tab being selected, since
-  // the hero card must stay live regardless of which secondary tab is open.
-  // Stopped by joinLobby/hostLobby/start (a connection is about to replace
-  // whatever this was polling for) and resumed by leaveLobby/the restart
-  // button (back on the menu with nothing connected).
+  // Public lobby list and the hero card (#quickJoin): polls GET /lobbies.
+  // Runs whenever the menu is on screen with no lobby connection in flight.
+  // Stopped by joinLobby/hostLobby/start, resumed by leaveLobby/restart.
   let lobbyListIntervalID = null;
   let lastLobbyList = [];
   const LOBBY_LIST_POLL_MS = 4000;
@@ -339,16 +296,14 @@
     joinLobby(entry.gameID);
     fromQuickJoin = true;
     UI.showJoinLobbyMap();
+    UI.showOpenLobby(entry);
   });
 
   // Starts as soon as the menu does — the hero card has nothing to show
   // until the first poll resolves.
   startLobbyListPolling();
 
-  // Host only. The button this calls from is hidden/disabled for anyone
-  // whose last lobby_info said otherwise (UI.updateLobbyFromInfo), and the
-  // server independently re-checks authorship (GameServer.handleStartGame)
-  // — this `if` is belt-and-braces, not the actual gate.
+  // Host only. The server re-checks authorship; this `if` is belt-and-braces.
   function startHostedGame() {
     if (!iAmHost) return;
     Transport.sendStartGame(UI.getHostConfig());
@@ -442,11 +397,8 @@
     if (!msg) return;
 
     if (msg.type === 'lobby_info') {
-      // `lobby.creatorClientId` is compared against the id THIS message says
-      // we are (`msg.myClientID`), never against Transport.myClientID read
-      // separately — both are set from the same field by Transport.connect's
-      // `deliver` wrapper before this handler runs, but comparing within one
-      // message is one fewer place for the two to ever disagree.
+      // Compare `lobby.creatorClientId` against this message's own
+      // `msg.myClientID`, not a separately-read Transport.myClientID.
       const lobby = msg.lobby || {};
       iAmHost = !!lobby.creatorClientId && lobby.creatorClientId === msg.myClientID;
       UI.updateLobbyFromInfo(lobby, myRole, iAmHost, msg.myClientID);
@@ -464,18 +416,10 @@
     }
 
     if (msg.type === 'start') {
-      // MP-4.1: a reconnected socket's own `start` is a catch-up backlog, not
-      // a fresh match — Transport._wireSocket tags exactly the first `start`
-      // a rejoined socket receives with `__rejoin` (see its doc comment).
-      // Everything below this branch (Game.init, Executor.setRoster,
-      // Render.onMapReady, UI.reset/enterSpawnSelect) exists to stand up a
-      // match from nothing, which is precisely what must NOT happen here:
-      // this client's Game/Runner/Executor state is exactly where it was the
-      // instant the socket died — untouched, because nothing in the
-      // reconnect path calls Runner.reset()/Executor.reset()/Game.init — and
-      // the server sent turns.slice(lastTurn) on that assumption. All that is
-      // needed is to queue what arrived for the frame-budgeted drain loop
-      // below to work through, same as a fresh start's own backlog line does.
+      // A reconnected socket's first `start` (tagged `__rejoin` by
+      // Transport._wireSocket) is a catch-up backlog, not a fresh match. Local
+      // Game/Runner/Executor state is still where it was when the socket died,
+      // so only queue the turns; do NOT run the fresh-match setup below.
       if (msg.__rejoin) {
         if (Array.isArray(msg.turns)) for (const t of msg.turns) Runner.addTurn(t);
         return;
@@ -483,11 +427,8 @@
 
       inLobby = false; // the match is starting; the lobby screen is done
 
-      // The match's configuration comes back from the server rather than being
-      // read out of the DOM controls here. In singleplayer LocalServer merely
-      // echoes what start() handed it, so the values are the same either way —
-      // but the client is written against gameStartInfo from the beginning, so
-      // MP-2.2 changes who fills that object in and nothing on this side.
+      // The match's configuration comes from gameStartInfo, never the DOM
+      // controls. In singleplayer LocalServer echoes what start() handed it.
       const info = msg.gameStartInfo || {};
 
       // clientID -> playerId. One entry today; MP-3.1 is where it stops being
@@ -495,12 +436,8 @@
       // whose author cannot be resolved is dropped (executor.js).
       Executor.setRoster(info.players);
 
-      // Which roster entry is us: compared against `msg.myClientID` (this
-      // message's own field), never a separately-read Transport.myClientID —
-      // same reasoning as the `lobby_info` handler above. A roster entry not
-      // found (should not happen in practice) falls back to player 0 rather
-      // than throwing; Game.init's own defensive clamp covers the same case
-      // a second time.
+      // Which roster entry is us, by `msg.myClientID` (as in `lobby_info`
+      // above). Falls back to player 0 if not found.
       const rosterEntries = Array.isArray(info.players) ? info.players : [];
       const myEntry = rosterEntries.find(function(p) { return p && p.clientID === msg.myClientID; });
       const myPlayerId = myEntry ? myEntry.playerId : 0;
@@ -529,11 +466,8 @@
         sendPresence();
       };
 
-      // World is normally already preloaded well before this point (fetched
-      // the moment it was selected, or eagerly at startup) — this await is a
-      // safety net for a fast host/slow joiner, not the common path. A failed
-      // fetch (bad path, offline, server not serving maps/) must not leave
-      // the player stuck on a menu that looks like Start did nothing.
+      // World is normally preloaded already; this await is a safety net. A
+      // failed fetch must not leave the player on a menu that looks dead.
       if (info.config && info.config.map === 'world') {
         WorldMapLoader.ensure().then(beginMatch).catch(function(err) {
           console.error('Failed to load the World map', err);
@@ -552,11 +486,8 @@
     }
 
     if (msg.type === 'desync') {
-      // MP-4.2: the server's hash tally (GameServer._tallyHashes) flagged
-      // this client. Diagnostic only, per the task spec — this handler does
-      // not disconnect, roll back, or otherwise act on the sim; it just
-      // surfaces what happened so a player (or someone reading devtools)
-      // knows this client's state has drifted from the rest of the match.
+      // The server's hash tally flagged this client. Diagnostic only: surface
+      // it, don't disconnect or touch the sim.
       const detail = 'turn ' + msg.turn + ': your hash ' + msg.yourHash
         + (msg.correctHash === null
           ? ' — active clients could not agree on a plurality hash ('
@@ -588,10 +519,8 @@
     Transport.disconnect();
     Runner.reset();
 
-    // Everything below the lobby is settings a real server would have decided
-    // and put in gameStartInfo; LocalServer synthesizes it from these instead.
-    // `local: true` is the only line in the client that knows which kind of
-    // server this is (§2) — MP-2.3's lobby is what will set it false.
+    // LocalServer synthesizes gameStartInfo from these settings.
+    // `local: true` is the only line that knows which kind of server this is (§2).
     Transport.connect(onConnect, onServerMessage, {
       local: true,
       gameID: 'local',
@@ -611,11 +540,9 @@
   }
 
   // §5's loop. The sim advances because a turn arrived, never because time
-  // passed: `Runner.executeNextTurn` applies one turn's intents and takes
-  // exactly one Game.tick, and `Transport.turnComplete` is the backpressure
-  // signal that lets the server emit the next one (see LocalServer.turnComplete
-  // — it is what stops singleplayer running away from itself, and what makes
-  // the debug burst client-paced).
+  // passed: Runner.executeNextTurn applies one turn and takes exactly one
+  // Game.tick, and Transport.turnComplete is the backpressure signal that
+  // lets the server emit the next.
   let lastPanFrameAt = 0;
   // Battery saver (see loop). 30 ms sits between one and two 60 Hz frames, so
   // the cap lands on 30 fps whatever the display's refresh rate.
@@ -650,14 +577,8 @@
     }
     Replay.frame();
 
-    // MP-4.1: catch-up progress. Purely a readout of what the drain loop just
-    // above already did — this owns no logic of its own, only whether a
-    // "catching up" banner is visible and what it says. Not reconnect-
-    // specific in how it's driven (it's just whatever pendingTurns() is left
-    // after this frame's budget-limited pass), but a same-tick backlog is
-    // always ≤1 turn in ordinary play, so in practice this only ever shows
-    // during the kind of multi-hundred-turn backlog a rejoin produces.
-    // A replay's own bar says where a seek has got to.
+    // Catch-up banner: a readout of what the drain loop left pending. Only
+    // visible during a rejoin-sized backlog. A replay shows its own seek bar.
     UI.updateCatchup(Replay.active ? 0 : Runner.pendingTurns());
 
     // Battery saver: the sim moves 10 times a second, so drawing at the full
@@ -694,10 +615,8 @@
     UI.updateReplayBar();
     Perf.drawn(now, drawEnd - drawStart, performance.now() - drawEnd);
     Options.perfFrame(now);
-    // Called every frame, unconditionally: checkEndGame now also has to
-    // notice this client's own defeat the instant it happens, which can be
-    // long before Game.winnerId is decided (see its own comment in ui.js).
-    // Its endGameHandled/lossShown latches make each half of that a one-shot.
+    // Every frame: checkEndGame must notice this client's own defeat at once,
+    // often long before Game.winnerId is set. Its latches make each half one-shot.
     UI.checkEndGame();
   }
 
@@ -736,7 +655,13 @@
     // The lobby that fed the finished match is gone; don't show its stale code.
     inLobby = false;
     myRole = 'sp';
+    fromQuickJoin = false;
     UI.hideLobby();
+    // Land on the home screen, not the setup screen the match was started
+    // from. Leaving a replay stays on the Replays list it was picked from.
+    if (document.getElementById('overlay').dataset.mode !== 'replay') {
+      document.getElementById('modeBack').click();
+    }
     startLobbyListPolling();
     // The finished match's player still exists until Game.init() runs again,
     // which would otherwise leave the debug panel floating over this menu.

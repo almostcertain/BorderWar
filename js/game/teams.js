@@ -1,29 +1,21 @@
-// js/game/teams.js — Team game modes (issue #31), after OpenFront.
+// js/game/teams.js — Team game modes.
 //
-// Ported from OpenFront's Game.ts (GameMode, ColoredTeams, Duos/Trios/Quads/
-// HumansVsNations), TeamAssignment.ts (resolveTeamsList, assignTeams,
-// getMaxTeamSize), GameImpl.addPlayers/maybeAssignTeam, PlayerImpl
-// (isOnSameTeam/isFriendly), WinCheckExecution.checkWinnerTeam and the client
-// theme's teamColors/generateTeamColors.
-//
-// The lobby config carries two fields, both in gameStartInfo.config so every
-// lockstep client builds the same teams:
+// The lobby config carries two fields, both in gameStartInfo.config so
+// every lockstep client builds the same teams:
 //   gameMode:    'ffa' (default, and anything unrecognised) | 'team'
 //   playerTeams: an integer team count (2+), or 'Duos' | 'Trios' | 'Quads' |
-//                'Humans Vs Nations' — OpenFront's TeamCountConfig verbatim.
+//                'Humans Vs Nations'.
 //
 // Teammates are made friendly by adding each to the others' `allies` set at
 // init, with no Alliance record behind it. That routes them through every
-// existing areAllied / p.allies check (attacks, boats, nukes, SAMs, warships,
-// port trade, annexation, AI targeting) without touching those call sites,
-// and since no record exists the pairing can't be broken, expire or be
-// renegotiated — breakAlliance and updateDiplomacy only ever act on records.
+// existing areAllied / p.allies check without touching those call sites,
+// and with no record the pairing can't be broken or expire.
 //
 // FFA DIGEST NOTE: tools/sim-harness.js digests every data key on Game and
 // every field on every player. So this file keeps its constants on its own
-// `Teams` global rather than on Game, and the per-match state (Game.teams,
-// Game.winnerTeam, p.team) only exists in a team game — an FFA match has
-// exactly the keys it had before this mode existed.
+// `Teams` global, and the per-match state (Game.teams, Game.winnerTeam,
+// p.team) only exists in a team game: an FFA match has exactly the keys it
+// had before this mode existed.
 const Teams = {
   MODE_FFA: 'ffa',
   MODE_TEAM: 'team',
@@ -95,12 +87,10 @@ const Teams = {
     return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
   },
 
-  // generateTeamColors: index 0 is the base colour; later members spread
-  // hue ±6° (golden-angle stepped), saturation ±10% and lightness ±18 around
-  // it, lightness clamped 25..80, so teammates read as one team but can still
-  // be told apart. Upstream works in LCH with Math.sin; this uses HSL and a
-  // triangle wave instead, so it is plain arithmetic. Cosmetic either way:
-  // nothing in the sim reads p.color.
+  // Index 0 is the base colour; later members spread hue, saturation and
+  // lightness around it, so teammates read as one team but can be told
+  // apart. Plain arithmetic (HSL and a triangle wave). Cosmetic: nothing in
+  // the sim reads p.color.
   variation(rgb, k) {
     if (k === 0) return rgb.slice();
     // Triangle wave standing in for sin: 0 at x=0, period 1, range [-1, 1].
@@ -180,12 +170,9 @@ Object.assign(Game, {
     }
   },
 
-  // TeamAssignment.assignTeams, minus clans and friends (neither exists
-  // here) and the matchmaker's pinned slots. Humans first in roster order,
-  // then nations in a shuffled order — upstream shuffles with a PseudoRandom
-  // seeded off the first nation's id; this draws from Game.rng. Duos/Trios/
-  // Quads fill the fullest team that still has room (so teams complete one
-  // at a time); a fixed team count fills the emptiest.
+  // Humans first in roster order, then nations in an order shuffled with
+  // Game.rng. Duos/Trios/Quads fill the fullest team that still has room
+  // (so teams complete one at a time); a fixed team count fills the emptiest.
   assignTeams(humans, nations, teams, isDuosTriosQuads) {
     // Clans first: humans sharing a "[TAG]" (2+ of them, biggest clan first,
     // ties by roster order) are seated together, then everyone else in roster
@@ -254,12 +241,11 @@ Object.assign(Game, {
     return n;
   },
 
-  // WinCheckExecution.checkWinnerTeam: the team holding the most land wins
-  // once its combined share of non-fallout land passes WIN_PERCENT. Plus
-  // this port's own last-side-standing rule (the FFA check has it too): if
-  // every nation still holding land is on one team and no tribe is left, that
-  // team has won. Sets winnerTeam, and winnerId to that team's biggest member
-  // so the existing winner vote and hash keep working unchanged.
+  // The team holding the most land wins once its combined share of
+  // non-fallout land passes WIN_PERCENT. Also last side standing: if every
+  // nation still holding land is on one team and no tribe is left, that
+  // team has won. Sets winnerTeam, and winnerId to that team's biggest
+  // member so the winner vote and hash keep working.
   checkTeamWin() {
     if (this.winnerId !== null) return;
     if (this.drill) { this.checkDrillWin(); return; }

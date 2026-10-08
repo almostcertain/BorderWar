@@ -72,17 +72,12 @@ const Input = {
     if (this.keys.has('ArrowDown')) Render.cam.scale /= zoomFactor;
   },
 
-  // Desktop-only nation inspector: a mouse resting over any owned land — your
-  // own included — shows that nation's stats at the top of the screen. Touch
-  // reports pointermove only while a finger is down, which onMove already
-  // spends on panning, so gating on pointerType keeps the two from fighting
-  // over the same event.
+  // Desktop-only nation inspector: a mouse resting over owned land shows
+  // that nation's stats. Gated on pointerType because touch pointermove only
+  // fires while panning.
   onHover(e) {
-    // With a build armed the cursor is a placement cursor, so it tracks the tile
-    // for the ghost instead of inspecting whoever owns it. Preferring a nearby
-    // same-type structure over the exact tile under the cursor keeps the
-    // ghost/hint preview honest about what a tap will actually do — see
-    // UI.placeTileAt.
+    // With a build armed the cursor tracks the tile for the placement ghost
+    // (snapping to a nearby same-type structure, see UI.placeTileAt).
     if (UI.placing && e.pointerType === 'mouse') {
       if (e.type === 'pointerleave') {
         UI.placeHover = -1;
@@ -116,28 +111,17 @@ const Input = {
     UI.showHoverPanel(owner);
   },
 
-  // Only the primary button commits troops. Touch and pen both report button 0,
-  // so this costs them nothing while keeping right- and middle-click off the
-  // attack path entirely.
-  //
-  // Leaning on `!Radial.isOpen()` to suppress the right-click's tap was the bug:
-  // it only holds when the menu actually opened, and openMenu declines on empty
-  // ground, your own land, open sea, and inside the radial's 300ms reopen
-  // cooldown. In every one of those cases the right-button pointerup fell
-  // straight through to UI.onTap and launched an attack — most visibly as
-  // right-clicking unclaimed land expanding into it. Reading the button settles
-  // it at the source, whatever the menu does and whatever order the browser
-  // fires contextmenu in.
+  // Only the primary button commits troops (touch and pen report button 0).
+  // Don't rely on `!Radial.isOpen()` instead: openMenu declines on empty
+  // ground, own land, sea and during its reopen cooldown, and the
+  // right-click would fall through to UI.onTap as an attack.
   isPrimary(e) { return e.button === 0; },
 
   onDown(e) {
     this.canvas = e.currentTarget;
-    // Capture is best-effort: a pointer that has already gone away (fired in
-    // practice by synthetic/replayed events, and reportedly by some browsers on
-    // a fast tap) throws NotFoundError. Losing capture only means a drag that
-    // leaves the canvas stops updating; it must not also skip the state setup
-    // below, or this pointer's eventual pointerup finds nothing in `pointers`
-    // and silently drops the tap.
+    // Capture is best-effort: a pointer that has already gone away throws
+    // NotFoundError. That must not skip the state setup below, or this
+    // pointer's pointerup finds nothing in `pointers` and drops the tap.
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
     // The button is recorded per pointer rather than on `this`, so a second
     // finger landing cannot rewrite what the first one was.
@@ -146,11 +130,9 @@ const Input = {
       this.moved = 0;
       this.downAt = performance.now();
       this.clearHold();
-      // Touch has no right button, so holding is how the menu is reached there.
-      // The tap handler's own 400ms ceiling means a press this long can never
-      // also be read as an attack. A held right button is skipped because
-      // contextmenu has already opened the menu — arming it too would fire
-      // openMenu a second time and fight the reopen cooldown.
+      // Touch reaches the menu by holding. The tap handler's 400ms ceiling
+      // means a press this long is never an attack. A held right button is
+      // skipped: contextmenu has already opened the menu.
       if (this.isPrimary(e)) {
         const x = e.clientX, y = e.clientY;
         this.holdTimer = setTimeout(() => {
@@ -158,12 +140,9 @@ const Input = {
           this.openMenu(x, y);
         }, this.LONG_PRESS_MS);
       }
-      // Shift held down on the primary button starts a ship (warship and scout)
-      // box-select drag instead of panning — mouse only (touch has no shift), and only
-      // when there's actually a map to select on. `active` flips true once
-      // the drag clears the same 12px tolerance onMove's pan-vs-tap test
-      // uses, so a plain shift-click (no drag) still falls through to
-      // selectShipAt in onUp below rather than opening an empty box.
+      // Shift + primary button starts a ship box-select drag instead of a pan
+      // (mouse only). `active` flips true past the 12px tap tolerance, so a
+      // plain shift-click still reaches selectShipAt in onUp.
       if (this.isPrimary(e) && e.shiftKey && e.pointerType === 'mouse' &&
           Game.running && !Game.spawning && !UI.placing && !Radial.isOpen()) {
         this.clearHold();

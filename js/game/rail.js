@@ -3,52 +3,21 @@
 // former js/game.js; see docs/game-split-plan.md.
 Object.assign(Game, {
   // --- Rail network & trains ------------------------------------------------
-  // Ported against OpenFront's actual FactoryExecution / TrainStationExecution
-  // / TrainExecution / RailNetworkImpl / TrainStation / Config.ts source
-  // (github.com/openfrontio/OpenFrontIO), not guessed, with deliberate scope
-  // cuts made and noted where they happen:
-  //  - Rails connect ANY nearby City/Factory (own, enemy, or neutral) exactly
-  //    like the real RailNetworkImpl.connectToNearbyStations/
-  //    computeGhostRailPaths, which apply no owner filter at all to the
-  //    physical network. Trade is likewise open with everyone by default
-  //    (tradeAvailable, mirroring TrainStation.tradeAvailable) unless one
-  //    side has embargoed the other — a bot's factory will happily route a
-  //    train to your city, paying BOTH of you, exactly like
-  //    TradeStationStopHandler's two-way payout. Only the "team" tier is
-  //    missing from trainGold's rate table, since there's no team system
-  //    here, only alliance (self/ally/other).
-  //  - No minimum connection range. OpenFront's own RailNetworkImpl skips a
-  //    candidate closer than trainStationMinRange (15 tiles), which sounds
-  //    like a reasonable "don't draw a silly one-tile stub" guard but has a
-  //    sharp edge: a Factory built close beside the very Cities it exists to
-  //    connect can end up isolated from all of them while they connect to
-  //    each other instead, because they're near enough to fail ITS distance
-  //    check but still just far enough apart to pass each other's. Since
-  //    this game's whole point for a Factory is "connect the cities near
-  //    it," leaving it possible for the nearest ones to be exactly the ones
-  //    it refuses to link is a bug here even though it's just an edge case
-  //    in OpenFront's own much bigger world map — so this game drops the
-  //    minimum entirely instead of porting it.
+  //  - Rails connect ANY nearby station (own, enemy or neutral); the
+  //    physical network has no owner filter. Trade is open with everyone by
+  //    default (tradeAvailable) unless one side has embargoed the other, and
+  //    a train stop pays both ends.
+  //  - No minimum connection range: with one, a Factory built close beside
+  //    the Cities it exists to connect could end up isolated from them.
   //  - Rails are strictly horizontal/vertical, laid as a single elbow bend
-  //    (one straight leg each way) rather than OpenFront's diagonal-capable
-  //    weighted AStar.Rail — an explicit style choice for this game (real
-  //    rail-map look, no diagonals) rather than a fidelity simplification.
-  //    See orthogonalPath.
+  //    (see orthogonalPath). A style choice.
   //
-  // A Factory becomes a station the instant it finishes construction, and it
-  // recruits every City within range into the network too — even ones built
-  // long before it (FactoryExecution.createStation). A City built later
-  // checks the reverse: is a Factory already close enough to plug it in. A
-  // City the network never reaches just never spawns or earns anything —
-  // only a Factory ever originates a train (see updateFactoryStations),
-  // exactly like OpenFront's own City/Port stations, which are trade
-  // destinations only and never spawnTrains themselves.
+  // A Factory becomes a station the instant it finishes and recruits every
+  // City within range, even ones built long before it. A City built later
+  // checks the reverse. Only a Factory ever originates a train (see
+  // updateFactoryStations); Cities and Ports are destinations only.
   //
-  // Range/hop constants below are lifted verbatim from Config.ts's
-  // trainStationMaxRange/railroadMaxSize and RailNetworkImpl's own
-  // maxConnectionDistance — unscaled, because MAP_SIZES already ports
-  // OpenFront's real map dimensions tile-for-tile, so their absolute tile
-  // radii need no rescaling to mean the same thing here.
+  // Range/hop constants are in tiles.
   TRAIN_STATION_MAX_RANGE: 110,
   RAILROAD_MAX_TILES: Math.round(110 * 1.4142),   // trainStationMaxRange() * 1.4142
   RAIL_MAX_CONNECTION_HOPS: 4,
@@ -104,13 +73,12 @@ Object.assign(Game, {
   // rail splices into it instead of laying rails of its own.
   RAIL_SNAP_RADIUS: 3,
 
-  // Every existing rail passing within RAIL_SNAP_RADIUS of `tile`, with where
-  // a station there would splice in: `leg` is the index of the rail leg
-  // holding the closest point, and `path` runs from that point to `tile`
-  // (just the one tile when `tile` is on the rail, otherwise a short
-  // axis-aligned spur). A rail whose closest point is one of its own ends is
-  // left alone, like connectToExistingRails' closestRailIndex check, and so
-  // is one whose spur would cross water.
+  // Every existing rail passing within RAIL_SNAP_RADIUS of `tile`, with
+  // where a station there would splice in: `leg` is the index of the rail
+  // leg holding the closest point, and `path` runs from that point to `tile`
+  // (one tile when `tile` is on the rail, otherwise a short axis-aligned
+  // spur). A rail whose closest point is one of its own ends is left alone,
+  // as is one whose spur would cross water.
   railSnapPoints(tile) {
     const w = GameMap.width, sx = tile % w, sy = (tile / w) | 0;
     const r2 = this.RAIL_SNAP_RADIUS * this.RAIL_SNAP_RADIUS;
@@ -170,13 +138,10 @@ Object.assign(Game, {
     }
   },
 
-  // RailNetworkImpl.connectToNearbyStations, for a station that had no rail
-  // to snap onto (see becomeStation). Minus their minimum-range skip — see
-  // the class comment for why that's dropped rather than ported. Still skips a
-  // candidate already reachable within RAIL_MAX_CONNECTION_HOPS hops, so the
-  // graph stays sparse rather than fully meshed — a new station still gets a
-  // link to its actual nearest neighbours, just not to every station in
-  // range.
+  // For a station that had no rail to snap onto (see becomeStation). Skips
+  // a candidate already reachable within RAIL_MAX_CONNECTION_HOPS hops, so
+  // the graph stays sparse: a new station links to its nearest neighbours,
+  // not to every station in range.
   linkStationToNetwork(station) {
     const range = this.TRAIN_STATION_MAX_RANGE;
     const candidates = [];
@@ -195,17 +160,12 @@ Object.assign(Game, {
     }
   },
 
-  // Read-only preview of the rail lines a hypothetical new station at `tile`
-  // would draw to EXISTING stations — shared by both previewFactoryConnections
-  // and previewCityConnections, since linkStationToNetwork treats a fresh
-  // City-that-just-qualified and a fresh Factory identically once each is
-  // actually becoming a station. No owner filter, matching linkStationToNetwork
-  // (own/enemy/neutral stations all preview) — see the class comment. Same
-  // hop-dedup linkStationToNetwork applies for real: a candidate already
-  // within RAIL_MAX_CONNECTION_HOPS-1 hops of one this preview already
-  // "linked" is skipped, since it would be reachable through that neighbour
-  // once the new station's own edge to it exists (the -1 accounts for that
-  // one extra hop through the new hub).
+  // Read-only preview of the rail lines a new station at `tile` would draw
+  // to EXISTING stations; shared by previewFactoryConnections and
+  // previewCityConnections. No owner filter, and the same hop-dedup as
+  // linkStationToNetwork: a candidate within RAIL_MAX_CONNECTION_HOPS-1 hops
+  // of one already 'linked' here is skipped (the -1 is the extra hop
+  // through the new hub).
   previewStationLinks(tile) {
     const range = this.TRAIN_STATION_MAX_RANGE;
     const lines = [];
@@ -239,23 +199,13 @@ Object.assign(Game, {
     return lines;
   },
 
-  // Read-only preview of what placing a Factory at `tile` would connect to —
-  // Render's placement ghost calls this to draw candidate rail lines before
-  // the player commits. Mirrors onStructureCompleted's factory branch
-  // against the REAL, unmutated rail graph rather than actually building
-  // anything: previewStationLinks covers the "link to nearby EXISTING
-  // stations" half, and the loop below covers the other half a Factory does
-  // that a City/Port never does — recruiting non-station City/Factory/Port
-  // buildings in range, own/enemy/neutral alike (see the class comment). In
-  // the common case (nothing nearby connected yet) each one's own real
-  // linkStationToNetwork call finds the new factory as its nearest station
-  // and links straight to it, so every one of them gets a preview line too,
-  // without the hop-dedup pass (it doesn't apply until a candidate is
-  // already a station). The type filter here has to list every recruitable
-  // type explicitly, unlike onStructureCompleted's own factory branch (no
-  // filter at all) — a real gap that once meant a Port sitting near a
-  // freshly-placed Factory drew no preview line even though it would
-  // actually join the network the instant that Factory finished building.
+  // Read-only preview of what placing a Factory at `tile` would connect to,
+  // for Render's placement ghost. Mirrors onStructureCompleted's factory
+  // branch against the real, unmutated rail graph: previewStationLinks
+  // covers links to existing stations, and the loop below covers what only
+  // a Factory does, recruiting non-station City/Factory/Port buildings in
+  // range (any owner). The type filter must list every recruitable type
+  // explicitly, or a Port near the Factory draws no preview line.
   previewFactoryConnections(tile) {
     const range = this.TRAIN_STATION_MAX_RANGE;
     const lines = this.previewStationLinks(tile);
@@ -271,14 +221,10 @@ Object.assign(Game, {
     return lines;
   },
 
-  // Read-only preview of what placing a City (or a Port — see
-  // onStructureCompleted, which treats them identically for station-joining)
-  // at `tile` would connect to. Unlike a Factory, neither one recruits
-  // anyone — per onStructureCompleted's shared branch it doesn't even join
-  // the network itself unless a Factory (own, enemy, or neutral — see the
-  // class comment) is ALREADY within range, so this returns no lines at all
-  // (nothing to preview) until that condition is met, then defers to the
-  // same previewStationLinks a Factory placement uses.
+  // Read-only preview of what placing a City or Port at `tile` would
+  // connect to. Neither recruits anyone, and neither joins the network
+  // unless a Factory (any owner) is ALREADY within range; until then this
+  // returns no lines. After that it defers to previewStationLinks.
   previewCityConnections(tile) {
     const range = this.TRAIN_STATION_MAX_RANGE;
     let factoryInRange = false;
@@ -313,16 +259,13 @@ Object.assign(Game, {
     return -1;
   },
 
-  // Builds one rail edge between two stations along an axis-aligned elbow
-  // path (see orthogonalPath) and records it on both stations' adjacency
-  // plus the flat railroads[] list Render draws from. No-op if no clear
-  // orthogonal corridor exists in either bend orientation, or the path would
-  // run longer than RAILROAD_MAX_TILES — mirrors RailNetworkImpl.connect's
-  // own path.length < railroadMaxSize guard. Each station's rails Map stores
-  // the small waypoint list itself (2 or 3 tiles: station, optional elbow,
-  // station) — cheap to keep in full, unlike a per-cell walk would be —
-  // oriented FROM that station, so buildTrainRoute can concatenate hops
-  // directly without re-deriving direction.
+  // Builds one rail edge between two stations along an elbow path (see
+  // orthogonalPath) and records it on both stations' adjacency plus the
+  // flat railroads[] list Render draws from. No-op if neither bend
+  // orientation has a clear corridor, or the path would exceed
+  // RAILROAD_MAX_TILES. Each station's rails Map stores the waypoint list
+  // (station, optional elbow, station) oriented FROM that station, so
+  // buildTrainRoute can concatenate hops directly.
   connectStations(a, b) {
     if (a.rails.has(b.tile)) return false;
     const waypoints = this.orthogonalPath(a.tile, b.tile);
@@ -358,16 +301,11 @@ Object.assign(Game, {
     return true;
   },
 
-  // The land counterpart of retraceWaterLine's diagonal Bresenham walk, but
-  // deliberately NOT diagonal: builds a single-bend "elbow" path between two
-  // stations, one straight horizontal leg and one straight vertical leg, so
-  // every rail this game draws runs strictly up/down or left/right — a
-  // classic rail-map look rather than OpenFront's own diagonal-capable
-  // AStar.Rail (see the class comment). Tries horizontal-then-vertical
-  // first, then vertical-then-horizontal, since a water obstacle might block
-  // one bend but not the other; returns null only if both do. Two stations
-  // already sharing a row or column degenerate to a single straight leg with
-  // no elbow at all.
+  // Builds a single-bend 'elbow' path between two stations: one straight
+  // horizontal leg and one straight vertical leg, never a diagonal. Tries
+  // horizontal-then-vertical, then vertical-then-horizontal, since water
+  // might block one bend but not the other; null only if both are blocked.
+  // Two stations sharing a row or column get a single straight leg.
   orthogonalPath(from, to) {
     const w = GameMap.width;
     const ax = from % w, ay = (from / w) | 0, bx = to % w, by = (to / w) | 0;
@@ -427,20 +365,12 @@ Object.assign(Game, {
   },
 
   // --- Trains ----------------------------------------------------------------
-  // trainSpawnRate/trainGold ported verbatim from Config.ts — neither is
-  // scaled by POP_SCALE, matching GOLD_PER_SEC's own comment that gold prices
-  // have no such constraint. TRAIN_SPEED follows the same conversion
-  // BOAT_SPEED already documents: OpenFront moves a train 2 tiles per tick
-  // (TrainExecution's own `speed = 2`) at their 10-ticks/sec, i.e. 20
-  // tiles/sec — a straight port, not a re-tuned dial.
+  // Train gold is not scaled by POP_SCALE. TRAIN_SPEED is in tiles/sec
+  // (2 tiles per tick).
   TRAIN_SPEED: 20,
   TRAIN_SPAWN_COOLDOWN: 1,        // seconds; ticksCooldown=10 @ 10 ticks/sec
-  // Config.ts's trainGold baseGold per relation. Real source also has a
-  // "team" tier (25000, same as "other") but this game has no team system,
-  // only alliance — see tradeRel. Note "self" pays the LEAST: OpenFront
-  // deliberately rewards trading across borders more than trading with your
-  // own cities, which is what makes bots' trains actually go somewhere
-  // interesting instead of only ever shuttling gold to themselves.
+  // Train gold per relation. 'self' pays the LEAST: trading across borders
+  // is deliberately rewarded more than trading with your own cities.
   TRAIN_GOLD_SELF_BASE: 10000,
   TRAIN_GOLD_OTHER_BASE: 25000,
   TRAIN_GOLD_ALLY_BASE: 35000,
@@ -512,17 +442,11 @@ Object.assign(Game, {
     return n;
   },
 
-  // Cluster.hasAnyTradeDestination + randomTradeDestination collapsed into
-  // one reservoir-sampling BFS: walk the rail graph from `station` and
-  // sample among reachable City OR Port stations (TradeStationStopHandler
-  // covers both in the real source — see stepTrains) of ANY owner — own,
-  // allied, or enemy alike, as long as tradeAvailable allows it (no
-  // embargo either way). This is what makes a bot's factory route
-  // trains to a human player's cities/ports (and vice versa) whenever rails
-  // happen to connect them, not just its own. Live ownership, not whoever
-  // owned a station when the rail was laid, is why a captured factory can
-  // immediately start trading with its new owner's other stations over
-  // rails an old regime built.
+  // One reservoir-sampling BFS: walk the rail graph from `station` and
+  // sample among reachable City or Port stations of ANY owner that
+  // tradeAvailable allows (no embargo either way). Ownership is read live,
+  // so a captured factory at once trades with its new owner's stations over
+  // rails the old owner built.
   pickTrainDestination(station) {
     const ownerId = GameMap.owner[station.tile];
     const visited = new Set([station.tile]);
@@ -550,16 +474,12 @@ Object.assign(Game, {
     return chosen;
   },
 
-  // Expands a station-hop path into the FULL waypoint list a train actually
-  // travels — each hop's small elbow path (station, optional bend, station;
-  // see connectStations) concatenated end to end, skipping each segment's
-  // repeated leading tile — plus `cum`, the cumulative straight-line
-  // distance at every waypoint including the elbow bends, and `stops`, the
-  // cumulative distance recorded only at each intermediate/final STATION for
-  // stepTrains' arrival check (a bend is geometry, not a place a train stops
-  // or earns anything). Distance rather than a per-tile array index is what
-  // lets a train travel (and Render draw it, via trainTilePos) along the
-  // real orthogonal legs instead of snapping tile-to-tile.
+  // Expands a station-hop path into the FULL waypoint list a train travels
+  // (each hop's elbow path concatenated, skipping each segment's repeated
+  // leading tile), plus `cum`, the cumulative distance at every waypoint
+  // including bends, and `stops`, the cumulative distance at each STATION,
+  // for stepTrains' arrival check. Distance, not a tile index, is what lets
+  // a train move (and Render draw it, via trainTilePos) along the real legs.
   buildTrainRoute(stationTiles) {
     const waypoints = [stationTiles[0]];
     const cum = [0];
@@ -607,13 +527,10 @@ Object.assign(Game, {
     return true;
   },
 
-  // TrainStationExecution.tick, run for every built factory station every
-  // tick. Only rolls once the cooldown since its last train has elapsed,
-  // then retries every tick after that until a roll lands — matching their
-  // own "lastSpawnTick + ticksCooldown" gate followed by an unconditional
-  // per-tick shouldSpawnTrain() call. The destination is picked BEFORE
-  // rolling (hasAnyTradeDestination is checked first in the real source too)
-  // so an empire with nowhere to trade never burns a roll on it.
+  // Run for every built factory station every tick. Only rolls once the
+  // cooldown since its last train has elapsed, then retries every tick
+  // until a roll lands. The destination is picked BEFORE rolling, so an
+  // empire with nowhere to trade never burns a roll.
   updateFactoryStations() {
     for (const b of this.buildings.values()) {
       if (b.type !== 'factory' || !b.station) continue;
@@ -677,12 +594,9 @@ Object.assign(Game, {
             if (stationP) stationP.gold += gold;
           }
           t.stopsVisited++;
-          // Recorded for every station owner alike, whoever they are. The
-          // renderer shows the local viewer only their own payouts (a payout
-          // at a foreign or allied city isn't the player's money to watch tick
-          // up) — but that filter belongs at draw time, not here: a sim branch
-          // on Game.me would make this line compute differently on every
-          // client. See js/fx.js.
+          // Recorded for every station owner alike. The renderer filters to
+          // the local viewer at draw time; a sim branch on Game.me would make
+          // this compute differently on every client. See js/fx.js.
           Fx.goldPopup(stop.tile, gold, stationOwnerId);
         }
       }
