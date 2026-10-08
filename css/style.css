@@ -1655,26 +1655,18 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 }
 .panel button#modeBack:hover { background: rgba(255, 255, 255, 0.18); }
 
-/* Replays: a utility, not a way to play, so a quiet link under the menu. */
-#menuFoot { text-align: center; }
-.panel button#replaysLink {
-  padding: 4px 8px;
-  background: transparent;
-  color: #a9cdff;
-  font-size: 13px;
-  font-weight: 400;
-  text-decoration: underline;
+/* Replays / Achievements / What's new: secondary buttons in a row under the menu. */
+#menuFoot { display: flex; gap: 8px; }
+.panel #menuFoot button {
+  flex: 1 1 0;
+  padding: 10px 6px;
+  font-size: 14px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
-
-.panel button#achLink,
-.panel button#newsLink {
-  padding: 4px 8px;
-  background: transparent;
-  color: #a9cdff;
-  font-size: 13px;
-  font-weight: 400;
-  text-decoration: underline;
-}
+.panel #menuFoot button:hover { background: rgba(255, 255, 255, 0.18); }
+.panel #menuFoot button:active { background: rgba(255, 255, 255, 0.06); }
 
 /* --- What's new (UI.setupNews) ----------------------------------------------- */
 .panel button#newsLink.unread { color: #ffc850; font-weight: 700; }
