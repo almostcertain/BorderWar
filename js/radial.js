@@ -2,9 +2,9 @@
 // overlay, not drawn into the map canvas.
 //
 // Four quadrants: trade toggle (north), Boat/Betray (east), Peace/Renew
-// (south), Target (west, non-allied players only). In a team game the centre
-// button on a friendly nation opens a second ring, Donate, with Troops and
-// Gold; its centre goes back. Everywhere else the centre just closes the menu.
+// (south), Target (west, non-allied players only). In a team game a teammate's
+// south wedge is Donate (on an ally, the centre button): a second ring with
+// Troops and Gold; its centre goes back. Everywhere else the centre just closes the menu.
 const Radial = {
   el: null,
   menuEl: null,
@@ -139,6 +139,12 @@ const Radial = {
             act: () => Transport.sendIntent(Protocol.intent.allianceExtension(t))
           };
         }
+      } else if (this.canOpenDonate()) {
+        // Teammates can't ally; the south wedge opens Donate instead.
+        out[2] = {
+          icon: 'gift', label: 'Donate', cls: 'good', open: 'donate',
+          tip: 'Give this teammate gold or troops.'
+        };
       } else {
         const reason = Game.allianceBlockReason(me, t);
         out[2] = {
@@ -227,6 +233,7 @@ const Radial = {
   activate(i) {
     const s = this.slots()[i];
     if (!s || s.disabled) return;
+    if (s.open) { this.setMode(s.open); return; }
     s.act();
     this.hide();
   },
@@ -302,7 +309,7 @@ const Radial = {
                      : (this.targetId === NEUTRAL ? 'Unclaimed land' : 'Open water');
     // Back and Donate are icons; Close stays a plain ✕ glyph (not an emoji).
     const centre = this.mode === 'donate' ? { attr: 'data-back', icon: 'back', tip: 'Back' }
-                 : this.canOpenDonate() ? { attr: 'data-donate', icon: 'gift', tip: 'Give this ally gold or troops' }
+                 : this.canOpenDonate() && !slots[2]?.open ? { attr: 'data-donate', icon: 'gift', tip: 'Give this ally gold or troops' }
                  : { attr: 'data-close', text: '✕', tip: 'Close' };
     return `<svg viewBox="0 0 ${span} ${span}" width="${span}" height="${span}">` +
       paths +
