@@ -344,46 +344,40 @@
          (UI.setupLobby); the tutorial row starts a guided first match
          (js/tutorial.js). Replays is a .modeTab too, down in #menuFoot. -->
     <div id="modeTabs">
-      <button type="button" class="modeTab menuRow" data-mode="friends" data-title="Create game"><span class="menuRowText"><b>Play with friends</b><small>Host a lobby or enter a code</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
-      <button type="button" class="modeTab menuRow" data-mode="sp" data-title="Create game"><span class="menuRowText"><b>Solo vs bots</b><small>Pick the map and difficulty</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
+      <button type="button" class="modeTab menuRow" data-mode="friends" data-title="Create game"><span class="menuRowText"><b>Join or host</b><small>Host a lobby or enter a code</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
+      <button type="button" class="modeTab menuRow" data-mode="sp" data-title="Create game"><span class="menuRowText"><b>Solo</b><small>Pick the map and difficulty</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
       <button type="button" id="tutorialBtn" class="menuRow"><span class="menuRowText"><b>Tutorial</b><small>New here? Learn in a guided first match</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
     </div>
 
     <div id="spMode" class="modeBody settingsGrid hidden">
-      <div class="optRow2">
-        <label>Map
-          <select id="mapType">
-            <option value="world">The World</option>
-            <option value="procedural" selected>Procedural</option>
-          </select>
-        </label>
-        <label id="mapSizeRow">Map Size
-          <select id="mapSize">
-            <option value="small">Small</option>
-            <option value="medium" selected>Medium</option>
-            <option value="large">Large</option>
-          </select>
-        </label>
+      <div class="cfgHead">Map</div>
+      <select id="mapType" data-pick="map" aria-label="Map">
+        <option value="world">The World</option>
+        <option value="procedural" selected>Procedural</option>
+      </select>
+      <div id="mapSizeRow" class="cfgGroup">
+        <div class="cfgHead">Map size</div>
+        <select id="mapSize" data-pick aria-label="Map size">
+          <option value="small">Small</option>
+          <option value="medium" selected>Medium</option>
+          <option value="large">Large</option>
+        </select>
       </div>
-      <!-- Procedural map options, filled by UI.setupMapGen. -->
       <div id="mapGenBox" class="mapGen"></div>
-      <div class="optRow2">
-        <label>Difficulty
-          <select id="difficulty">
-            <option value="easy">Easy</option>
-            <option value="medium" selected>Medium</option>
-            <option value="hard">Hard</option>
-          </select>
-        </label>
-        <label>Mode
-          <select id="gameMode">
-            <option value="ffa" selected>Free for All</option>
-            <option value="team">Teams</option>
-          </select>
-        </label>
-      </div>
-      <label id="playerTeamsRow" class="hidden">Teams
-        <select id="playerTeams">
+      <div class="cfgHead">Nation difficulty</div>
+      <select id="difficulty" data-pick aria-label="Difficulty">
+        <option value="easy">Easy</option>
+        <option value="medium" selected>Medium</option>
+        <option value="hard">Hard</option>
+      </select>
+      <div class="cfgHead">Mode</div>
+      <select id="gameMode" data-pick aria-label="Mode">
+        <option value="ffa" selected>Free for All</option>
+        <option value="team">Teams</option>
+      </select>
+      <div id="playerTeamsRow" class="cfgGroup hidden">
+        <div class="cfgHead">Teams</div>
+        <select id="playerTeams" data-pick aria-label="Teams">
           <option value="2" selected>2 teams</option>
           <option value="3">3 teams</option>
           <option value="4">4 teams</option>
@@ -395,12 +389,13 @@
           <option value="Quads">Quads</option>
           <option value="Humans Vs Nations">Humans vs Nations</option>
         </select>
-      </label>
-      <div class="optRow2">
+      </div>
+      <div class="cfgHead">Options</div>
+      <div class="optRow2 cfgNums">
         <label>Bots <input id="botCount" type="number" min="2" max="100" value="82"></label>
         <label>Tribes <input id="tribeCount" type="number" min="0" max="400" value="400"></label>
       </div>
-      <label class="checkboxLabel" title="The map starts black and you only see what you have discovered. Hides the map preview."><input id="fogOfWar" type="checkbox" checked> Fog of war</label>
+      <input id="fogOfWar" type="checkbox" checked data-toggle="Fog of war" title="The map starts black and you only see what you have discovered. Hides the map preview.">
       <button id="startBtn">Start Game</button>
     </div>
 
@@ -463,56 +458,52 @@
         <ul id="lobbyRoster" class="lobbyRoster"></ul>
         <div class="lobbyLabel">Match settings</div>
         <div class="settingsGrid">
-        <div class="optRow2">
-          <label>Map
-            <select id="hostMapType">
-              <option value="world">The World</option>
-              <option value="procedural" selected>Procedural</option>
-            </select>
-          </label>
-          <label id="hostMapSizeRow">Map Size
-            <select id="hostMapSize">
-              <option value="small">Small</option>
-              <option value="medium" selected>Medium</option>
-              <option value="large">Large</option>
-            </select>
-          </label>
-        </div>
-        <div id="hostMapGenBox" class="mapGen"></div>
-        <div class="optRow2">
-          <label>Difficulty
-            <select id="hostDifficulty">
-              <option value="easy">Easy</option>
-              <option value="medium" selected>Medium</option>
-              <option value="hard">Hard</option>
-            </select>
-          </label>
-          <label>Mode
-            <select id="hostGameMode">
-              <option value="ffa" selected>Free for All</option>
-              <option value="team">Teams</option>
-            </select>
-          </label>
-        </div>
-        <label id="hostPlayerTeamsRow" class="hidden">Teams
-          <select id="hostPlayerTeams">
-            <option value="2" selected>2 teams</option>
-            <option value="3">3 teams</option>
-            <option value="4">4 teams</option>
-            <option value="5">5 teams</option>
-            <option value="6">6 teams</option>
-            <option value="7">7 teams</option>
-            <option value="Duos">Duos</option>
-            <option value="Trios">Trios</option>
-            <option value="Quads">Quads</option>
-            <option value="Humans Vs Nations">Humans vs Nations</option>
-          </select>
-        </label>
-        <div class="optRow2">
-          <label>Bots <input id="hostBotCount" type="number" min="0" max="100" value="82"></label>
-          <label>Tribes <input id="hostTribeCount" type="number" min="0" max="400" value="400"></label>
-        </div>
-        <label class="checkboxLabel" title="The map starts black and players only see what they have discovered. Hides the map preview."><input id="hostFogOfWar" type="checkbox" checked> Fog of war</label>
+        <div class="cfgHead">Map</div>
+      <select id="hostMapType" data-pick="map" aria-label="Map">
+        <option value="world">The World</option>
+        <option value="procedural" selected>Procedural</option>
+      </select>
+      <div id="hostMapSizeRow" class="cfgGroup">
+        <div class="cfgHead">Map size</div>
+        <select id="hostMapSize" data-pick aria-label="Map size">
+          <option value="small">Small</option>
+          <option value="medium" selected>Medium</option>
+          <option value="large">Large</option>
+        </select>
+      </div>
+      <div id="hostMapGenBox" class="mapGen"></div>
+      <div class="cfgHead">Nation difficulty</div>
+      <select id="hostDifficulty" data-pick aria-label="Difficulty">
+        <option value="easy">Easy</option>
+        <option value="medium" selected>Medium</option>
+        <option value="hard">Hard</option>
+      </select>
+      <div class="cfgHead">Mode</div>
+      <select id="hostGameMode" data-pick aria-label="Mode">
+        <option value="ffa" selected>Free for All</option>
+        <option value="team">Teams</option>
+      </select>
+      <div id="hostPlayerTeamsRow" class="cfgGroup hidden">
+        <div class="cfgHead">Teams</div>
+        <select id="hostPlayerTeams" data-pick aria-label="Teams">
+          <option value="2" selected>2 teams</option>
+          <option value="3">3 teams</option>
+          <option value="4">4 teams</option>
+          <option value="5">5 teams</option>
+          <option value="6">6 teams</option>
+          <option value="7">7 teams</option>
+          <option value="Duos">Duos</option>
+          <option value="Trios">Trios</option>
+          <option value="Quads">Quads</option>
+          <option value="Humans Vs Nations">Humans vs Nations</option>
+        </select>
+      </div>
+      <div class="cfgHead">Options</div>
+      <div class="optRow2 cfgNums">
+        <label>Bots <input id="hostBotCount" type="number" min="0" max="100" value="82"></label>
+        <label>Tribes <input id="hostTribeCount" type="number" min="0" max="400" value="400"></label>
+      </div>
+      <input id="hostFogOfWar" type="checkbox" checked data-toggle="Fog of war" title="The map starts black and players only see what they have discovered. Hides the map preview.">
         <button id="hostStartBtn" class="hidden">Start Game</button>
         </div>
         <button id="hostLeaveBtn" class="lobbyLeave">Leave Lobby</button>

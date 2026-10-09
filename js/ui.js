@@ -2282,6 +2282,7 @@ const UI = {
     this.setupMapGen('host');
     this.bindFogToggle('');
     this.bindFogToggle('host');
+    this.setupPickers();
 
     // Prefill the shared name field from the last time this browser played.
     let savedName = '';
@@ -2717,6 +2718,56 @@ const UI = {
     sync();
   },
 
+  // Create-game settings: each [data-pick] select shows as a row of tiles and
+  // each [data-toggle] checkbox as a toggle tile. The native control stays the
+  // source of truth (hidden), so reads and change listeners are unchanged.
+  MAP_PICK_NOTES: { world: 'Real-world map', procedural: 'Generated, with a seed' },
+  setupPickers() {
+    for (const sel of document.querySelectorAll('select[data-pick]')) {
+      const wrap = document.createElement('div');
+      wrap.className = 'pickGrid' + (sel.dataset.pick === 'map' ? ' pickMap' : '');
+      const tiles = Array.from(sel.options).map((opt) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'pickTile';
+        b.dataset.value = opt.value;
+        b.innerHTML = '<b></b>' + (sel.dataset.pick === 'map' ? '<small></small>' : '');
+        b.querySelector('b').textContent = opt.text;
+        if (sel.dataset.pick === 'map') b.querySelector('small').textContent = this.MAP_PICK_NOTES[opt.value] || '';
+        b.addEventListener('click', () => {
+          if (sel.value === opt.value) return;
+          sel.value = opt.value;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        wrap.appendChild(b);
+        return b;
+      });
+      const sync = () => tiles.forEach(t => t.classList.toggle('active', t.dataset.value === sel.value));
+      sel.addEventListener('change', sync);
+      window.addEventListener('pageshow', sync);
+      sel.classList.add('hidden');
+      sel.after(wrap);
+      sync();
+    }
+    for (const box of document.querySelectorAll('input[data-toggle]')) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'pickTile toggleTile';
+      b.title = box.title;
+      b.textContent = box.dataset.toggle;
+      b.addEventListener('click', () => {
+        box.checked = !box.checked;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      const sync = () => b.classList.toggle('active', box.checked);
+      box.addEventListener('change', sync);
+      window.addEventListener('pageshow', sync);
+      box.classList.add('hidden');
+      box.after(b);
+      sync();
+    }
+  },
+
   // --- Procedural map options -------------------------------------------------
   //
   // The knobs under the Map row (Protocol.MAP_GEN, one select each), a live
@@ -2780,10 +2831,12 @@ const UI = {
     });
     this.updateMapOptsSummary(prefix);
     seedInput.addEventListener('change', () => this.refreshMapPreview(prefix));
-    document.getElementById(this.mapGenId(prefix, 'mapReroll')).addEventListener('click', () => {
+    const reroll = () => {
       seedInput.value = String(Math.floor(Math.random() * 1e9));
       this.refreshMapPreview(prefix);
-    });
+    };
+    document.getElementById(this.mapGenId(prefix, 'mapReroll')).addEventListener('click', reroll);
+    document.getElementById(this.mapGenId(prefix, 'mapSize')).addEventListener('change', reroll);
     // Draw whenever the preview comes into view, however it got there (tab
     // switch, Map select, the browser restoring the form on load): a hidden
     // canvas has no size, and gains one the moment it is shown.
