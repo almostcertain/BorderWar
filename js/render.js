@@ -2859,7 +2859,10 @@ const Render = {
       // the missile doesn't. Skipped for mirvwarhead, matching the single
       // mothership alert in UI.updateNukeAlert.
       const isWarhead = n.nukeType === 'mirvwarhead';
-      if (!isWarhead && UI.nukeThreatensMe(n)) this.drawNukeTarget(n, s, cw, ch);
+      if (!isWarhead) {
+        if (UI.nukeThreatensMe(n)) this.drawNukeTarget(n, s, cw, ch, '#ff4040', '#ff2020');
+        else if (Game.me >= 0 && (mine || Game.areAllied(Game.me, n.ownerId))) this.drawNukeTarget(n, s, cw, ch, '#ffb020', '#ff9a00');
+      }
 
       // Clamped at 0 too: a mirvwarhead's `born` can be in the future while it
       // waits out its spawn delay, and a negative t would arc backward past `from`.
@@ -2915,7 +2918,7 @@ const Render = {
 
   // Target marker for an incoming nuke — see drawNukes. Render-only; the
   // pulse runs off the wall clock, which is fine outside the sim.
-  drawNukeTarget(n, s, cw, ch) {
+  drawNukeTarget(n, s, cw, ch, line, fill) {
     const mag = Game.NUKE_MAGNITUDES[n.nukeType];
     if (!mag) return;
     const ctx = this.ctx;
@@ -2927,7 +2930,7 @@ const Render = {
 
     ctx.save();
     ctx.lineWidth = 2 * this.dpr;
-    ctx.strokeStyle = '#ff4040';
+    ctx.strokeStyle = line;
     ctx.globalAlpha = 0.35 + 0.45 * pulse;
     ctx.setLineDash([8 * this.dpr, 6 * this.dpr]);
     ctx.beginPath();
@@ -2935,7 +2938,7 @@ const Render = {
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.globalAlpha = 0.12 + 0.1 * pulse;
-    ctx.fillStyle = '#ff2020';
+    ctx.fillStyle = fill;
     ctx.beginPath();
     ctx.arc(cx, cy, inner, 0, Math.PI * 2);
     ctx.fill();
