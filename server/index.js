@@ -172,7 +172,7 @@ const news = newsModule.create({ file: process.env.BORDERWAR_NEWS_FILE || (PORT 
 let admin = null;
 try {
   admin = require('./admin').create({
-    gameManager, wss, presence, news, log, build: JSON.parse(BUILD_INFO).id, persistHistory: PORT === 8124,
+    gameManager, wss, presence, news, log, updateFile: process.env.BORDERWAR_UPDATE_FILE || null, build: JSON.parse(BUILD_INFO).id, persistHistory: PORT === 8124,
     drain: (maxMs) => drain('admin drain requested', maxMs)
   });
 } catch (e) {

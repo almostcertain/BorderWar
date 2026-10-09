@@ -465,6 +465,11 @@
         if (Array.isArray(msg.turns)) for (const t of msg.turns) Runner.addTurn(t);
 
         lastTurnAt = performance.now();
+        const cfg = info.config || {};
+        presenceMatch = {
+          map: cfg.map === 'world' ? 'world' : cfg.mapSize, mode: cfg.gameMode,
+          bots: cfg.bots, tribes: cfg.tribes, tutorial: Tutorial.active, at: lastTurnAt
+        };
         document.getElementById('overlay').classList.add('hidden');
         document.getElementById('endOverlay').classList.add('hidden');
         sendPresence();
@@ -682,17 +687,24 @@
   //
   // A singleplayer match never opens a socket, so the server can't see it.
   // While one is on screen, say so every 30 s; the admin page counts the pages
-  // it has heard from lately. The id is random, made per page load and stored
-  // nowhere. Tutorials count; replays, the menu and hidden tabs don't.
+  // it has heard from lately, with the match's settings. The id is random, made
+  // per page load and stored nowhere; no account name is sent. Tutorials count;
+  // replays, the menu and hidden tabs don't.
   const PRESENCE_MS = 30000;
   const presenceID = Array.from(crypto.getRandomValues(new Uint8Array(8)),
     (b) => b.toString(16).padStart(2, '0')).join('');
   let presenceOff = false;
+  let presenceMatch = null; // what the admin page lists for this match
   function sendPresence() {
     if (presenceOff || document.hidden) return;
     if (!Transport.connected || !Transport.isLocal || Replay.active) return;
     if (!document.getElementById('overlay').classList.contains('hidden')) return;
-    fetch('presence', { method: 'POST', body: presenceID, credentials: 'omit', cache: 'no-store' })
+    const m = presenceMatch || {};
+    const body = JSON.stringify({
+      id: presenceID, map: m.map, mode: m.mode, bots: m.bots, tribes: m.tribes,
+      tutorial: !!m.tutorial, age: m.at ? Math.round((performance.now() - m.at) / 1000) : 0
+    });
+    fetch('presence', { method: 'POST', body: body, credentials: 'omit', cache: 'no-store' })
       .then((r) => {
         // Not there at all (the static dev server): stop asking. Anything else
         // is a server that will be back.

@@ -1,0 +1,11 @@
+# Restarts or updates the server when the admin page asks. Runs as root; the
+# script it runs is a root-owned copy (install-admin-update.sh).
+
+[Unit]
+Description=BorderWar restart/update requested from the admin page
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /usr/local/lib/borderwar/admin-update.sh
+# A drain can wait for the longest match, 30 minutes at most, plus the pull.
+TimeoutStartSec=3600

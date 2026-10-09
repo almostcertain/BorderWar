@@ -95,6 +95,8 @@
     <span id="build" class="tag"></span>
     <span id="status"></span>
     <select id="tz" aria-label="Time zone"></select>
+    <button id="restart" type="button" hidden>Restart</button>
+    <button id="update" type="button" hidden>Pull latest &amp; restart</button>
     <button id="pause" type="button">Pause</button>
     <button id="logout" type="button">Forget token</button>
   </header>
@@ -112,6 +114,8 @@
   <div id="active"></div>
   <h2>Lobbies</h2>
   <div id="lobbies"></div>
+  <h2>Single player matches</h2>
+  <div id="solo"></div>
   <details id="newsBox" open>
   <summary>What's new post<span id="newsBrief"></span></summary>
   <form id="news">
@@ -217,8 +221,27 @@
     games.forEach(function (g) { node.appendChild(gameCard(g, now)); });
   }
 
+  function soloRow(m, now) {
+    var card = el('div', 'game');
+    var top = el('div', 'top');
+    top.appendChild(el('span', 'id', m.ref));
+    if (m.tutorial) top.appendChild(el('span', 'tag', 'tutorial'));
+    var meta = [];
+    if (m.map) meta.push(m.map + ' map');
+    if (m.mode) meta.push(m.mode);
+    if (m.bots != null) meta.push(m.bots + ' bots');
+    if (m.tribes != null) meta.push(m.tribes + ' tribes');
+    if (m.startedAt) meta.push('running ' + dur(now - m.startedAt));
+    top.appendChild(el('span', 'meta', meta.join(' · ') || 'no details (older page)'));
+    card.appendChild(top);
+    return card;
+  }
+
   function render(s) {
     $('login').hidden = true;
+    var canUpdate = !!s.server.canUpdate, busy = s.server.updatePending || s.server.draining;
+    ['restart', 'update'].forEach(function (id) { $(id).hidden = !canUpdate; $(id).disabled = busy; });
+    $('restart').title = $('update').title = busy ? 'Already restarting' : '';
     $('dash').hidden = false;
     $('build').textContent = 'build ' + (s.server.build || '?');
     var t = $('tiles');
@@ -236,6 +259,10 @@
     t.appendChild(tile(mb(s.server.systemFreeMem), 'host free memory'));
     fill($('active'), s.games.filter(function (g) { return g.stage === 'ACTIVE'; }), s.now, 'No games running.');
     fill($('lobbies'), s.games.filter(function (g) { return g.stage === 'LOBBY'; }), s.now, 'No lobbies.');
+    var solo = $('solo');
+    solo.textContent = '';
+    if (!s.soloMatches.length) solo.appendChild(el('div', 'empty', 'No single player matches.'));
+    s.soloMatches.forEach(function (m) { solo.appendChild(soloRow(m, s.now)); });
   }
 
   // ---- History charts. One sample a minute from /admin/history; a sample row
@@ -688,6 +715,25 @@
     resetHistory();
     showLogin('');
   });
+  // The server only drops a request file; the host drains it and starts the
+  // new build (tools/cloud/admin-update.sh).
+  function requestUpdate(mode, question) {
+    if (!confirm(question + '\n\nNew games stop now. Matches in progress finish first, for 30 minutes at most.')) return;
+    $('restart').disabled = $('update').disabled = true;
+    fetch('/admin/update?mode=' + mode, { method: 'POST', cache: 'no-store', headers: { Authorization: 'Bearer ' + token } })
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.status === 409 ? 'already requested' : 'HTTP ' + res.status);
+        $('status').textContent = 'Restart requested; waiting for the host';
+        refresh();
+      })
+      .catch(function (e) {
+        $('restart').disabled = $('update').disabled = false;
+        $('status').textContent = 'Not requested: ' + e.message;
+        $('status').style.color = 'var(--bad)';
+      });
+  }
+  $('restart').addEventListener('click', function () { requestUpdate('restart', 'Restart the server?'); });
+  $('update').addEventListener('click', function () { requestUpdate('update', 'Pull the latest code and restart the server?'); });
   $('pause').addEventListener('click', function () {
     paused = !paused;
     $('pause').textContent = paused ? 'Resume' : 'Pause';

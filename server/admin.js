@@ -8,6 +8,10 @@
 //                     matches finish (tools/drain-server.js); same token
 //   POST /admin/news  publish or remove the What's new post (server/news.js);
 //                     same token
+//   POST /admin/update?mode=update|restart  ask the host to restart the server,
+//                     pulling the latest code first for `update`. Only writes a
+//                     request file; tools/cloud/ does the work (docs/cloud-hosting.md).
+//                     Enabled when BORDERWAR_UPDATE_FILE is set; same token
 //
 // The token is BORDERWAR_ADMIN_TOKEN if set, otherwise a random one generated
 // on first start and kept in server/data/admin-token.txt (gitignored). There is
@@ -143,6 +147,8 @@ function create(opts) {
       server: {
         build: build,
         draining: !!gameManager.draining,
+        canUpdate: !!opts.updateFile,
+        updatePending: updatePending(),
         node: process.version,
         startedAt: startedAt,
         uptimeMs: now - startedAt,
@@ -157,13 +163,14 @@ function create(opts) {
         players: players,
         spectators: spectators,
         // Pages in a singleplayer match right now (server/presence.js).
-        solo: presence ? presence.count() : 0,
+        solo: presence ? presence.count() : 0, // = soloMatches.length
         lobbies: lobbies,
         activeGames: active,
         totalConnections: totalConnections,
         peakConnections: peakConnections
       },
-      games: games
+      games: games,
+      soloMatches: presence ? presence.matches() : []
     };
   }
 
@@ -217,6 +224,26 @@ function create(opts) {
     res.end(body);
   }
 
+  // Drops the request file for the root-side watcher (tools/cloud/); this
+  // process never restarts itself or touches the checkout.
+  function updatePending() {
+    return !!opts.updateFile && fs.existsSync(opts.updateFile);
+  }
+  function requestUpdate(res, mode) {
+    const json = 'application/json; charset=utf-8';
+    if (updatePending()) return send(res, 409, json, '{"error":"already_requested"}');
+    try {
+      const tmp = opts.updateFile + '.tmp';
+      fs.writeFileSync(tmp, mode + '\n', { mode: 0o600 });
+      fs.renameSync(tmp, opts.updateFile);
+    } catch (e) {
+      log.warn('admin', 'could not write update request: ' + (e && e.message || e));
+      return send(res, 500, json, '{"error":"write_failed"}');
+    }
+    log.info('admin', 'update requested from the admin page: ' + mode);
+    return send(res, 200, json, JSON.stringify({ requested: mode }));
+  }
+
   // Answers /admin and anything under /admin/.
   function handle(req, res) {
     const urlPath = req.url.split('?')[0];
@@ -233,6 +260,14 @@ function create(opts) {
       if (req.method !== 'POST') return send(res, 405, 'text/plain', 'Method not allowed');
       if (!authorized(req)) return send(res, 401, 'application/json; charset=utf-8', '{"error":"unauthorized"}');
       return opts.news.publish(req, res);
+    }
+    if (urlPath === '/admin/update') {
+      if (!opts.updateFile) return send(res, 404, 'text/plain', 'Not found');
+      if (req.method !== 'POST') return send(res, 405, 'text/plain', 'Method not allowed');
+      if (!authorized(req)) return send(res, 401, 'application/json; charset=utf-8', '{"error":"unauthorized"}');
+      const m = /[?&]mode=(update|restart)(?:&|$)/.exec(req.url);
+      if (!m) return send(res, 400, 'application/json; charset=utf-8', '{"error":"bad_mode"}');
+      return requestUpdate(res, m[1]);
     }
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'Method not allowed');
     if (urlPath === '/admin' || urlPath === '/admin/') {

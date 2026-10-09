@@ -8,6 +8,9 @@
 # The code is only pulled once the server has stopped: it serves the game's
 # files straight from this checkout, so pulling under a running server would
 # hand players a client that doesn't match it.
+#
+# FROM_ADMIN=1 (the admin page's button, via admin-update.sh) leaves the systemd
+# unit alone: it would be copied from a checkout the server can write.
 set -euo pipefail
 
 APP_DIR=/opt/borderwar
@@ -39,7 +42,7 @@ main() {
   as_app git merge --ff-only origin/main
   (cd server && as_app npm ci --omit=dev)
   # Pick up changes to the unit file itself.
-  if ! cmp -s tools/cloud/borderwar.service /etc/systemd/system/borderwar.service; then
+  if [ -z "${FROM_ADMIN:-}" ] && ! cmp -s tools/cloud/borderwar.service /etc/systemd/system/borderwar.service; then
     cp tools/cloud/borderwar.service /etc/systemd/system/borderwar.service
     systemctl daemon-reload
   fi

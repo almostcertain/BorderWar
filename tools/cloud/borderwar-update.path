@@ -1,0 +1,8 @@
+# Watches for the request file the admin page writes (server/admin.js) and
+# starts borderwar-update.service. Installed by install-admin-update.sh.
+
+[Path]
+PathExists=/opt/borderwar/server/data/update-request
+
+[Install]
+WantedBy=multi-user.target

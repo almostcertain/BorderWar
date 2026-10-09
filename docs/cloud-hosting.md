@@ -15,6 +15,7 @@ The live site has run this way since 2026-10-05, on a DigitalOcean Droplet.
 | Server service | `borderwar` (`tools/cloud/borderwar.service`) |
 | Tunnel service | `cloudflared`, config in `/etc/cloudflared/`; the tunnel is named `borderwar-cloud` |
 | Update to latest `main` | `bash /opt/borderwar/tools/cloud/update.sh` |
+| Admin page Restart / Pull latest buttons | one-time `bash /opt/borderwar/tools/cloud/install-admin-update.sh` (see below) |
 | Server log | `journalctl -u borderwar -f` |
 | Stop now (players are told) | `systemctl stop borderwar` |
 | Start | `systemctl start borderwar` |
@@ -152,6 +153,27 @@ It blocks new games, waits up to 30 minutes for matches in progress to finish
 (pass a different number of minutes as the argument), then pulls, installs and
 starts the new build and prints its build ID. If the box is already on the
 latest commit it does nothing.
+
+### From the admin page
+
+The admin page's **Restart** and **Pull latest & restart** buttons do the same
+drain-then-start, without SSH. The server itself can't restart or pull (it runs
+unprivileged and can't write its own code); a button only writes
+`server/data/update-request`. `borderwar-update.path` (root) sees the file and
+runs `admin-update.sh`, which drains and then restarts or calls `update.sh`.
+
+Turn it on once, as root on the box, then restart the server:
+
+```
+bash /opt/borderwar/tools/cloud/install-admin-update.sh
+systemctl restart borderwar   # players are told; pick a quiet moment
+```
+
+The scripts root runs are copies in `/usr/local/lib/borderwar/`, because the
+checkout is writable by the server user. Run the installer again after any
+change to `update.sh` or `admin-update.sh`. Pulling from the admin page never
+replaces the systemd unit file; use `update.sh` over SSH for that. Progress is in
+`journalctl -u borderwar-update`.
 
 ## Going back to a home machine
 
