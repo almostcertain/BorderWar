@@ -749,6 +749,18 @@ const UI = {
     this.spawnSent = false;
     document.getElementById('spawnBannerText').textContent = Game.fog ? this.SPAWN_FOG_HINT : this.SPAWN_HINT;
     if (Game.fog) this.centerOnOwnSpawn();
+    let teamEl = document.getElementById('spawnBannerTeam');
+    if (!teamEl) {
+      teamEl = document.createElement('div');
+      teamEl.id = 'spawnBannerTeam';
+      banner.insertBefore(teamEl, banner.firstChild);
+    }
+    const team =Game.isTeamGame() ? Game.teamOf(Game.me) : null;
+    teamEl.classList.toggle('hidden', !team);
+    if (team) {
+      const c = Teams.baseColor(team, Game.teams.indexOf(team));
+      teamEl.innerHTML = 'You are on <span style="color:rgb(' + c.join(',') + ')">' + (/^Team /.test(team) ? '' : 'Team ') + escapeHtml(team) + '</span>';
+    }
   },
 
   // Fog matches place everyone before the first frame (docs/fog-of-war.md), and

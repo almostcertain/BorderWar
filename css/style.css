@@ -757,6 +757,8 @@ body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pau
 }
 
 #spawnBanner.warn { color: #ffb46b; }
+#spawnBannerTeam { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+#spawnBannerTeam span { text-shadow: 0 0 6px rgba(0, 0, 0, 0.8); }
 
 /* MP-4.2: diagnostic-only desync notice (UI.showDesyncWarning). Same fixed
    top-center placement family as #spawnBanner, offset lower so the two never
