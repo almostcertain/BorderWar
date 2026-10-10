@@ -277,7 +277,7 @@
     { label: '7 days', ms: 604800e3, bucket: 3600e3, sub: 'Peak per hour' }
   ];
   var CHARTS = [
-    { title: 'Players online', unit: '', series: [
+    { title: 'Players online', unit: '', sumPeak: true, series: [
       { key: 1, name: 'Multiplayer', color: 'var(--s1)' },
       { key: 7, name: 'Single player', color: 'var(--s3)' },
       { key: 2, name: 'Spectators', color: 'var(--s2)' }] },
@@ -406,11 +406,23 @@
     var step = niceStep(max), top = Math.max(step, Math.ceil(max / step) * step);
     function x(i) { return L + (i + 0.5) / n * pw; }
     function y(v) { return T + ph - v / top * ph; }
-    c.sub.textContent = view.r.sub + ' · peak ' + max + c.unit;
+    // Stacked series report the most people online at once (all series summed
+    // per sample), not the busiest single series.
+    var peak = max;
+    if (c.sumPeak) {
+      peak = 0;
+      hist.forEach(function (s) {
+        if (s[0] < view.start || s[0] >= view.start + view.r.ms) return;
+        var sum = 0;
+        c.series.forEach(function (sr) { sum += s[sr.key]; });
+        if (sum > peak) peak = sum;
+      });
+    }
+    c.sub.textContent = view.r.sub + ' · peak ' + peak + c.unit;
     c.tip.hidden = true;
     c.plot.textContent = '';
     var svg = svgEl('svg', { width: W, height: H, tabindex: 0, role: 'img',
-      'aria-label': c.title + ', last ' + view.r.label + ', peak ' + max + c.unit }, c.plot);
+      'aria-label': c.title + ', last ' + view.r.label + ', peak ' + peak + c.unit }, c.plot);
 
     for (var v = 0; v <= top + step / 2; v += step) {
       svgEl('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), style: 'stroke:var(' + (v ? '--grid' : '--axis') + ')' }, svg);
