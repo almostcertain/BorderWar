@@ -1155,7 +1155,11 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 }
 
 #endOverlay .panel h1 { font-size: 24px; }
-#endOverlay .panel button#restartBtn { padding: 11px; font-size: 15px; }
+#endOverlay .panel button#restartBtn,
+#endOverlay .panel button#endTutorialBtn,
+#endOverlay .panel button#endMenuBtn { padding: 11px; font-size: 15px; }
+#endOverlay .panel button#endMenuBtn { background: rgba(255, 255, 255, 0.1); }
+#endOverlay .panel button#endMenuBtn:active { background: rgba(255, 255, 255, 0.18); }
 
 #endOverlay .panel button#endMinBtn {
   position: absolute;
@@ -1173,7 +1177,9 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 #endOverlay.minimized .panel { padding: 8px 44px 8px 16px; max-width: max-content; }
 #endOverlay.minimized .panel h1 { font-size: 16px; }
 #endOverlay.minimized #endText,
-#endOverlay.minimized #restartBtn { display: none; }
+#endOverlay.minimized #restartBtn,
+#endOverlay.minimized #endTutorialBtn,
+#endOverlay.minimized #endMenuBtn { display: none; }
 
 /* --- Main menu: the open rotating lobby (#12) is the primary call to
    action — a hero card above everything else — with the other ways to play

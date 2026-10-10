@@ -288,7 +288,10 @@
   // menu's loudest button always leads to a game.
   document.getElementById('quickJoinBtn').addEventListener('click', () => {
     if (debugLobby) return;
-    const entry = lastLobbyList.find((e) => e.isAuto);
+    quickJoin(lastLobbyList.find((e) => e.isAuto));
+  });
+
+  function quickJoin(entry) {
     if (!entry) { start(); return; }
     // joinLobby()'s in-progress UI lives inside #joinMode (#joinLobby), which
     // is only visible while the Play with friends screen is open (UI.setupLobby's
@@ -300,7 +303,7 @@
     fromQuickJoin = true;
     UI.showJoinLobbyMap();
     UI.showOpenLobby(entry);
-  });
+  }
 
   // Starts as soon as the menu does — the hero card has nothing to show
   // until the first poll resolves.
@@ -633,7 +636,19 @@
   }
 
   document.getElementById('startBtn').addEventListener('click', start);
-  document.getElementById('restartBtn').addEventListener('click', backToMenu);
+  document.getElementById('endMenuBtn').addEventListener('click', backToMenu);
+  document.getElementById('endTutorialBtn').addEventListener('click', () => {
+    document.getElementById('endOverlay').classList.add('hidden');
+    Tutorial.start();
+  });
+  // Straight into the next open lobby; the menu's list is stale after a match,
+  // so ask the server afresh.
+  document.getElementById('restartBtn').addEventListener('click', () => {
+    backToMenu();
+    Transport.fetchLobbyList()
+      .catch(() => [])
+      .then((list) => { lastLobbyList = list; quickJoin(list.find((e) => e.isAuto)); });
+  });
 
   // Leaves the match for the main menu. Exit lives in the in-game menu
   // (js/ui.js), which asks for a second click while a match is still undecided.

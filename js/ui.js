@@ -2053,6 +2053,9 @@ const UI = {
     Transport.sendWinner(Game.winnerId);
   },
 
+  // Eliminated before this many match seconds counts as losing "early".
+  EARLY_LOSS_S: 300,
+
   showEnd(title, text) {
     // A replay has no result of its own to announce; its bar shows the end.
     if (Replay.active) return;
@@ -2060,6 +2063,9 @@ const UI = {
     document.getElementById('endReplayRow').classList.toggle('hidden', !Replay.snapshot());
     document.getElementById('endTitle').textContent = title;
     document.getElementById('endText').textContent = text;
+    // An early elimination is a new player's loss: point them at the tutorial.
+    document.getElementById('endTutorialBtn').classList.toggle('hidden',
+      !(title === 'Defeated' && Game.elapsed < this.EARLY_LOSS_S && !Tutorial.active));
     // #22: a popup over the live map. Each new result (e.g. Victory/Game Over
     // after an earlier Defeated) re-expands it; the minimize button collapses
     // it to just the title so the whole map is inspectable.
