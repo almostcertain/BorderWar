@@ -104,7 +104,7 @@ const Render = {
     this.structSprites.clear();
     this.structSpriteR = -1;
     this.fogSource = null;         // the fog layer restarts from the new match's vision grid (updateFog)
-    this.fogChanged();
+    this.dropFogBitmaps();
 
     // Unclaimed ground, one tone per terrain: grassy plains, dun highland,
     // bare grey mountain.
@@ -724,15 +724,17 @@ const Render = {
   // grown, only the new cells' corners are recomputed and blitted (fogSeen
   // is the layer's own copy of the group's bits).
   //
-  // Once the canvas has held still for FOG_BITMAP_SETTLE frames it is
-  // swapped for an ImageBitmap (see the chunked layers above).
+  // It is drawn from FOG_CHUNK-sized ImageBitmaps cut straight from the
+  // layer's ImageData, for the reason the chunked layers above give; only
+  // chunks whose pixels changed get a new one. fogCanvas is the stand-in for
+  // a chunk with no bitmap yet, and is only brought up to date for those.
   //
   // CULLING. No pass relies on the layer to hide anything: each also skips
   // what fogHides()/fogHidesAt() say is undiscovered. Those read fogSeen,
   // so they are only for passes draw() runs after updateFog(); anything
   // asked from outside a frame (hit-tests) goes through canSee().
   FOG_COLOR: [6, 10, 20],        // the backdrop draw() clears to, so the fog and the void past the map's edge are one
-  FOG_BITMAP_SETTLE: 30,
+  FOG_CHUNK: 256,                // layer pixels per bitmap each way
   FOG_SUB: 8,                    // layer pixels per vision cell each way
   FOG_PAD: 4,                    // border of repeated edge pixels, half a cell: drawFog()'s overrun past the map stays inside the image
   FOG_EDGE_LO: 0.8,              // blended corner opacity at or below which a pixel is clear
@@ -752,11 +754,12 @@ const Render = {
   fogH: 0,
   fogGroup: -1,
   fogSource: null,               // the Game.visionCells the layer was built from; a new match has a new one
-  fogBmp: null,
-  fogBmpPending: false,
+  fogChunks: [],
+  fogCols: 0,
+  fogRows: 0,
   fogNoBitmap: false,
-  fogGen: 0,
-  fogSteady: 0,
+  fogGen: 0,                     // bumped by resetFog(): a bitmap asked for before it is of the old layer
+  fogFrame: 0,                   // counts drawFog() calls
   fogNow: 0,                     // performance.now() sampled by updateFog() for this frame's fades
   fogInstant: false,             // set while corners should clear at once instead of easing
 
@@ -775,6 +778,7 @@ const Render = {
       this.fogCorners = new Float32Array((cw + 1) * (ch + 1));
       this.fogW = cw;
       this.fogH = ch;
+      this.makeFogChunks();
     }
     const c = this.FOG_COLOR;
     this.fogSeen.fill(0);
@@ -783,17 +787,78 @@ const Render = {
     this.fogFadeStart.length = 0;
     this.fogSeenCount = 0;
     this.fogPixels.fill(this.packed(c[0], c[1], c[2]));
-    this.fogCtx.putImageData(this.fogImage, 0, 0);
     this.fogGroup = g;
     this.fogSource = Game.visionCells;
-    this.fogChanged();
+    this.fogGen++;
+    this.dropFogBitmaps();
   },
 
-  // The canvas no longer matches any bitmap made from it, finished or not.
-  fogChanged() {
-    this.fogGen++;
-    this.fogSteady = 0;
-    if (this.fogBmp) { this.fogBmp.close(); this.fogBmp = null; }
+  // Each bitmap takes one pixel more than its chunk on every side, so the
+  // smoothing filter finds the neighbouring chunk's pixels at a seam.
+  makeFogChunks() {
+    const K = this.FOG_CHUNK, w = this.fogImage.width, h = this.fogImage.height;
+    this.dropFogBitmaps();
+    this.fogCols = Math.ceil(w / K);
+    this.fogRows = Math.ceil(h / K);
+    this.fogChunks = [];
+    for (let cy = 0; cy < this.fogRows; cy++) {
+      for (let cx = 0; cx < this.fogCols; cx++) {
+        const x = cx * K, y = cy * K, cw = Math.min(K, w - x), ch = Math.min(K, h - y);
+        const bx = Math.max(0, x - 1), by = Math.max(0, y - 1);
+        this.fogChunks.push({ x, y, w: cw, h: ch, bx, by, bw: Math.min(w, x + cw + 1) - bx, bh: Math.min(h, y + ch + 1) - by,
+                              bmp: null, dirty: true, pending: false, stale: true, frame: -2 });
+      }
+    }
+  },
+
+  // Every chunk goes back to the canvas until it has a bitmap of the pixels as they now are.
+  dropFogBitmaps() {
+    for (const c of this.fogChunks) {
+      if (c.bmp) { c.bmp.close(); c.bmp = null; }
+      c.dirty = c.stale = true;
+    }
+  },
+
+  // Layer pixels x0..x1, y0..y1 changed: flags each chunk whose bitmap holds any of them.
+  markFog(x0, y0, x1, y1) {
+    const K = this.FOG_CHUNK, cols = this.fogCols, chunks = this.fogChunks;
+    const cx0 = Math.max(0, ((x0 - 1) / K) | 0), cx1 = Math.min(cols - 1, ((x1 + 1) / K) | 0);
+    const cy0 = Math.max(0, ((y0 - 1) / K) | 0), cy1 = Math.min(this.fogRows - 1, ((y1 + 1) / K) | 0);
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const c = chunks[cy * cols + cx];
+        c.dirty = c.stale = true;
+      }
+    }
+  },
+
+  // Starts a new bitmap for a dirty chunk not already waiting on one. A chunk
+  // dirtied again while pending stays dirty and goes round once more.
+  refreshFogChunk(c) {
+    if (!c.dirty || c.pending || this.fogNoBitmap) return;
+    const gen = this.fogGen;
+    let req;
+    try {
+      req = createImageBitmap(this.fogImage, c.bx, c.by, c.bw, c.bh);
+    } catch (e) {
+      this.fogNoBitmap = true;     // no createImageBitmap: stamp the canvas
+      return;
+    }
+    c.dirty = false;
+    c.pending = true;
+    req.then(bmp => {
+      c.pending = false;
+      if (gen !== this.fogGen) { bmp.close(); return; }
+      if (c.bmp) c.bmp.close();
+      c.bmp = bmp;
+    }, () => { c.pending = false; this.fogNoBitmap = true; });
+  },
+
+  // Brings the canvas up to date under one chunk's bitmap rectangle.
+  flushFogChunk(c) {
+    if (!c.stale) return;
+    c.stale = false;
+    this.fogCtx.putImageData(this.fogImage, 0, 0, c.bx, c.by, c.bw, c.bh);
   },
 
   // Clears corner (i, j) of the vision grid if every cell meeting there (up to
@@ -869,11 +934,7 @@ const Render = {
     // A layer just rebuilt for a new match or viewer shows what is already
     // known straight away; only discoveries made while watching ease in.
     this.fogInstant = fresh;
-    if (need === 0) {
-      if (this.tickFogFade()) return;
-      if (!this.fogBmp && !this.fogBmpPending && ++this.fogSteady >= this.FOG_BITMAP_SETTLE) this.snapshotFog();
-      return;
-    }
+    if (need === 0) { this.tickFogFade(); return; }
     // Discovery is permanent, so a count that fell belongs to a different grid.
     if (need < 0) { this.resetFog(g); need = count; this.fogInstant = true; }
 
@@ -899,28 +960,19 @@ const Render = {
     this.fogSeenCount = count;
     if (maxX < 0) return;
     this.fogInstant = false;
-    this.fogBlit(minX, minY, maxX + 1, maxY + 1);
+    // Corners cleared at once belong to a layer resetFog() has just flagged
+    // whole; the easing ones are flagged as they move (tickFogFade).
+    this.fogPaint(minX, minY, maxX + 1, maxY + 1);
     this.tickFogFade();
   },
 
-  // Repaints corners i0..i1, j0..j1 and blits just that rectangle.
-  fogBlit(i0, j0, i1, j1) {
-    const S = this.FOG_SUB, P = this.FOG_PAD;
-    this.fogPaint(i0, j0, i1, j1);
-    // The rectangle fogPaint just wrote, in image pixels (border included).
-    const minX = i0, minY = j0, maxX = i1 - 1, maxY = j1 - 1;
-    const dx = minX > 1 ? (minX - 1) * S + P : 0, dy = minY > 1 ? (minY - 1) * S + P : 0;
-    const ex = maxX + 2 < this.fogW ? (maxX + 2) * S + P : this.fogW * S + 2 * P;
-    const ey = maxY + 2 < this.fogH ? (maxY + 2) * S + P : this.fogH * S + 2 * P;
-    this.fogCtx.putImageData(this.fogImage, 0, 0, dx, dy, ex - dx + 1, ey - dy + 1);
-    this.fogChanged();
-  },
-
-  // Advances every easing corner and repaints the rectangle they span.
-  // Returns whether anything was fading.
+  // Advances every easing corner and repaints the rectangle they span. Only
+  // the chunks a corner actually lies in are flagged: discoveries far apart
+  // span most of the map between them.
   tickFogFade() {
     const idx = this.fogFadeIdx, start = this.fogFadeStart, n = idx.length;
-    if (n === 0) return false;
+    if (n === 0) return;
+    const S = this.FOG_SUB, P = this.FOG_PAD;
     const cs = this.fogW + 1, now = this.fogNow, corners = this.fogCorners, dur = this.FOG_FADE_MS;
     let i0 = cs, j0 = this.fogH + 1, i1 = -1, j1 = -1, keep = 0;
     for (let k = 0; k < n; k++) {
@@ -942,29 +994,12 @@ const Render = {
       if (x > i1) i1 = x;
       if (y < j0) j0 = y;
       if (y > j1) j1 = y;
+      // A corner reaches one cell each way, and the border beyond at an edge.
+      this.markFog((x - 1) * S, (y - 1) * S, (x + 1) * S + 2 * P, (y + 1) * S + 2 * P);
     }
     idx.length = keep;
     start.length = keep;
-    this.fogBlit(i0, j0, i1, j1);
-    return true;
-  },
-
-  snapshotFog() {
-    if (this.fogNoBitmap) return;
-    const gen = this.fogGen;
-    let req;
-    try {
-      req = createImageBitmap(this.fogCanvas);
-    } catch (e) {
-      this.fogNoBitmap = true;     // no createImageBitmap: keep stamping the canvas
-      return;
-    }
-    this.fogBmpPending = true;
-    req.then(bmp => {
-      this.fogBmpPending = false;
-      if (gen !== this.fogGen) { bmp.close(); return; }   // the fog moved on while this was being made
-      this.fogBmp = bmp;
-    }, () => { this.fogBmpPending = false; this.fogNoBitmap = true; });
+    this.fogPaint(i0, j0, i1, j1);
   },
 
   // Is `tile` hidden from the viewer? Only meaningful while `fogged`.
@@ -1005,12 +1040,50 @@ const Render = {
 
     const smooth = ctx.imageSmoothingEnabled;
     ctx.imageSmoothingEnabled = true;
-    ctx.setTransform(s, 0, 0, s, cw / 2 - this.cam.x * s, ch / 2 - this.cam.y * s);
+    const tx = cw / 2 - this.cam.x * s, ty = ch / 2 - this.cam.y * s;
     // Corner i is pixel i, whose centre is at i + 0.5 in the image: the half
     // pixel of offset lines the pixel centres up with the cell corners.
-    const S = this.FOG_SUB, P = this.FOG_PAD;
-    ctx.drawImage(this.fogBmp || this.fogCanvas, x0 * S + 0.5 + P, y0 * S + 0.5 + P, (x1 - x0) * S, (y1 - y0) * S,
-                  x0 * C, y0 * C, (x1 - x0) * C, (y1 - y0) * C);
+    const S = this.FOG_SUB, P = this.FOG_PAD, off = 0.5 + P, k = C / S;
+    const u0 = x0 * S + off, v0 = y0 * S + off, u1 = x1 * S + off, v1 = y1 * S + off;
+    if (this.fogNoBitmap) {
+      for (const c of this.fogChunks) this.flushFogChunk(c);
+      ctx.setTransform(s, 0, 0, s, tx, ty);
+      ctx.drawImage(this.fogCanvas, u0, v0, u1 - u0, v1 - v0, x0 * C, y0 * C, (x1 - x0) * C, (y1 - y0) * C);
+    } else {
+      const frame = ++this.fogFrame;
+      for (const c of this.fogChunks) {
+        const a0 = Math.max(u0, c.x), a1 = Math.min(u1, c.x + c.w);
+        const b0 = Math.max(v0, c.y), b1 = Math.min(v1, c.y + c.h);
+        if (a1 <= a0 || b1 <= b0) continue;
+        // Off screen last frame, so its bitmap may be any age: showing that
+        // for a frame would flash fog over ground discovered since.
+        if (c.dirty && c.bmp && c.frame !== frame - 1) { c.bmp.close(); c.bmp = null; }
+        c.frame = frame;
+        this.refreshFogChunk(c);
+        // The chunk's share of the screen, on whole device pixels: an
+        // antialiased edge would let the map show through along the seam.
+        const dx0 = Math.round((a0 - off) * k * s + tx), dx1 = Math.round((a1 - off) * k * s + tx);
+        const dy0 = Math.round((b0 - off) * k * s + ty), dy1 = Math.round((b1 - off) * k * s + ty);
+        if (dx1 <= dx0 || dy1 <= dy0) continue;
+        // Drawn a pixel wider than that and clipped back to it, so the filter
+        // blends across the seam instead of stopping at the source's edge.
+        const sx0 = Math.max(a0 - 1, c.bx), sx1 = Math.min(a1 + 1, c.bx + c.bw);
+        const sy0 = Math.max(b0 - 1, c.by), sy1 = Math.min(b1 + 1, c.by + c.bh);
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.beginPath();
+        ctx.rect(dx0, dy0, dx1 - dx0, dy1 - dy0);
+        ctx.clip();
+        ctx.setTransform(s, 0, 0, s, tx, ty);
+        const X = (sx0 - off) * k, Y = (sy0 - off) * k, W = (sx1 - sx0) * k, H = (sy1 - sy0) * k;
+        if (c.bmp) ctx.drawImage(c.bmp, sx0 - c.bx, sy0 - c.by, sx1 - sx0, sy1 - sy0, X, Y, W, H);
+        else {
+          this.flushFogChunk(c);
+          ctx.drawImage(this.fogCanvas, sx0, sy0, sx1 - sx0, sy1 - sy0, X, Y, W, H);
+        }
+        ctx.restore();
+      }
+    }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = smooth;
   },
