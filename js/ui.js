@@ -2654,8 +2654,9 @@ const UI = {
   // it is written once per use rather than on every keystroke. Empty means the
   // caller falls back to its own default.
   getPlayerName() {
-    const name = (document.getElementById('playerName').value || '').trim();
+    let name = (document.getElementById('playerName').value || '').trim();
     if (name) { try { localStorage.setItem('borderwar_username', name); } catch (e) { /* ignore */ } }
+    else name = this.randoName();
     // The optional team tag rides in the name as "[TAG] name" (OpenFront's
     // clan-tag convention), so it needs no protocol change; the sim reads it
     // back out in Teams.tagOf.
@@ -2666,11 +2667,24 @@ const UI = {
     // the player to another browser. Best effort; a name the server refuses
     // (it is stricter than this field) just stays local.
     const user = Account.user;
-    if (user && ((name && name !== user.displayName) || tag !== user.tag)) {
-      Account.saveProfile(name ? { displayName: name, tag: tag } : { tag: tag }).catch(() => {});
+    const typed = (document.getElementById('playerName').value || '').trim();
+    if (user && ((typed && typed !== user.displayName) || tag !== user.tag)) {
+      Account.saveProfile(typed ? { displayName: typed, tag: tag } : { tag: tag }).catch(() => {});
     }
     if (tag.length < 2) return name;
-    return '[' + tag + '] ' + (name || 'Player');
+    return '[' + tag + '] ' + name;
+  },
+
+  // Anonymous players (empty name field) get a random "Rando-Name" per game.
+  randoName() {
+    const names = ['Joe', 'Jim', 'Bob', 'Sam', 'Tim', 'Ned', 'Stan', 'Walt', 'Gus', 'Hank',
+      'Earl', 'Cliff', 'Dave', 'Pete', 'Fred', 'Moe', 'Lou', 'Ray', 'Abe', 'Chuck',
+      'Doug', 'Ed', 'Frank', 'Greg', 'Hugo', 'Ike', 'Jeb', 'Kyle', 'Lenny', 'Max',
+      'Norm', 'Otto', 'Phil', 'Rick', 'Seth', 'Todd', 'Vic', 'Wes', 'Zeke', 'Barry',
+      'Al', 'Bert', 'Carl', 'Dale', 'Elmer', 'Floyd', 'Gary', 'Homer', 'Irv', 'Jules',
+      'Ken', 'Larry', 'Mort', 'Nate', 'Oz', 'Pat', 'Quinn', 'Roy', 'Skip', 'Ted',
+      'Hal', 'Vern', 'Wade', 'Xavier', 'Yuri', 'Zach', 'Boyd', 'Cecil', 'Duke', 'Eli'];
+    return 'Rando-' + names[Math.floor(Math.random() * names.length)];
   },
 
   // Read the host panel's controls into the shape `start_game` carries
