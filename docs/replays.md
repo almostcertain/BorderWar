@@ -55,8 +55,8 @@ no second sim path.
 
 Forward is `LocalServer.burst`. Backward restarts the match from turn 0 and
 bursts to the target, because the sim only runs forward and has no snapshot or
-restore. While a seek runs, `main.js` gives the sim 48 ms of each frame (instead
-of 8) and refills the turn queue itself through `LocalServer.pumpNow`.
+restore. While a seek runs, `main.js` gives the sim 100 ms of each frame (instead
+of 8), draws at most every 250 ms, and refills the turn queue itself through `LocalServer.pumpNow`.
 
 Measured 2026-10-04 in the Browser pane:
 

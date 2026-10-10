@@ -15,7 +15,9 @@
   // The same budget while a replay is seeking (js/replay.js). A jump is a
   // long run of turns the viewer is waiting on, so the sim gets most of the
   // frame and the picture drops to a few frames a second until it arrives.
-  const SEEK_BUDGET_MS = 48;
+  const SEEK_BUDGET_MS = 100;
+  // While seeking, draw at most this often so the sim keeps the frame.
+  const SEEK_DRAW_MS = 250;
 
   // performance.now() at the moment the most recent turn finished executing.
   // Only ever used for render smoothing — see Game.renderElapsed below.
@@ -591,6 +593,7 @@
       Progress.sample();
     }
     Replay.frame();
+    if (Replay.seeking() && now - lastDrawAt < SEEK_DRAW_MS) return;
 
     // Catch-up banner: a readout of what the drain loop left pending. Only
     // visible during a rejoin-sized backlog. A replay shows its own seek bar.

@@ -2447,9 +2447,13 @@ const UI = {
     const seek = $('replaySeek');
     const len = Replay.length();
     if (+seek.max !== len) seek.max = len;
-    if (!this._replayDragging) seek.value = Replay.turn();
-    $('replayTime').textContent = (Replay.seeking() ? 'Seeking ' : '') +
-      this.replayClock(this._replayDragging ? +seek.value : Replay.turn()) + ' / ' + this.replayClock(len);
+    // While a seek runs the bar sits on its target, not on the climbing turn.
+    const shown = Replay.seeking() ? Replay.seekTarget : Replay.turn();
+    if (!this._replayDragging) seek.value = shown;
+    const pct = Replay.seeking() && Replay.seekTarget > 0
+      ? ' ' + Math.floor(100 * Replay.turn() / Replay.seekTarget) + '%' : '';
+    $('replayTime').textContent = (Replay.seeking() ? 'Seeking' + pct + ' ' : '') +
+      this.replayClock(this._replayDragging ? +seek.value : shown) + ' / ' + this.replayClock(len);
 
     const waiting = Replay.paused || Replay.ended();
     const play = $('replayPlay');
