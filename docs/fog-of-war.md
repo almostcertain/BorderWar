@@ -199,7 +199,7 @@ it goes in the desync hash.
   Map or Set iteration.
 
 Starting values, all tuning dials: cell 8 tiles, border sight 3 cells, scout
-sight 5 cells, warship sight 3 cells, radio tower sight 12 cells.
+sight 5 cells, warship sight 3 cells, radio tower sight 18 cells (12 at first, raised for a wider reveal).
 
 #### As built (task 2)
 
@@ -568,8 +568,8 @@ the dual run, 111 launches a run).
   Hotkey R, fog matches only.
 - **Price.** Linear like the Fort: 50k, 100k, 150k, 200k, then 250k. Builds
   in 5 seconds. Not upgradable.
-- **The reveal** is one `revealAround` with `VISION_SIGHT_RADIO` (12 cells,
-  about 100 tiles) in `updateConstruction`, when the tower finishes. It goes
+- **The reveal** is one `revealAround` with `VISION_SIGHT_RADIO` (18 cells,
+  about 145 tiles) in `updateConstruction`, when the tower finishes. It goes
   to whoever owns the tile at that moment, so a tower overrun while it is
   being built reveals for its captor. A finished tower that is captured
   changes hands like a City and reveals nothing more. Allies get the reveal

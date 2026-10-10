@@ -50,7 +50,7 @@ Object.assign(Game, {
   VISION_SIGHT_BORDER: 3,
   VISION_SIGHT_SCOUT: 5,
   VISION_SIGHT_WARSHIP: 3,
-  VISION_SIGHT_RADIO: 12,
+  VISION_SIGHT_RADIO: 18,
 
   // Per-match state, built by initVision. All of it is null/0 in a fog-off
   // match.
