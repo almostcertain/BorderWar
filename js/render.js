@@ -1680,8 +1680,8 @@ const Render = {
       // missile slots work the same way (Game.siloFreeSlots).
       if (b.built && (b.type === 'sam' || b.type === 'silo')) {
         const ready = b.type === 'sam' ? b.level - b.samQueue.length : Game.siloFreeSlots(b);
-        const pipR = Math.max(1.5 * this.dpr, r * 0.12);
-        const gap = pipR * 2.6;
+        const pipR = Math.max(2.5 * this.dpr, r * 0.2);
+        const gap = pipR * 2.5;
         // Clear the upgrade progress bar (drawn just above, while
         // b.upgrading) instead of overlapping it — a SAM can be mid-upgrade
         // and still have charges to show at the same time.
