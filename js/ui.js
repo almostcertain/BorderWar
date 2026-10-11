@@ -81,7 +81,8 @@ const UI = {
   // data and the goldens hash it. Numbers are read from the sim's constants so
   // a balance change cannot leave a tip behind.
   UNIT_TIPS: {
-    city: () => 'Raises your maximum population. Tap one you own to upgrade it. Each City or upgrade costs more than the last.',
+    city: () => 'Raises your maximum population. Tap one you own to upgrade it. Each City or upgrade costs more than the last. At level ' +
+      Game.SPEC_MIN_LEVEL + ' a City can specialize.',
     factory: () => 'Lays rail to nearby Cities and runs trains between them. Every train pays gold, and a train to another nation pays both of you.',
     port: () => 'Built on the coast. Sends trade ships to other nations\' Ports, paying both sides gold; longer routes pay more. Needed to launch ships.',
     fort: () => 'Defends your land within ' + Game.FORT_RANGE + ' tiles: it costs attackers ' + Game.FORT_DEF_MULT +
@@ -215,6 +216,12 @@ const UI = {
     document.getElementById('debugPeace').addEventListener('click', () => this.armDebugPeace());
     document.getElementById('debugForfeit').addEventListener('click', () => this.debugForfeit());
 
+    document.getElementById('specClose').addEventListener('click', () => this.closeSpecPanel());
+    document.getElementById('specList').addEventListener('click', e => {
+      const btn = e.target.closest('button[data-spec]');
+      if (btn) this.chooseSpec(btn.dataset.spec);
+    });
+
     // Hotkeys, one digit per structure in bar order, and Escape to disarm.
     // Guarded on the focused element so typing a bot count in the start menu
     // cannot arm a build.
@@ -224,6 +231,7 @@ const UI = {
       if (e.key === 'Escape') {
         // The capture-phase handler in initGameMenu already used this press.
         if (e._menuHandled) return;
+        if (this.specTile >= 0) { this.closeSpecPanel(); return; }
         const armed = this.cancelPlacing();
         const selected = this.selectedWarships.size + this.selectedScouts.size > 0;
         this.clearShipSelection();
@@ -696,6 +704,7 @@ const UI = {
   },
 
   reset() {
+    this.closeSpecPanel();
     this.diplo = null;
     this.dismissed.clear();
     this.placing = null;
@@ -1130,6 +1139,15 @@ const UI = {
       return;
     }
 
+    // A tap with the chooser open only puts it away.
+    if (this.specTile >= 0) { this.closeSpecPanel(); return; }
+    const city = Render.findStructureNear(sx, sy, 'city');
+    if (city && city.built && GameMap.owner[city.tile] === Game.me) {
+      if (city.spec || city.level >= Game.SPEC_MIN_LEVEL) this.openSpecPanel(city.tile);
+      else this.flash('Upgrade this City to level ' + Game.SPEC_MIN_LEVEL + ' to specialize it');
+      return;
+    }
+
     const tile = Render.screenToTile(sx, sy);
     if (tile < 0) return;
     // Fog: a plain tap on the black does nothing at all. Anything it did would
@@ -1174,6 +1192,91 @@ const UI = {
     Transport.sendIntent(Protocol.intent.attack(target, troops, tile));
   },
 
+  // --- City specialization chooser (docs/city-specialization.md) -------------
+  // The city the chooser is open on, or -1.
+  specTile: -1,
+
+  // What each specialization gives a city of `level`, read from the sim's
+  // dials so a balance change cannot leave the text behind.
+  specEffect(type, level) {
+    if (type === 'metropolis') {
+      return '+' + formatPop(level * Game.METROPOLIS_POP_PER_LEVEL * Game.POP_SCALE) + ' troop cap';
+    }
+    if (type === 'tradehub') {
+      return '+' + Math.round(level * Game.TRADEHUB_GOLD_PER_LEVEL * 100) + '% gold from trains stopping here';
+    }
+    if (type === 'treasury') return '+' + formatGold(level * Game.TREASURY_GOLD_PER_LEVEL) + ' gold per second';
+    return '+' + Math.round(Math.min(Game.GARRISON_GROWTH_CAP, level * Game.GARRISON_GROWTH_PER_LEVEL) * 100) +
+      '% troop growth';
+  },
+
+  openSpecPanel(tile) {
+    this.specTile = tile;
+    this._specKey = '';
+    document.getElementById('specPanel').classList.remove('hidden');
+    this.updateSpecPanel();
+  },
+
+  closeSpecPanel() {
+    this.specTile = -1;
+    document.getElementById('specPanel').classList.add('hidden');
+  },
+
+  chooseSpec(type) {
+    if (this.specTile < 0) return;
+    const reason = Game.specializeBlockReason(Game.me, this.specTile, type);
+    if (reason) { this.flash(reason); return; }
+    Transport.sendIntent(Protocol.intent.specializeStructure(this.specTile, type));
+    this.closeSpecPanel();
+  },
+
+  // Per frame while open: follows the city on screen, and redraws the
+  // contents only when something shown has changed.
+  updateSpecPanel() {
+    if (this.specTile < 0) return;
+    const b = Game.buildings.get(this.specTile);
+    const me = Game.players[Game.me];
+    if (!b || !me || b.type !== 'city' || GameMap.owner[b.tile] !== Game.me || Replay.active) {
+      this.closeSpecPanel();
+      return;
+    }
+    const cost = Game.specCost(me), afford = me.gold >= cost;
+    const key = b.level + '|' + (b.spec || '') + '|' + cost + '|' + afford;
+    if (key !== this._specKey) {
+      this._specKey = key;
+      const row = (s, tag, attrs) =>
+        `<${tag} class="specOpt"${attrs}>${iconHtml('spec-' + s.type)}<span class="specText">` +
+        `<b>${s.name}</b><small>${this.specEffect(s.type, b.level)}</small></span></${tag}>`;
+      const title = document.getElementById('specTitle');
+      const list = document.getElementById('specList');
+      const foot = document.getElementById('specFoot');
+      if (b.spec) {
+        title.textContent = 'Level ' + b.level + ' City';
+        list.innerHTML = row(Game.specDef(b.spec), 'div', '');
+        foot.textContent = 'Grows with every City level';
+      } else {
+        title.textContent = 'Specialize this City';
+        list.innerHTML = Game.SPECS.map(s =>
+          row(s, 'button', ` type="button" data-spec="${s.type}"${afford ? '' : ' disabled'}`)).join('');
+        foot.innerHTML = iconHtml('gold') + ' ' + formatGold(cost) +
+          (afford ? '' : ' (not enough gold)') + ' · permanent · the next one costs double';
+      }
+    }
+    // Beside the city: right of it when there is room, else left.
+    const el = document.getElementById('specPanel');
+    const w = GameMap.width;
+    const cx = (b.tile % w + 0.5 - Render.cam.x) * Render.cam.scale + window.innerWidth / 2;
+    const cy = (((b.tile / w) | 0) + 0.5 - Render.cam.y) * Render.cam.scale + window.innerHeight / 2;
+    const gap = Render.structureRadius() * 1.6 + 8;
+    const pw = el.offsetWidth, ph = el.offsetHeight;
+    let x = cx + gap;
+    if (x + pw > window.innerWidth - 8) x = cx - gap - pw;
+    x = Math.max(8, Math.min(window.innerWidth - pw - 8, x));
+    const y = Math.max(8, Math.min(window.innerHeight - ph - 8, cy - ph / 2));
+    el.style.left = Math.round(x) + 'px';
+    el.style.top = Math.round(y) + 'px';
+  },
+
   // How far (in sea-route tiles, from our nearest coast to the landing tile)
   // a plain tap will send a boat on its own. Boats sail 10 tiles/sec
   // (Game.BOAT_SPEED), so 60 is a ~6s crossing: a strait or a nearby island,
@@ -1209,6 +1312,7 @@ const UI = {
   update() {
     const me = Game.players[Game.me];
     if (!me) return;
+    this.updateSpecPanel();
 
     // Dev-only cheats: shown for the whole match, hidden before one exists
     // and whenever the transport is not local (see the DEBUG BYPASS notes in

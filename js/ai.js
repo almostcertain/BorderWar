@@ -582,6 +582,13 @@ const AI = {
         continue;
       }
 
+      // Going tall toward a specialization: same price and troop cap as a
+      // new City (docs/city-specialization.md).
+      if (type === 'city') {
+        const flagship = this.specFlagship(p);
+        if (flagship >= 0 && Game.canUpgrade(p.id, flagship)) { Game.upgrade(p.id, flagship); continue; }
+      }
+
       let tile = -1;
       if (pool.length > 1) {
         const cost = Game.unitCost(p, type), order = [type, type === 'port' ? 'factory' : 'port'];
@@ -606,6 +613,8 @@ const AI = {
         if (upgradeTile >= 0 && Game.canUpgrade(p.id, upgradeTile)) Game.upgrade(p.id, upgradeTile);
       }
     }
+
+    this.maybeSpecialize(p, reserve);
 
     // `action` units need their own site/target selection and purchase
     // call. A Warship needs a Port (Game.resolveWarshipLaunch); checked here
@@ -1504,6 +1513,44 @@ const AI = {
       if (water >= 0) return water;
     }
     return -1;
+  },
+
+  // A nation aims for one specialization per this many city levels held.
+  SPEC_CITY_LEVELS: 4,
+
+  // The City to upgrade toward SPEC_MIN_LEVEL: the highest-level one with no
+  // specialization (first in build order on a tie). -1 when the nation has
+  // its share of specializations, or already has a City ready for one.
+  specFlagship(p) {
+    if (p.spec.held >= Math.floor(Game.unitsOwned(p, 'city') / this.SPEC_CITY_LEVELS)) return -1;
+    let best = -1, bestLevel = 0;
+    for (const b of Game.buildings.values()) {
+      if (b.type !== 'city' || !b.built || b.spec || GameMap.owner[b.tile] !== p.id) continue;
+      if (b.level + (b.upgrading ? 1 : 0) >= Game.SPEC_MIN_LEVEL) return -1;
+      if (!b.upgrading && b.level > bestLevel) { bestLevel = b.level; best = b.tile; }
+    }
+    return best;
+  },
+
+  // Specializes the first City that is ready, once the fee fits over the
+  // savings reserve.
+  maybeSpecialize(p, reserve) {
+    if (p.gold - reserve < Game.specCost(p)) return;
+    for (const b of Game.buildings.values()) {
+      if (b.type !== 'city' || b.spec || GameMap.owner[b.tile] !== p.id) continue;
+      if (Game.specializeBlockReason(p.id, b.tile)) continue;
+      Game.specialize(p.id, b.tile, this.pickSpec(p, b));
+      return;
+    }
+  },
+
+  // Trade Hub on a rail junction; otherwise whichever of the other three the
+  // nation holds the fewest levels of.
+  pickSpec(p, b) {
+    if (b.station && b.rails.size >= 2) return 'tradehub';
+    let best = 'metropolis';
+    for (const t of ['garrison', 'treasury']) if (p.spec[t] < p.spec[best]) best = t;
+    return best;
   },
 
   warshipCount(p) {

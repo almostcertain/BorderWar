@@ -182,6 +182,13 @@ const Executor = {
       return Game.upgrade(playerId, it.tile);
     },
 
+    // specializeBlockReason covers ownership, level, already-specialized
+    // and gold.
+    specialize_structure(playerId, it) {
+      if (!Executor._tileOnMap(it.tile)) return false;
+      return Game.specialize(playerId, it.tile, it.spec);
+    },
+
     // Game.moveWarships. The fleet arrives as ids. Ids that name nothing
     // (sunk since the click) or someone else's ship are dropped from the list
     // rather than failing the order. An order left with no ships is dropped

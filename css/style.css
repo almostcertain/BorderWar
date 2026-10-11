@@ -646,6 +646,48 @@ body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pau
 }
 .tipBody { opacity: 0.85; }
 
+/* --- City specialization chooser ------------------------------------------- */
+
+#specPanel {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 9;
+  width: 270px;
+  max-width: calc(100vw - 16px);
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(8, 14, 26, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+}
+#specHead { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 6px; font-weight: 700; }
+#specHead .linkBtn { margin: 0; padding: 0 2px; font-size: 13px; }
+#specList { display: flex; flex-direction: column; gap: 4px; }
+.specOpt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.specOpt { cursor: pointer; }
+button.specOpt:hover:not(:disabled) { background: rgba(255, 205, 110, 0.18); border-color: rgba(255, 205, 110, 0.55); }
+button.specOpt:disabled { opacity: 0.45; cursor: default; }
+.specOpt .ic { width: 26px; height: 26px; flex: 0 0 auto; }
+.specText { display: flex; flex-direction: column; line-height: 1.25; }
+.specText small { opacity: 0.7; font-size: 12px; }
+#specFoot { padding: 7px 4px 1px; font-size: 11px; opacity: 0.75; }
+#specFoot .ic { width: 1.1em; height: 1.1em; vertical-align: -0.15em; }
+
 /* --- Hover panel: quick stats for the nation under the cursor -------------- */
 
 /* 2x throughout — the original 220px/13px reading was too small to make out

@@ -342,6 +342,10 @@ const Game = {
         // without this, price doubling would only bite once the first of a
         // batch actually completes, since `units` itself stays put till then.
         unitsPending: { city: 0, fort: 0, factory: 0, port: 0 },
+        // City specializations (specialize.js): levels held per type, and
+        // the lifetime purchase count the fee prices against.
+        spec: { held: 0, metropolis: 0, tradehub: 0, treasury: 0, garrison: 0 },
+        specsBought: 0,
         tiles: new Set(),
         // Owned tiles with at least one non-owned neighbour — kept in sync by
         // setOwner's border bookkeeping. refreshFrontier scans this instead
@@ -751,6 +755,8 @@ const Game = {
     this._seaPathNodesThisTick = 0;
     this._coastPathMemo.clear();
     this._inTick = true;
+
+    this.updateSpecTotals();
 
     for (const p of this.players) {
       if (!p.alive) continue;

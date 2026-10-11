@@ -45,7 +45,8 @@ const Render = {
   // Bespoke SVG icons (assets/icons/) instead of emoji, which differ per
   // platform and are slow to draw in Firefox on Windows. Each icon is
   // rasterised once per whole-pixel size and stamped with drawImage.
-  ICON_NAMES: ['ally', 'teammate', 'target', 'traitor', 'embargo', 'expiring', 'drill'],
+  ICON_NAMES: ['ally', 'teammate', 'target', 'traitor', 'embargo', 'expiring', 'drill',
+    'spec-ready', 'spec-metropolis', 'spec-tradehub', 'spec-treasury', 'spec-garrison'],
   iconImages: null,
   iconCache: new Map(),
 
@@ -1673,6 +1674,18 @@ const Render = {
         const img = this.levelBadge(b.level, badgeFont);
         const ly = py - r - badgeFont * 0.85;
         ctx.drawImage(img, Math.round(px - img.width / 2), Math.round(ly - img.height / 2));
+      }
+
+      // A City's specialization at the disc's upper right, or a pulsing star
+      // on one of the viewer's own that is ready to take one.
+      if (b.type === 'city' && b.built) {
+        const ready = !b.spec && owner === Game.me && b.level >= Game.SPEC_MIN_LEVEL;
+        const mark = (b.spec || ready) && this.icon(b.spec ? 'spec-' + b.spec : 'spec-ready', Math.max(12 * this.dpr, r));
+        if (mark) {
+          if (ready) ctx.globalAlpha = 0.7 + 0.3 * Math.sin(Game.renderElapsed * 5);
+          ctx.drawImage(mark, Math.round(px + r * 0.45), Math.round(py - r * 0.75 - mark.height / 2));
+          ctx.globalAlpha = 1;
+        }
       }
 
       // Charge pips below the disc, one per level: filled = ready, hollow =

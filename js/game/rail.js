@@ -581,7 +581,7 @@ Object.assign(Game, {
         if (b && (b.type === 'city' || b.type === 'port')) {
           const stationOwnerId = GameMap.owner[stop.tile];
           const rel = this.tradeRel(t.owner, stationOwnerId);
-          const gold = this.trainGold(t.stopsVisited, rel);
+          const gold = this.specTrainGold(b, this.trainGold(t.stopsVisited, rel));
           // TradeStationStopHandler: the train's own player always earns the
           // trip's gold, and if the station belongs to someone else, THEY
           // separately earn the same amount — a real two-way payout, not a

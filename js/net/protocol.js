@@ -46,6 +46,9 @@ const Protocol = {
     'silo', 'atombomb', 'hydrogenbomb', 'sam', 'mirv', 'scout', 'drill', 'radio'
   ],
 
+  // City specializations; mirrors Game.SPECS (game/specialize.js).
+  SPEC_TYPES: ['metropolis', 'tradehub', 'treasury', 'garrison'],
+
   // The procedural generator's lobby knobs, carried as config.mapGen on
   // `start_game` and in gameStartInfo (js/map.js's resolveGenOptions reads
   // them; docs/procedural-maps.md describes each). The first value of each is
@@ -122,6 +125,13 @@ const Protocol = {
     unit(v, P) {
       if (typeof v !== 'string') return 'must be a string';
       if (P.UNIT_TYPES.indexOf(v) === -1) return 'unknown unit type "' + v + '"';
+      return null;
+    },
+
+    // One of SPEC_TYPES.
+    spec(v, P) {
+      if (typeof v !== 'string') return 'must be a string';
+      if (P.SPEC_TYPES.indexOf(v) === -1) return 'unknown specialization "' + v + '"';
       return null;
     },
 
@@ -234,6 +244,11 @@ const Protocol = {
       fields: { tile: 'tile' },
       from: 'ui.js:465 Game.upgrade',
       openfront: 'UpgradeStructureIntentSchema'
+    },
+    specialize_structure: {
+      fields: { tile: 'tile', spec: 'spec' },
+      from: 'Game.specialize',
+      openfront: null
     },
     move_warship: {
       fields: { unitIds: 'entityIdList', tile: 'tile' },
@@ -440,6 +455,7 @@ const Protocol = {
     cancelBoat(boatID) { return { type: 'cancel_boat', boatID: boatID }; },
     buildUnit(unit, tile) { return { type: 'build_unit', unit: unit, tile: tile }; },
     upgradeStructure(tile) { return { type: 'upgrade_structure', tile: tile }; },
+    specializeStructure(tile, spec) { return { type: 'specialize_structure', tile: tile, spec: spec }; },
     // The list is copied, not aliased: a caller passing
     // Array.from(UI.selectedWarships) must not be able to mutate an intent
     // that has already been queued for a turn.

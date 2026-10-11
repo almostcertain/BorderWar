@@ -68,7 +68,7 @@ Object.assign(Game, {
   },
 
   maxTroops(p) {
-    const raw = this.maxTroopsRaw(p.tiles.size, this.unitsOwned(p, 'city'));
+    const raw = this.maxTroopsRaw(p.tiles.size, this.unitsOwned(p, 'city')) + this.specPopBonus(p);
     const mult = p.isTribe ? this.TRIBE_TROOP_CAP_MULT : (p.isBot ? this.nationDifficulty().capMult : 1);
     return raw * mult * this.POP_SCALE;
   },
@@ -100,7 +100,7 @@ Object.assign(Game, {
     // over too — maxTroops(probe) recomputes the cap from scratch, and if the
     // Nation difficulty multiplier dropped out here the probe would scan a
     // different (larger) cap than the player it's standing in for.
-    const probe = { tiles: p.tiles, troops: 0, id: -1, units: p.units, isBot: p.isBot, isTribe: p.isTribe };
+    const probe = { tiles: p.tiles, troops: 0, id: -1, units: p.units, spec: p.spec, isBot: p.isBot, isTribe: p.isTribe };
     let bestR = 0.42, best = -1;
     for (let r = 0.15; r <= 0.75; r += 0.005) {
       probe.troops = r * max;
@@ -128,6 +128,7 @@ Object.assign(Game, {
     // (larger) cut instead — see TRIBE_GROWTH_MULT.
     if (p.isTribe) perTick *= this.TRIBE_GROWTH_MULT;
     else if (p.isBot) perTick *= this.nationDifficulty().growthMult;
+    perTick *= this.specGrowthMult(p);
     return perTick * this.POP_SCALE * this.TICKS_PER_SEC * this.GROWTH_TIME_SCALE;
   },
 
@@ -146,7 +147,7 @@ Object.assign(Game, {
   // whose last tile is gone can stay technically alive for a while (the
   // death sweep also wants its troops under 20) and has nothing to tax.
   goldPerSecond(p) {
-    return p && p.alive && p.tiles.size > 0 ? this.GOLD_PER_SEC : 0;
+    return p && p.alive && p.tiles.size > 0 ? this.GOLD_PER_SEC + this.specGoldPerSecond(p) : 0;
   },
 
 });

@@ -326,7 +326,9 @@ Object.assign(Game, {
       // reloading, capped at `level` (the SAM is in cooldown when
       // queue.length === level). samRangeUpgrade holds the in-progress range
       // ramp after a level-up (null once settled); see dynamicSamRange.
-      samQueue: [], samRangeUpgrade: null
+      samQueue: [], samRangeUpgrade: null,
+      // City-only (specialize.js).
+      spec: null
     });
     // The lifetime counter unitCost actually prices against — see unitCost's
     // comment. Only this call site and upgrade() touch it; setOwner()'s
