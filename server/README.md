@@ -64,6 +64,7 @@ last 14. To restore, stop the server and copy a backup over `borderwar.db`
 Run these on the host; they are safe while the server is up:
 
 ```
+node server/accounts/admin.js stats                    # total accounts, new in the last 24 h / 7 days
 node server/accounts/admin.js export <email>           # a player's data as JSON (data requests)
 node server/accounts/admin.js reset-password <email>   # temporary password, signs them out
 node server/accounts/admin.js revoke-sessions <email>  # sign one account out everywhere

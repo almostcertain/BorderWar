@@ -337,6 +337,20 @@ test('admin: export, reset password, revoke sessions', async () => {
   db.close();
 });
 
+test('admin: account stats count total and recent signups', () => {
+  const admin = require('./admin');
+  const db = dbModule.open(':memory:');
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = 100 * DAY;
+  assert.deepStrictEqual(admin.accountStats(db, () => now), { total: 0, last24h: 0, last7d: 0 });
+  const ins = db.prepare('INSERT INTO users (email, pass_hash, display_name, created_at) VALUES (?, ?, ?, ?)');
+  ins.run('a@b.co', 'x', 'A', now - 1000);          // today
+  ins.run('b@b.co', 'x', 'B', now - 3 * DAY);       // this week
+  ins.run('c@b.co', 'x', 'C', now - 30 * DAY);      // older
+  assert.deepStrictEqual(admin.accountStats(db, () => now), { total: 3, last24h: 1, last7d: 2 });
+  db.close();
+});
+
 test('backup: one file a day, oldest pruned, restorable', () => {
   const fs = require('fs'), os = require('os'), path = require('path');
   const backup = require('./backup');

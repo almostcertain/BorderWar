@@ -246,6 +246,12 @@
     $('build').textContent = 'build ' + (s.server.build || '?');
     var t = $('tiles');
     t.textContent = '';
+    var acc = s.totals.accounts;
+    if (acc) {
+      t.appendChild(tile(acc.total, 'accounts'));
+      t.appendChild(tile(acc.last24h, 'new accounts, 24 h'));
+      t.appendChild(tile(acc.last7d, 'new accounts, 7 days'));
+    }
     t.appendChild(tile(s.totals.players, 'in multiplayer'));
     t.appendChild(tile(s.totals.solo || 0, 'in single player'));
     t.appendChild(tile(s.totals.spectators, 'spectators'));

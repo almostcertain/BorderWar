@@ -1,6 +1,7 @@
 // Owner's command line for accounts (AU-7, docs/accounts-auth.md §5). Run on
 // the host, against the same database file the server uses:
 //
+//   node server/accounts/admin.js stats                     how many accounts exist, and recent signups
 //   node server/accounts/admin.js export <email>            everything held for one account, as JSON
 //   node server/accounts/admin.js reset-password <email>    set a temporary password, sign them out
 //   node server/accounts/admin.js revoke-sessions <email>   sign one account out everywhere
@@ -74,17 +75,33 @@ function revokeSessions(db, email) {
   return Number(db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id).changes);
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Accounts that exist now, and how many of them were created in the last day
+// and week. Deleted accounts are not counted.
+function accountStats(db, now) {
+  const t = (now || Date.now)();
+  const row = db.prepare(
+    'SELECT COUNT(*) AS total, '
+    + 'COALESCE(SUM(created_at > ?), 0) AS day, COALESCE(SUM(created_at > ?), 0) AS week FROM users'
+  ).get(t - DAY_MS, t - 7 * DAY_MS);
+  return { total: Number(row.total), last24h: Number(row.day), last7d: Number(row.week) };
+}
+
 async function main(argv) {
   const [command, arg] = argv;
-  const usage = 'Usage: node server/accounts/admin.js export <email> | reset-password <email> | revoke-sessions <email>|--all';
-  if (!arg || !['export', 'reset-password', 'revoke-sessions'].includes(command)) {
+  const usage = 'Usage: node server/accounts/admin.js stats | export <email> | reset-password <email> | revoke-sessions <email>|--all';
+  if (!['stats', 'export', 'reset-password', 'revoke-sessions'].includes(command) || (command !== 'stats' && !arg)) {
     console.error(usage);
     return 2;
   }
   const db = dbModule.open(process.env.BORDERWAR_DB);
   try {
     let out;
-    if (command === 'export') {
+    if (command === 'stats') {
+      const s = accountStats(db);
+      out = 'Accounts: ' + s.total + ' (' + s.last24h + ' in the last 24 h, ' + s.last7d + ' in the last 7 days)';
+    } else if (command === 'export') {
       const data = exportUser(db, arg);
       out = data && JSON.stringify(data, null, 2);
     } else if (command === 'reset-password') {
@@ -112,4 +129,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { exportUser, resetPassword, revokeSessions };
+module.exports = { accountStats, exportUser, resetPassword, revokeSessions };

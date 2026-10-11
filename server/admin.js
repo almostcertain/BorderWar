@@ -142,6 +142,10 @@ function create(opts) {
       });
     }
     const mem = process.memoryUsage();
+    let accounts = null;
+    if (opts.accountStats) {
+      try { accounts = opts.accountStats(); } catch (e) { /* tile hidden; the sample still records */ }
+    }
     return {
       now: now,
       server: {
@@ -167,7 +171,9 @@ function create(opts) {
         lobbies: lobbies,
         activeGames: active,
         totalConnections: totalConnections,
-        peakConnections: peakConnections
+        peakConnections: peakConnections,
+        // { total, last24h, last7d }, or null when accounts are disabled.
+        accounts: accounts
       },
       games: games,
       soloMatches: presence ? presence.matches() : []
