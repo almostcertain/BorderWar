@@ -8,9 +8,14 @@ const Protocol = require('../js/net/protocol.js');
 const Client = require('./client');
 const GameServer = require('./gameserver');
 const log = require('./log');
+const { addressKey, MessageBudget, WindowCounter } = require('./floodguard');
 
 // How often the periodic reap runs (reap also runs inline on disconnect).
 const REAP_INTERVAL_MS = 5000;
+
+// A socket that has not sent its first message by then is dropped, so idle
+// connections can't pile up.
+const FIRST_MESSAGE_TIMEOUT_MS = 10 * 1000;
 
 // How often the heartbeat line prints, and only while a match is ACTIVE.
 const HEARTBEAT_INTERVAL_MS = 60 * 1000;
@@ -31,6 +36,14 @@ class GameManager {
   // lobby is never blocked.
   static MAX_CONCURRENT_GAMES = 100;
 
+  // Per-address caps (server/floodguard.js addressKey), so one source can't
+  // fill the open lobby or use up the game slots. Generous enough for a
+  // household or a classroom behind one address; loopback is exempt.
+  static MAX_CLIENTS_PER_ADDRESS_PER_GAME = 12;
+  static MAX_LOBBIES_PER_ADDRESS = 8;
+  // A rejoin replays the turn log, so it costs far more than a join.
+  static MAX_REJOINS_PER_ADDRESS_PER_MINUTE = 10;
+
   // `opts.buildID`: when set, a join/rejoin must carry this same build id or it
   // is refused with `version-mismatch` (lockstep needs every client on one build).
   constructor(opts) {
@@ -38,6 +51,9 @@ class GameManager {
     // Optional server/loadouts.js store: persistentID -> equipped cosmetics.
     this.loadouts = (opts && opts.loadouts) || null;
     this.games = new Map(); // gameID -> GameServer
+    this._rejoinRate = new WindowCounter({
+      max: GameManager.MAX_REJOINS_PER_ADDRESS_PER_MINUTE, windowMs: 60 * 1000
+    });
 
     // Set by beginDrain(): the server is about to stop. No new lobbies, no
     // new matches; matches already ACTIVE play out (and can be rejoined).
@@ -190,9 +206,24 @@ class GameManager {
   }
 
   // Entry point from server/index.js: a freshly-upgraded WebSocket, nothing
-  // parsed yet. Waits for exactly one message and routes off it.
-  handleConnection(ws) {
+  // parsed yet. Waits for exactly one message and routes off it. `ip` is the
+  // caller's address (CF-Connecting-IP behind the tunnel), for the per-address
+  // caps; omitted or loopback means no caps.
+  handleConnection(ws, ip) {
+    const addr = addressKey(ip);
+
+    // ws already closes the socket on a protocol error, but emits 'error'
+    // first, and an unhandled 'error' event would take the process down.
+    ws.on('error', () => {});
+
+    const timer = setTimeout(() => {
+      Client.closeWithError(ws, 'timeout', 'No join message received.');
+    }, FIRST_MESSAGE_TIMEOUT_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+    ws.once('close', () => clearTimeout(timer));
+
     ws.once('message', (raw) => {
+      clearTimeout(timer);
       let msg;
       try {
         msg = JSON.parse(raw);
@@ -223,6 +254,11 @@ class GameManager {
       }
 
       if (msg.type === 'rejoin') {
+        if (addr !== null && !this._rejoinRate.hit(addr)) {
+          log.warn('server', 'rejected rejoin: too many from one address');
+          Client.closeWithError(ws, 'server-busy', 'Too many reconnects. Try again in a minute.');
+          return;
+        }
         const game = this.getGame(msg.gameID);
         if (!game) {
           log.warn('game ' + msg.gameID, 'rejected rejoin: no such game');
@@ -250,8 +286,23 @@ class GameManager {
         Client.closeWithError(ws, 'server-busy', 'Too many games in progress. Try again shortly.');
         return;
       }
+      const existing = this.games.get(msg.gameID);
+      if (addr !== null) {
+        if (existing && this._clientsFrom(existing, addr) >= GameManager.MAX_CLIENTS_PER_ADDRESS_PER_GAME) {
+          log.warn('server', 'rejected join to "' + msg.gameID + '": too many from one address');
+          Client.closeWithError(ws, 'server-busy', 'Too many players from your network in this game.');
+          return;
+        }
+        if (!existing && this._lobbiesFrom(addr) >= GameManager.MAX_LOBBIES_PER_ADDRESS) {
+          log.warn('server', 'rejected join to "' + msg.gameID + '": too many lobbies from one address');
+          Client.closeWithError(ws, 'server-busy', 'Too many games started from your network. Try again shortly.');
+          return;
+        }
+      }
       const game = this.createGame(msg.gameID);
+      if (!existing) game.creatorAddr = addr;
       const client = new Client(ws);
+      client.addr = addr;
       const clientID = game.joinClient(client, {
         username: msg.username, spectator: msg.spectator, public: msg.public,
         persistentID: msg.persistentID,
@@ -262,11 +313,37 @@ class GameManager {
     });
   }
 
+  _clientsFrom(game, addr) {
+    let n = 0;
+    for (const c of game.clients.values()) if (c.addr === addr) n++;
+    return n;
+  }
+
+  // Lobbies and matches an address started that are still around.
+  _lobbiesFrom(addr) {
+    let n = 0;
+    for (const game of this.games.values()) {
+      if (game.creatorAddr === addr && game.stage !== Protocol.GAME_PHASE.FINISHED) n++;
+    }
+    return n;
+  }
+
   // Everything after the first message: dispatch subsequent client->server
   // messages to the game, and remove the client from the roster (without
   // touching the turn loop or any other client) on disconnect.
   _wire(game, ws, clientID) {
-    ws.on('message', (raw) => this._handleMessage(game, clientID, raw));
+    const budget = new MessageBudget();
+    let kicked = false;
+    ws.on('message', (raw) => {
+      const verdict = budget.take();
+      if (verdict === 'ok') return this._handleMessage(game, clientID, raw);
+      if (verdict === 'kick' && !kicked) {
+        kicked = true;
+        log.warn('game ' + game.gameID, 'client #' + clientID + ' dropped: message flood');
+        if (typeof ws.terminate === 'function') ws.terminate();
+        else Client.closeWithError(ws, 'rate-limited', 'Too many messages.');
+      }
+    });
     ws.on('close', () => {
       game.removeClient(clientID);
       this.reap();

@@ -17,6 +17,7 @@ class Client {
     this.spectator = false; // bool — from the `join` message
     this.active = false;    // bool — true while counted in the roster
     this.persistentID = null; // string from `join`; never logged or broadcast
+    this.addr = null;         // floodguard addressKey of the connection; null when exempt
     this.cosmetics = null;    // { title, emblem, banner } or null (server/loadouts.js)
 
     // Intents sent since the last endTurn() reset. A cap on flooding

@@ -182,6 +182,38 @@ Stop both services on the box (`systemctl stop cloudflared borderwar`), copy
 accounts, point the `borderwar.io` CNAME at that machine's tunnel in the
 Cloudflare dashboard, and run its live script.
 
+## Abuse limits
+
+Cloudflare absorbs volumetric floods; these limits cover what it passes through
+as ordinary-looking traffic. All are per address (`CF-Connecting-IP`, IPv6 as
+its /64) in `server/floodguard.js`, `server/gamemanager.js` and
+`server/index.js`. Loopback is never limited, so local development and tests
+are unaffected.
+
+| Limit | Value |
+|---|---|
+| Open sockets per address | 24 |
+| New sockets per address | 30 per 10 s |
+| New sockets, everyone (backstop for a distributed flood) | 100 per second |
+| Silent socket (no first message) | closed after 10 s |
+| Largest client message | 32 KB (`maxPayload`) |
+| Messages per socket | 220/s sustained, burst 400; a flood is dropped, then the socket |
+| Players per address in one game | 12 |
+| Lobbies started per address | 8 |
+| Rejoins per address | 10 per minute (each replays the turn log) |
+
+The per-address caps are sized for a household or a classroom behind one
+address. A bigger shared network would need them raised
+(`GameManager.MAX_*`, `AddressGuard` defaults).
+
+They don't stop an attacker with many addresses, who can still fill the open
+lobby. A stray uncaught exception is logged and survived; ten in a minute exit
+so systemd restarts the server.
+
+SSH is open on the box's public address. If that address leaks, a flood sent
+straight to it bypasses Cloudflare, so limit SSH to your own address in the
+provider's firewall.
+
 ## Notes
 
 - **Restarts still end matches.** The turn log is in memory

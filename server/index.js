@@ -13,6 +13,8 @@ const os = require('os');
 const GameManager = require('./gamemanager');
 const Client = require('./client');
 const log = require('./log');
+const { AddressGuard } = require('./floodguard');
+const { clientIp } = require('./httpapi');
 const { getBuildInfo } = require('../tools/build-info');
 
 // Not 8123: the `borderwar` static dev server (.claude/launch.json) uses
@@ -47,7 +49,14 @@ const CONTENT_TYPES = {
 // no-store` matches that server; index.html's `?v=` cache-busting already
 // covers scripts, so the header is not load-bearing.
 function serveStatic(req, res) {
-  let urlPath = decodeURIComponent(req.url.split('?')[0]);
+  let urlPath;
+  try {
+    urlPath = decodeURIComponent(req.url.split('?')[0]);
+  } catch (e) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    res.end('Bad request');
+    return;
+  }
   if (urlPath === '/') urlPath = '/index.html';
 
   // Resolve against the repo root and reject anything that escapes it
@@ -152,7 +161,9 @@ const server = http.createServer((req, res) => {
 // Upgrade only at /ws, matching §3/§6.1's "server/index.js serves the static
 // game and the WS upgrade from the same origin" — one process, one port, so
 // the tunnelled deployment (§6.1) has exactly one thing to point at.
-const wss = new WebSocket.Server({ server, path: '/ws' });
+// maxPayload: the largest legitimate client message (a 1024-unit move_warship)
+// is about 10 KB; ws's default would buffer and parse 100 MiB frames.
+const wss = new WebSocket.Server({ server, path: '/ws', maxPayload: 32 * 1024 });
 
 const gameManager = new GameManager({ buildID: JSON.parse(BUILD_INFO).id, loadouts: loadouts.store });
 
@@ -180,37 +191,31 @@ try {
   log.warn('admin', 'disabled: ' + (e && e.message || e));
 }
 
-// Basic flood resistance, not a security control (D2): stops a naive
-// flood of WebSocket upgrades piling up sockets faster than they are
-// reaped. A fixed-window counter, deliberately not per-IP.
-const CONNECTION_WINDOW_MS = 1000;
-const MAX_NEW_CONNECTIONS_PER_WINDOW = 20;
-let _connWindowStart = Date.now();
-let _connCountInWindow = 0;
-// A flood would otherwise print one warning per rejected socket; log the first
-// rejection of each window with a count of how many it turned away.
-let _rejectedInWindow = 0;
+// Flood limits (server/floodguard.js), keyed on the caller's real address:
+// a flood from one source is refused without starving anyone else.
+const addressGuard = new AddressGuard();
+// A flood would otherwise print one warning per refused socket; log the first
+// refusal of each second with the reason.
+let _refusedLogAt = 0;
 
-wss.on('connection', (ws) => {
-  const now = Date.now();
-  if (now - _connWindowStart >= CONNECTION_WINDOW_MS) {
-    _connWindowStart = now;
-    _connCountInWindow = 0;
-    _rejectedInWindow = 0;
-  }
-  _connCountInWindow++;
-  if (_connCountInWindow > MAX_NEW_CONNECTIONS_PER_WINDOW) {
-    if (_rejectedInWindow++ === 0) {
-      log.warn('server', 'connection rate exceeded (>' + MAX_NEW_CONNECTIONS_PER_WINDOW
-        + '/s), rejecting new sockets');
+wss.on('connection', (ws, req) => {
+  const ip = clientIp(req);
+  const refused = addressGuard.admit(ip);
+  if (refused !== null) {
+    const now = Date.now();
+    if (now - _refusedLogAt >= 1000) {
+      _refusedLogAt = now;
+      log.warn('server', 'refusing new sockets (' + refused + ')');
     }
+    ws.on('error', () => {});
     try { ws.close(1013, 'server busy'); } catch (e) { /* already closing */ }
     return;
   }
+  ws.once('close', () => addressGuard.release(ip));
 
   // GameManager waits for the first message (`join` or `rejoin`) and does
   // its own routing, validation and logging.
-  gameManager.handleConnection(ws);
+  gameManager.handleConnection(ws, ip);
 });
 
 // Non-loopback IPv4 addresses, so the startup line can say where LAN players
@@ -298,5 +303,22 @@ function onSignal(signal) {
 
 process.on('SIGINT', () => onSignal('SIGINT'));
 process.on('SIGTERM', () => onSignal('SIGTERM'));
+
+// One bad request must not end every match (they live in memory). Log it and
+// carry on; a burst of them means something is badly wrong, so exit and let
+// systemd restart us.
+const CRASH_WINDOW_MS = 60 * 1000;
+const CRASH_LIMIT = 10;
+let crashTimes = [];
+process.on('uncaughtException', (err) => {
+  const now = Date.now();
+  crashTimes = crashTimes.filter((t) => now - t < CRASH_WINDOW_MS);
+  crashTimes.push(now);
+  log.error('server', 'uncaught exception: ' + (err && err.stack || err));
+  if (crashTimes.length >= CRASH_LIMIT) {
+    log.error('server', CRASH_LIMIT + ' uncaught exceptions in a minute, exiting');
+    process.exit(1);
+  }
+});
 
 module.exports = { server, wss, gameManager, accounts, PORT };

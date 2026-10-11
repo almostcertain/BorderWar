@@ -66,6 +66,10 @@ class GameServer {
     // nobody can start the lobby (accepted v1 limitation).
     this.creatorClientId = null;
 
+    // floodguard addressKey of whoever created this game (null when exempt),
+    // for GameManager's per-address lobby cap.
+    this.creatorAddr = null;
+
     // Whether this lobby is listed in GET /lobbies. Set only from the
     // creator's own `join.public`, so a later joiner can't flip it.
     this.isPublic = false;
