@@ -6,6 +6,7 @@
 const Protocol = require('../js/net/protocol.js');
 const Client = require('./client');
 const log = require('./log');
+const { clean: cleanLoadout } = require('./loadouts');
 
 // A player's name for log lines. Usernames come straight off the wire, so
 // control characters (a newline would forge a log line) are stripped and the
@@ -19,7 +20,7 @@ function who(client) {
 // entry without any is unchanged on the wire.
 function withCosmetics(entry, client) {
   const c = client.cosmetics;
-  if (c) entry.cosmetics = { title: c.title, emblem: c.emblem, banner: c.banner };
+  if (c) entry.cosmetics = Object.assign({}, c);
   return entry;
 }
 
@@ -396,8 +397,9 @@ class GameServer {
     let changed = false;
     for (const client of this.clients.values()) {
       if (client.persistentID !== persistentID) continue;
-      if (JSON.stringify(client.cosmetics) === JSON.stringify(cosmetics)) continue;
-      client.cosmetics = cosmetics;
+      const own = cleanLoadout(cosmetics, client.packs);
+      if (JSON.stringify(client.cosmetics) === JSON.stringify(own)) continue;
+      client.cosmetics = own;
       changed = true;
     }
     if (changed) this._broadcastLobbyInfo();

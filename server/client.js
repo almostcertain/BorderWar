@@ -18,7 +18,8 @@ class Client {
     this.active = false;    // bool — true while counted in the roster
     this.persistentID = null; // string from `join`; never logged or broadcast
     this.addr = null;         // floodguard addressKey of the connection; null when exempt
-    this.cosmetics = null;    // { title, emblem, banner } or null (server/loadouts.js)
+    this.cosmetics = null;    // one id or null per cosmetic type, or null (server/loadouts.js)
+    this.packs = [];          // paid packs owned by the account on this socket
 
     // Intents sent since the last endTurn() reset. A cap on flooding
     // traffic, not a security control (D2).

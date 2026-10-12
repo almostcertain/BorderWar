@@ -1800,6 +1800,12 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 .panel .loadoutRow button { padding: 6px 10px; font-size: 13px; font-weight: 400; background: rgba(255, 255, 255, 0.08); }
 .panel .loadoutRow button.active { background: rgba(255, 200, 80, 0.3); outline: 1px solid rgba(255, 200, 80, 0.8); }
 .panel .loadoutRow button:disabled { opacity: 0.35; cursor: default; }
+.loadoutPic { height: 16px; width: 24px; margin-right: 6px; vertical-align: -3px; border-radius: 2px; }
+.flagImg { height: 0.75em; width: 1.125em; margin-right: 0.4em; vertical-align: -0.04em; border-radius: 1px; outline: 1px solid rgba(0, 0, 0, 0.5); }
+.packCard { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 8px; background: rgba(61, 125, 255, 0.16); outline: 1px solid rgba(61, 125, 255, 0.5); }
+.packCard.owned { background: rgba(255, 200, 80, 0.12); outline-color: rgba(255, 200, 80, 0.6); }
+.packCard small { opacity: 0.8; }
+.packCard .packStatus { font-style: italic; }
 .playerTitle { font-size: 0.7em; font-weight: 400; font-style: italic; opacity: 0.7; }
 .rTitle { font-size: 10px; font-weight: 400; font-style: italic; opacity: 0.75; }
 

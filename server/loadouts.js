@@ -18,14 +18,21 @@ function validPersistentID(v) {
   return typeof v === 'string' && ID_PATTERN.test(v);
 }
 
-// {title, emblem, banner} holding only known ids of the right type, or null
-// when nothing is equipped.
-function clean(equipped) {
+// One slot per cosmetic type holding only known ids of the right type, or null
+// when nothing is equipped. A pack item is kept only if its pack is in
+// `entitlements`: achievements are on the honour system, purchases are not.
+function clean(equipped, entitlements) {
   const e = ProgressDefs.sanitize({ equipped }).equipped;
+  const packs = ProgressDefs.entitlements(entitlements);
+  let any = false;
   for (let i = 0; i < ProgressDefs.COSMETIC_TYPES.length; i++) {
-    if (e[ProgressDefs.COSMETIC_TYPES[i]] !== null) return e;
+    const type = ProgressDefs.COSMETIC_TYPES[i];
+    if (e[type] === null) continue;
+    const pack = ProgressDefs.COSMETICS[e[type]].pack;
+    if (pack && packs.indexOf(pack) === -1) e[type] = null;
+    else any = true;
   }
-  return null;
+  return any ? e : null;
 }
 
 // opts: { ttlMs, max, now } — all optional.
@@ -48,8 +55,8 @@ function createStore(opts) {
 
   return {
     // Stores the cleaned loadout and returns it (null clears the entry).
-    set(persistentID, equipped) {
-      const e = clean(equipped);
+    set(persistentID, equipped, entitlements) {
+      const e = clean(equipped, entitlements);
       entries.delete(persistentID);
       if (e) entries.set(persistentID, { equipped: e, at: now() });
       trim();
@@ -65,8 +72,8 @@ function createStore(opts) {
   };
 }
 
-// opts: { store, onChange(persistentID, equipped), now, log }. `handle` answers
-// POST /api/loadout and never rejects.
+// opts: { store, onChange(persistentID, equipped), entitlementsFor(req), now,
+// log }. `handle` answers POST /api/loadout and never rejects.
 function createRoute(opts) {
   opts = opts || {};
   const store = opts.store || createStore({ now: opts.now });
@@ -82,7 +89,7 @@ function createRoute(opts) {
       if (!validPersistentID(body.persistentID)) throw new ApiError(400, 'invalid');
       const raw = body.equipped;
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ApiError(400, 'invalid');
-      const equipped = store.set(body.persistentID, raw);
+      const equipped = store.set(body.persistentID, raw, opts.entitlementsFor ? opts.entitlementsFor(req) : []);
       if (opts.onChange) opts.onChange(body.persistentID, equipped);
       return send(res, 200, { ok: true });
     } catch (e) {

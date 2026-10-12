@@ -464,6 +464,7 @@
         if (Replay.active) Replay.onMatchReady();
         else if (!Tutorial.active) Replay.begin(info, msg.myClientID, myPlayerId);
         Progress.beginMatch({ info: info, myPlayerId: myPlayerId, singleplayer: Transport.isLocal });
+        Render.applyPatterns();
 
         // The catch-up backlog. Empty at a fresh start; non-empty after a
         // rejoin (§4), and the drain loop below is what works through it.

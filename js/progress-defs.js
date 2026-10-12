@@ -60,9 +60,33 @@ const ProgressDefs = {
     kingmaker:     { group: 'hidden', name: 'Kingmaker', desc: 'Donate to an ally who goes on to win a free-for-all.', hidden: true, enabled: false, unlocks: 'title_kingmaker' }
   },
 
-  COSMETIC_TYPES: ['title', 'emblem', 'banner'],
+  COSMETIC_TYPES: ['title', 'emblem', 'banner', 'flag', 'pattern'],
+
+  // Paid packs (docs/customization.md). A cosmetic with `pack` is owned through
+  // that entitlement on the account, never through an achievement.
+  PACKS: {
+    supporter: { name: 'Supporter Pack', desc: 'Every flag and territory pattern, and whatever is added to them later.' }
+  },
 
   COSMETICS: {
+    // `art` is drawn by Render.drawFlag: a layout and its colours.
+    flag_tricolour:       { type: 'flag', pack: 'supporter', name: 'Tricolour', art: { kind: 'v3', colors: ['#1d3557', '#f1faee', '#e9c46a'] } },
+    flag_bars:            { type: 'flag', pack: 'supporter', name: 'Three Bars', art: { kind: 'h3', colors: ['#2b2d42', '#8d99ae', '#ef233c'] } },
+    flag_cross:           { type: 'flag', pack: 'supporter', name: 'Northern Cross', art: { kind: 'cross', colors: ['#14213d', '#fca311'] } },
+    flag_saltire:         { type: 'flag', pack: 'supporter', name: 'Saltire', art: { kind: 'saltire', colors: ['#6a040f', '#f8f9fa'] } },
+    flag_sun:             { type: 'flag', pack: 'supporter', name: 'Sun Disc', art: { kind: 'disc', colors: ['#003049', '#fcbf49'] } },
+    flag_chevron:         { type: 'flag', pack: 'supporter', name: 'Chevron', art: { kind: 'chevron', colors: ['#2d6a4f', '#d8f3dc'] } },
+    flag_quarters:        { type: 'flag', pack: 'supporter', name: 'Quartered', art: { kind: 'quarters', colors: ['#7b2cbf', '#e0aaff'] } },
+    flag_diamond:         { type: 'flag', pack: 'supporter', name: 'Diamond', art: { kind: 'diamond', colors: ['#0077b6', '#caf0f8'] } },
+
+    // `art` names a tile mask in Render.PATTERNS.
+    pattern_stripes:      { type: 'pattern', pack: 'supporter', name: 'Stripes', art: 'stripes' },
+    pattern_bars:         { type: 'pattern', pack: 'supporter', name: 'Bars', art: 'bars' },
+    pattern_checker:      { type: 'pattern', pack: 'supporter', name: 'Checker', art: 'checker' },
+    pattern_dots:         { type: 'pattern', pack: 'supporter', name: 'Dots', art: 'dots' },
+    pattern_hatch:        { type: 'pattern', pack: 'supporter', name: 'Crosshatch', art: 'hatch' },
+    pattern_zigzag:       { type: 'pattern', pack: 'supporter', name: 'Zigzag', art: 'zigzag' },
+
     title_veteran:        { type: 'title', name: 'Veteran' },
     title_big_country:    { type: 'title', name: 'the Great' },
     title_team_player:    { type: 'title', name: 'Comrade' },
@@ -101,7 +125,19 @@ ProgressDefs._own = function (obj, key) {
 };
 
 ProgressDefs.empty = function () {
-  return { v: ProgressDefs.VERSION, unlocked: {}, counters: {}, equipped: { title: null, emblem: null, banner: null } };
+  const equipped = {};
+  for (let i = 0; i < ProgressDefs.COSMETIC_TYPES.length; i++) equipped[ProgressDefs.COSMETIC_TYPES[i]] = null;
+  return { v: ProgressDefs.VERSION, unlocked: {}, counters: {}, equipped };
+};
+
+// The known pack ids in `raw`, in PACKS order; anything else is dropped.
+ProgressDefs.entitlements = function (raw) {
+  const out = [];
+  if (!Array.isArray(raw)) return out;
+  for (const id in ProgressDefs.PACKS) {
+    if (ProgressDefs._own(ProgressDefs.PACKS, id) && raw.indexOf(id) !== -1) out.push(id);
+  }
+  return out;
 };
 
 // A clean progress object from untrusted input; anything unknown or malformed is
@@ -153,12 +189,17 @@ ProgressDefs.merge = function (a, b) {
   return out;
 };
 
-// `progress.equipped` with every item cleared whose unlocking achievement (the
-// one whose `unlocks` is that cosmetic) isn't in `progress.unlocked`.
-ProgressDefs.equippable = function (progress) {
+// `progress.equipped` with every item cleared that isn't owned: a pack item
+// needs its pack in `entitlements`, any other the achievement whose `unlocks`
+// is that cosmetic in `progress.unlocked`.
+ProgressDefs.equippable = function (progress, entitlements) {
   const D = ProgressDefs, own = D._own, out = D.empty().equipped;
   if (!progress) return out;
   const earned = {};
+  const packs = D.entitlements(entitlements);
+  for (const id in D.COSMETICS) {
+    if (own(D.COSMETICS, id) && D.COSMETICS[id].pack && packs.indexOf(D.COSMETICS[id].pack) !== -1) earned[id] = true;
+  }
   for (const id in D.ACHIEVEMENTS) {
     if (own(D.ACHIEVEMENTS, id) && D.ACHIEVEMENTS[id].unlocks && own(progress.unlocked, id)) {
       earned[D.ACHIEVEMENTS[id].unlocks] = true;

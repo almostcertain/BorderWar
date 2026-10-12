@@ -48,7 +48,17 @@ const MIGRATIONS = [
    );`,
   // Achievements and equipped cosmetics (docs/metaprogression.md §5.2).
   `ALTER TABLE users ADD COLUMN progress_json TEXT NOT NULL DEFAULT '{}';
-   ALTER TABLE users ADD COLUMN equipped_json TEXT NOT NULL DEFAULT '{}';`
+   ALTER TABLE users ADD COLUMN equipped_json TEXT NOT NULL DEFAULT '{}';`,
+  // Paid packs (docs/customization.md §4). `source` and `ref` say where a row
+  // came from: 'admin', or a payment provider and its payment id.
+  `CREATE TABLE entitlements (
+     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     sku        TEXT NOT NULL,
+     granted_at INTEGER NOT NULL,
+     source     TEXT NOT NULL,
+     ref        TEXT NOT NULL DEFAULT '',
+     PRIMARY KEY (user_id, sku)
+   );`
 ];
 
 function schemaVersion(db) {
