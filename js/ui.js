@@ -723,6 +723,8 @@ const UI = {
     this._frontChipByRef = null;
     this._nukeRowByRef = null;
     this._nukeThreat = null;
+    this._attackSeen = null;
+    document.getElementById('attackFrame').classList.remove('on');
     // Cleared here because a restart's Game.init() resets winnerId but not
     // this latch (see checkEndGame).
     this.endGameHandled = false;
@@ -1412,6 +1414,7 @@ const UI = {
       traitorEl.innerHTML = traitorText ? iconHtml('traitor') + ' ' + traitorText : '';
     }
 
+    this.updateAttackAlert();
     this.updateNukeAlert();
     this.updateDonationAlert();
     this.updateDrillHud(me);
@@ -1850,6 +1853,33 @@ const UI = {
     for (const it of items) el.appendChild(nextByRef.get(it.ref));
 
     this._frontChipByRef = nextByRef;
+  },
+
+  // Red frame round the screen when a new land attack or boat is aimed at the
+  // player. Keyed on object identity, so topping up an existing front (the sim
+  // folds it into the same attack) does not flash again. Tribes are skipped,
+  // as in updateFronts.
+  updateAttackAlert() {
+    if (Game.me < 0) return;
+    const seen = this._attackSeen || (this._attackSeen = new WeakSet());
+    let fresh = false;
+    for (const a of Game.attacks) if (this.isFreshIncoming(a, seen)) fresh = true;
+    for (const b of Game.boats) if (this.isFreshIncoming(b, seen)) fresh = true;
+    if (!fresh) return;
+    const el = document.getElementById('attackFrame');
+    if (!el._endBound) {
+      el.addEventListener('animationend', () => el.classList.remove('on'));
+      el._endBound = true;
+    }
+    // Already pulsing: let it finish rather than restart on every new front.
+    el.classList.add('on');
+  },
+
+  isFreshIncoming(a, seen) {
+    if (a.target !== Game.me || a.attacker === Game.me || a.troops <= 0) return false;
+    if (seen.has(a)) return false;
+    seen.add(a);
+    return !Game.players[a.attacker].isTribe;
   },
 
   // Incoming-nuke warning. Read-only over Game.nukes. A nuke has no id but

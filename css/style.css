@@ -496,6 +496,24 @@ body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pau
 .panel #endReplayRow button { padding: 0; margin: 0; font-size: 13px; background: transparent; }
 #endOverlay.minimized #endReplayRow { display: none; }
 
+/* --- Under-attack frame ---------------------------------------------------- */
+/* A red glow round the screen edge, pulsed a few times when a new attack is
+   aimed at the player. Under the HUD and never in the way of a click. */
+#attackFrame {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: inset 0 0 0 3px rgba(255, 60, 60, 0.9), inset 0 0 70px 12px rgba(255, 30, 30, 0.55);
+}
+#attackFrame.on { animation: attackFramePulse 1s ease-in-out 3; }
+
+@keyframes attackFramePulse {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
 /* --- Incoming-nuke warning ------------------------------------------------ */
 /* One row per hostile nuke that will hit the player's land, naming who fired
    it and counting down to impact. Tap a row to jump to the target. Red and
