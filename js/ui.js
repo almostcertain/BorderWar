@@ -861,10 +861,12 @@ const UI = {
       `rgb(${p.color[0]},${p.color[1]},${p.color[2]})`;
     const nameEl = document.getElementById('hpName');
     const title = Progress.titleOf(playerId);
-    const nameKey = p.name + '\n' + title;
+    const flag = Progress.flagOf(playerId);
+    const nameKey = p.name + '\n' + title + '\n' + flag;
     if (nameEl._key !== nameKey) {
       nameEl._key = nameKey;
       nameEl.textContent = p.name;
+      if (flag) nameEl.insertAdjacentHTML('afterbegin', `<img class="flagImg" src="${Render.swatchURL(flag)}" alt="">`);
       if (title) nameEl.insertAdjacentHTML('beforeend', ` <small class="playerTitle">${escapeHtml(title)}</small>`);
     }
     // Runs every frame (refreshHoverPanel), so only rewritten on a change.
@@ -2321,23 +2323,38 @@ const UI = {
 
   // One row of choices per cosmetic type; a locked one names what unlocks it.
   renderLoadout() {
-    const LABELS = { title: 'Title', emblem: 'Map emblem', banner: 'Victory banner' };
-    const NOTES = { title: 'Shown beside your name', emblem: 'Shown on your nation\'s map label', banner: 'Everyone sees it when you win' };
+    const LABELS = { title: 'Title', emblem: 'Map emblem', banner: 'Victory banner', flag: 'Flag', pattern: 'Territory pattern' };
+    const NOTES = { title: 'Shown beside your name', emblem: 'Shown on your nation\'s map label', banner: 'Everyone sees it when you win',
+      flag: 'Shown beside your name and on the map', pattern: 'Drawn across your land' };
     const eq = Progress.loadout();
+    const packs = Progress.entitlements();
     let html = '';
-    for (const type of ProgressDefs.COSMETIC_TYPES) {
+    for (const id of Object.keys(ProgressDefs.PACKS)) {
+      const pack = ProgressDefs.PACKS[id];
+      const owned = packs.indexOf(id) !== -1;
+      const status = owned ? 'Owned. Thank you for supporting BorderWar.'
+        : 'Not on sale yet.' + (Account.available && !Account.user ? ' It will need an account, so it follows you to every device.' : '');
+      html += `<div class="packCard${owned ? ' owned' : ''}"><b>${escapeHtml(pack.name)}</b>`
+        + `<small>${escapeHtml(pack.desc)}</small><small class="packStatus">${escapeHtml(status)}</small></div>`;
+    }
+    // Paid slots first: they are what the card above is selling.
+    const types = ProgressDefs.COSMETIC_TYPES.slice().sort((a, b) => (a === 'flag' || a === 'pattern' ? 0 : 1) - (b === 'flag' || b === 'pattern' ? 0 : 1));
+    for (const type of types) {
       html += `<div class="achGroup">${LABELS[type]} <span>${NOTES[type]}</span></div><div class="loadoutRow">`;
       html += `<button type="button" data-type="${type}" data-id="" class="${eq[type] ? '' : 'active'}">None</button>`;
       for (const id of Object.keys(ProgressDefs.COSMETICS)) {
         const c = ProgressDefs.COSMETICS[id];
         if (c.type !== type) continue;
         const by = Progress.unlockerOf(id);
-        if (!by) continue;
-        const owned = Progress.has(by);
-        const def = ProgressDefs.ACHIEVEMENTS[by];
-        const tip = owned ? '' : 'Earn ' + (def.hidden ? 'a hidden achievement' : def.name) + ' to unlock';
+        if (!by && !c.pack) continue;
+        const owned = Progress.owns(id);
+        const def = by ? ProgressDefs.ACHIEVEMENTS[by] : null;
+        const tip = owned ? '' : c.pack ? 'Part of the ' + ProgressDefs.PACKS[c.pack].name
+          : 'Earn ' + (def.hidden ? 'a hidden achievement' : def.name) + ' to unlock';
+        const pic = Render.swatchURL(id);
         html += `<button type="button" data-type="${type}" data-id="${id}" class="${eq[type] === id ? 'active' : ''}"`
-          + `${owned ? '' : ' disabled'} title="${escapeHtml(tip)}">${c.glyph ? c.glyph + ' ' : ''}${escapeHtml(c.name)}</button>`;
+          + `${owned ? '' : ' disabled'} title="${escapeHtml(tip)}">${pic ? `<img class="loadoutPic" src="${pic}" alt="">` : ''}`
+          + `${c.glyph ? c.glyph + ' ' : ''}${escapeHtml(c.name)}</button>`;
       }
       html += '</div>';
     }
@@ -3510,6 +3527,8 @@ const UI = {
       li.textContent = p.username || ('Player ' + p.clientID);
       const title = Progress.titleName(p.cosmetics && p.cosmetics.title);
       if (title) li.insertAdjacentHTML('beforeend', ` <small class="playerTitle">${escapeHtml(title)}</small>`);
+      const flag = Progress.flagId(p.cosmetics && p.cosmetics.flag);
+      if (flag) li.insertAdjacentHTML('afterbegin', `<img class="flagImg" src="${Render.swatchURL(flag)}" alt="">`);
       if (swatches && !p.spectator) {
         const sw = document.createElement('span');
         sw.className = 'rosterSwatch';

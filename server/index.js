@@ -132,7 +132,8 @@ try {
 // Equipped cosmetics (server/loadouts.js). Not part of accounts: guests have
 // them too, so this answers even when accounts are disabled.
 const loadouts = require('./loadouts').createRoute({
-  log, onChange: (persistentID, equipped) => gameManager.applyLoadout(persistentID, equipped)
+  log, entitlementsFor: accounts ? (req) => accounts.entitlementsForRequest(req) : null,
+  onChange: (persistentID, equipped) => gameManager.applyLoadout(persistentID, equipped)
 });
 
 const server = http.createServer((req, res) => {
@@ -215,7 +216,7 @@ wss.on('connection', (ws, req) => {
 
   // GameManager waits for the first message (`join` or `rejoin`) and does
   // its own routing, validation and logging.
-  gameManager.handleConnection(ws, ip);
+  gameManager.handleConnection(ws, ip, accounts ? accounts.entitlementsForRequest(req) : []);
 });
 
 // Non-loopback IPv4 addresses, so the startup line can say where LAN players

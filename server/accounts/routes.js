@@ -9,6 +9,7 @@ const passwords = require('./passwords');
 const sessionsModule = require('./sessions');
 const ratelimit = require('./ratelimit');
 const validate = require('./validate');
+const entitlements = require('./entitlements');
 const ProgressDefs = require('../../js/progress-defs.js');
 const { ApiError, send, clientIp, checkOrigin, readJson } = require('../httpapi');
 
@@ -40,7 +41,7 @@ function create(opts) {
   function publicUser(row) {
     let settings = {};
     try { settings = JSON.parse(row.settings_json) || {}; } catch (e) { /* keep {} */ }
-    return { id: row.id, email: row.email, displayName: row.display_name, tag: row.tag, settings };
+    return { id: row.id, email: row.email, displayName: row.display_name, tag: row.tag, settings, entitlements: entitlements.list(db, row.id) };
   }
 
   // The stored copy, re-checked against today's tables in case an ID was retired.
@@ -49,7 +50,7 @@ function create(opts) {
     try { progress = JSON.parse(row.progress_json) || {}; } catch (e) { /* keep {} */ }
     try { equipped = JSON.parse(row.equipped_json) || {}; } catch (e) { /* keep {} */ }
     const p = ProgressDefs.sanitize({ unlocked: progress.unlocked, counters: progress.counters, equipped });
-    p.equipped = ProgressDefs.equippable(p);
+    p.equipped = ProgressDefs.equippable(p, entitlements.list(db, row.id));
     return p;
   }
 
@@ -173,7 +174,7 @@ function create(opts) {
       // `equipped` is replaced whole when sent, kept when left out.
       const sentLoadout = body.equipped && typeof body.equipped === 'object';
       const merged = sentLoadout ? ProgressDefs.merge(stored, sent) : ProgressDefs.merge(sent, stored);
-      merged.equipped = ProgressDefs.equippable(merged);
+      merged.equipped = ProgressDefs.equippable(merged, entitlements.list(db, user.id));
       q.setProgress.run(JSON.stringify({ unlocked: merged.unlocked, counters: merged.counters }),
         JSON.stringify(merged.equipped), user.id);
       return { body: publicProgress(merged) };
@@ -248,6 +249,11 @@ function create(opts) {
     handle,
     // The signed-in user id for a request (e.g. the /ws upgrade), or null.
     userIdForRequest: (req) => sessions.userIdForRequest(req),
+    // The packs owned by whoever sent a request; [] for a guest.
+    entitlementsForRequest(req) {
+      const id = sessions.userIdForRequest(req);
+      return id === null ? [] : entitlements.list(db, id);
+    },
     close() { clearInterval(pruneTimer); db.close(); },
     db
   };

@@ -5,7 +5,7 @@ const Progress = {
   KEY: 'borderwar_progress',
   TICKS_PER_MIN: 600,
 
-  state: { v: 1, unlocked: {}, counters: { wins: 0 }, equipped: { title: null, emblem: null, banner: null } },
+  state: { v: 1, unlocked: {}, counters: { wins: 0 }, equipped: { title: null, emblem: null, banner: null, flag: null, pattern: null } },
 
   // UI hooks: onUnlock(id) after a new unlock, onChange() after every save.
   onUnlock: null,
@@ -637,7 +637,7 @@ const Progress = {
 
   // --- Cosmetics (docs/metaprogression.md §4, §6.3) --------------------------
 
-  _cosmetics: [],   // by playerId: {title, emblem, banner} or undefined
+  _cosmetics: [],   // by playerId: one id or null per cosmetic type, or undefined
 
   // The roster carries other players' loadouts in multiplayer and in replays
   // of it; a local match has only this browser's own.
@@ -666,9 +666,23 @@ const Progress = {
   emblemOf(playerId) { const c = this._cosmetic(playerId, 'emblem'); return c ? c.glyph : ''; },
   bannerOf(playerId) { const c = this._cosmetics[playerId]; return (c && c.banner) || ''; },
   titleName(id) { const c = id ? ProgressDefs.COSMETICS[id] : null; return c && c.type === 'title' ? c.name : ''; },
+  // A flag's cosmetic id, and a pattern's Render.PATTERNS key.
+  flagOf(playerId) { const c = this._cosmetics[playerId]; return (c && c.flag) || ''; },
+  patternOf(playerId) { const c = this._cosmetic(playerId, 'pattern'); return c ? c.art : ''; },
+  // `id` if it is a known flag (a roster entry's is untrusted), else ''.
+  flagId(id) {
+    const c = typeof id === 'string' && Object.prototype.hasOwnProperty.call(ProgressDefs.COSMETICS, id) ? ProgressDefs.COSMETICS[id] : null;
+    return c && c.type === 'flag' ? id : '';
+  },
 
-  // This browser's equipped items, minus any it has not unlocked.
-  loadout() { return ProgressDefs.equippable(ProgressDefs.sanitize(this.state)); },
+  // The signed-in account's paid packs. The server decides these; a guest has none.
+  entitlements() {
+    const user = typeof Account !== 'undefined' ? Account.user : null;
+    return ProgressDefs.entitlements(user && user.entitlements);
+  },
+
+  // This browser's equipped items, minus any it does not own.
+  loadout() { return ProgressDefs.equippable(ProgressDefs.sanitize(this.state), this.entitlements()); },
 
   // The achievement that unlocks a cosmetic, or null.
   unlockerOf(cosmeticId) {
@@ -678,6 +692,9 @@ const Progress = {
   },
 
   owns(cosmeticId) {
+    const C = ProgressDefs.COSMETICS;
+    const pack = Object.prototype.hasOwnProperty.call(C, cosmeticId) ? C[cosmeticId].pack : null;
+    if (pack) return this.entitlements().indexOf(pack) !== -1;
     const by = this.unlockerOf(cosmeticId);
     return !!by && this.has(by);
   },

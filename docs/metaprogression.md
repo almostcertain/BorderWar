@@ -370,7 +370,8 @@ change (so a golden re-record) or a new definition; one needs a new definition.
 - **Levels and XP**, with a rank shown beside the name.
 - **Daily or weekly challenge:** a fixed seed and a goal, with the replay as proof.
   The seeded sim and `replays.md` make this cheap; it is the natural next step.
-- **Border styles and territory patterns**, after render performance work.
+- **Border styles**, after render performance work. Territory patterns and flags
+  were built as paid cosmetics: see `customization.md`.
 - **Preferred nation colour**, with a rule for clashes.
 - **Server-verified achievements** from AU-4 match records (§7).
 - **Profile cards:** click a player in the lobby to see their medals.

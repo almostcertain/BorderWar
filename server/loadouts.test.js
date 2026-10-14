@@ -13,8 +13,8 @@ const Protocol = require('../js/net/protocol.js');
 
 const PID_A = '3f2b8c1e-0d4a-4b6f-9a77-5e1c2d3f4a5b';
 const PID_B = 'p-mabc1234-k9x8y7z6';
-const TITLE = { title: 'title_veteran', emblem: null, banner: null };
-const FULL = { title: 'title_champion', emblem: 'emblem_crown', banner: 'banner_iron' };
+const TITLE = { title: 'title_veteran', emblem: null, banner: null, flag: null, pattern: null };
+const FULL = { title: 'title_champion', emblem: 'emblem_crown', banner: 'banner_iron', flag: null, pattern: null };
 
 // --- Store --------------------------------------------------------------------
 
@@ -23,7 +23,7 @@ test('store: keeps a cleaned loadout, drops unknown and wrong-type ids', () => {
   assert.deepStrictEqual(s.set(PID_A, FULL), FULL);
   assert.deepStrictEqual(s.get(PID_A), FULL);
   assert.deepStrictEqual(s.set(PID_A, { title: 'emblem_crown', emblem: 'nope', banner: 'banner_iron', extra: 1 }),
-    { title: null, emblem: null, banner: 'banner_iron' });
+    { title: null, emblem: null, banner: 'banner_iron', flag: null, pattern: null });
   assert.strictEqual(s.get(PID_B), null);
   // Nothing equipped clears the entry.
   assert.strictEqual(s.set(PID_A, { title: null, emblem: 'title_veteran', banner: 7 }), null);
@@ -93,7 +93,7 @@ test('route: stores a loadout and answers {ok:true}', async () => {
 
   // The fallback id shape is accepted too, and all-null clears.
   assert.strictEqual((await s.post({ persistentID: PID_B, equipped: TITLE })).status, 200);
-  assert.strictEqual((await s.post({ persistentID: PID_B, equipped: { title: null, emblem: null, banner: null } })).status, 200);
+  assert.strictEqual((await s.post({ persistentID: PID_B, equipped: { title: null, emblem: null, banner: null, flag: null, pattern: null } })).status, 200);
   assert.strictEqual(s.route.store.get(PID_B), null);
   assert.deepStrictEqual(s.changes[2], [PID_B, null]);
   s.close();
@@ -103,7 +103,7 @@ test('route: unknown and wrong-type cosmetic ids are dropped, not stored', async
   const s = await startServer();
   const r = await s.post({ persistentID: PID_A, equipped: { title: 'title_nope', emblem: 'banner_iron', banner: 'banner_iron' } });
   assert.strictEqual(r.status, 200);
-  assert.deepStrictEqual(s.route.store.get(PID_A), { title: null, emblem: null, banner: 'banner_iron' });
+  assert.deepStrictEqual(s.route.store.get(PID_A), { title: null, emblem: null, banner: 'banner_iron', flag: null, pattern: null });
   await s.post({ persistentID: PID_A, equipped: { title: '__proto__', emblem: 'constructor', banner: {} } });
   assert.strictEqual(s.route.store.get(PID_A), null);
   s.close();
@@ -187,15 +187,15 @@ function fakeSocket() {
 function setup() {
   const route = loadouts.createRoute({ onChange: (id, e) => manager.applyLoadout(id, e) });
   const manager = new GameManager({ loadouts: route.store });
-  function join(gameID, username, persistentID, spectator) {
+  function join(gameID, username, persistentID, spectator, packs) {
     const ws = fakeSocket();
-    manager.handleConnection(ws);
+    manager.handleConnection(ws, undefined, packs);
     ws.emit('message', JSON.stringify(Protocol.msg.join(gameID, username, persistentID, spectator)));
     return ws;
   }
   // What the route does after validating a POST.
-  function post(persistentID, equipped) {
-    manager.applyLoadout(persistentID, route.store.set(persistentID, equipped));
+  function post(persistentID, equipped, packs) {
+    manager.applyLoadout(persistentID, route.store.set(persistentID, equipped, packs));
   }
   function close() {
     for (const game of manager.games.values()) game.end('test over');
@@ -269,7 +269,7 @@ test('POST after join updates the lobby roster and re-broadcasts', () => {
   assert.strictEqual(b.of('lobby_info').length, before + 1);
 
   // Unequipping removes the key again.
-  s.post(PID_A, { title: null, emblem: null, banner: null });
+  s.post(PID_A, { title: null, emblem: null, banner: null, flag: null, pattern: null });
   assert.strictEqual(b.of('lobby_info').length, before + 2);
   assert.strictEqual('cosmetics' in b.last('lobby_info').lobby.players[0], false);
   s.close();
@@ -319,4 +319,44 @@ test('messages carrying cosmetics pass protocol validation', () => {
   const info = { gameID: 'G1', seed: 1, config: {}, players: [{ clientID: '0', username: 'Ada', playerId: 0, cosmetics: FULL }] };
   assert.strictEqual(Protocol.validateMessage(Protocol.msg.start([], info, '0'), 's2c'), null);
   assert.strictEqual(typeof GameServer, 'function');
+});
+
+// --- Paid packs (docs/customization.md) ----------------------------------------
+
+test('pack items are stored only for a request that owns the pack', async () => {
+  const PAID = { title: 'title_veteran', flag: 'flag_cross', pattern: 'pattern_dots' };
+  const s = await startServer({ entitlementsFor: (req) => req.headers['x-test-owner'] ? ['supporter'] : [] });
+  await s.post({ persistentID: PID_A, equipped: PAID });
+  assert.deepStrictEqual(s.route.store.get(PID_A), { title: 'title_veteran', emblem: null, banner: null, flag: null, pattern: null });
+  await s.post({ persistentID: PID_A, equipped: { flag: 'flag_cross' } });
+  assert.strictEqual(s.route.store.get(PID_A), null);
+  await s.post({ persistentID: PID_A, equipped: PAID }, { 'x-test-owner': '1' });
+  assert.deepStrictEqual(s.route.store.get(PID_A), { title: 'title_veteran', emblem: null, banner: null, flag: 'flag_cross', pattern: 'pattern_dots' });
+  s.close();
+
+  // With no account server nobody owns anything.
+  const bare = await startServer();
+  await bare.post({ persistentID: PID_A, equipped: PAID });
+  assert.strictEqual(bare.route.store.get(PID_A).flag, null);
+  bare.close();
+});
+
+test('a pack item shows only for a socket whose own account owns the pack', () => {
+  const s = setup();
+  const PAID = { title: 'title_veteran', flag: 'flag_cross', pattern: 'pattern_dots' };
+  const SHOWN = { title: 'title_veteran', emblem: null, banner: null, flag: 'flag_cross', pattern: 'pattern_dots' };
+  const STRIPPED = { title: 'title_veteran', emblem: null, banner: null, flag: null, pattern: null };
+  // An owner posts a loadout under someone else's browser id as well as their own.
+  s.post(PID_A, PAID, ['supporter']);
+  s.post(PID_B, PAID, ['supporter']);
+  s.join('G1', 'Ada', PID_A, false, ['supporter']);
+  const b = s.join('G1', 'Bob', PID_B);
+  const roster = () => b.last('lobby_info').lobby.players.map((p) => p.cosmetics);
+  assert.deepStrictEqual(roster(), [SHOWN, STRIPPED]);
+
+  // The same again while both sit in the lobby.
+  s.post(PID_B, { flag: 'flag_sun' }, ['supporter']);
+  s.post(PID_A, { flag: 'flag_sun' }, ['supporter']);
+  assert.deepStrictEqual(roster(), [{ title: null, emblem: null, banner: null, flag: 'flag_sun', pattern: null }, undefined]);
+  s.close();
 });

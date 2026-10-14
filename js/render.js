@@ -75,6 +75,93 @@ const Render = {
     return c;
   },
 
+  // --- Flags (docs/customization.md §2) ----------------------------------------
+  // Drawn from the cosmetic's `art` (a layout and its colours), so a flag is
+  // a few fills at any size and needs no image file.
+  drawFlag(g, id, x, y, w, h) {
+    const C = ProgressDefs.COSMETICS;
+    const art = Object.prototype.hasOwnProperty.call(C, id) && C[id].type === 'flag' ? C[id].art : null;
+    if (!art) return;
+    const c = art.colors;
+    g.save();
+    g.beginPath();
+    g.rect(x, y, w, h);
+    g.clip();
+    g.fillStyle = c[0];
+    g.fillRect(x, y, w, h);
+    g.fillStyle = c[1];
+    switch (art.kind) {
+      case 'v3':
+        g.fillRect(x + w / 3, y, w / 3, h);
+        g.fillStyle = c[2];
+        g.fillRect(x + w * 2 / 3, y, w / 3 + 1, h);
+        break;
+      case 'h3':
+        g.fillRect(x, y + h / 3, w, h / 3);
+        g.fillStyle = c[2];
+        g.fillRect(x, y + h * 2 / 3, w, h / 3 + 1);
+        break;
+      case 'cross':
+        g.fillRect(x + w * 0.28, y, w * 0.16, h);
+        g.fillRect(x, y + h * 0.39, w, h * 0.22);
+        break;
+      case 'saltire':
+        g.strokeStyle = c[1];
+        g.lineWidth = h * 0.2;
+        g.beginPath();
+        g.moveTo(x, y); g.lineTo(x + w, y + h);
+        g.moveTo(x + w, y); g.lineTo(x, y + h);
+        g.stroke();
+        break;
+      case 'disc':
+        g.beginPath();
+        g.arc(x + w / 2, y + h / 2, h * 0.3, 0, Math.PI * 2);
+        g.fill();
+        break;
+      case 'chevron':
+        g.beginPath();
+        g.moveTo(x, y); g.lineTo(x + w * 0.45, y + h / 2); g.lineTo(x, y + h);
+        g.fill();
+        break;
+      case 'quarters':
+        g.fillRect(x + w / 2, y, w / 2 + 1, h / 2);
+        g.fillRect(x, y + h / 2, w / 2, h / 2 + 1);
+        break;
+      case 'diamond':
+        g.beginPath();
+        g.moveTo(x + w / 2, y + h * 0.12); g.lineTo(x + w * 0.85, y + h / 2);
+        g.lineTo(x + w / 2, y + h * 0.88); g.lineTo(x + w * 0.15, y + h / 2);
+        g.fill();
+        break;
+    }
+    g.restore();
+  },
+
+  // A small picture of a flag or a pattern for DOM panels, as a data URL.
+  swatchURLs: {},
+  swatchURL(id) {
+    if (this.swatchURLs[id]) return this.swatchURLs[id];
+    const C = ProgressDefs.COSMETICS;
+    const def = Object.prototype.hasOwnProperty.call(C, id) ? C[id] : null;
+    if (!def || (def.type !== 'flag' && def.type !== 'pattern')) return '';
+    const c = document.createElement('canvas');
+    c.width = 48;
+    c.height = 32;
+    const g = c.getContext('2d');
+    if (def.type === 'flag') {
+      this.drawFlag(g, id, 0, 0, 48, 32);
+    } else {
+      const rows = this.patternMask(def.art);
+      for (let y = 0; y < 16; y++) {
+        for (let x = 0; x < 24; x++) {
+          g.fillStyle = rows && (rows[y & 15] >> (x & 15)) & 1 ? '#6f9bd6' : '#4a74ad';
+          g.fillRect(x * 2, y * 2, 2, 2);
+        }
+      }
+    }
+    return (this.swatchURLs[id] = c.toDataURL());
+  },
+
   // Low graphics: one canvas pixel per CSS pixel even on HiDPI, a quarter
   // of the pixels for a weak integrated GPU. Everything is sized off this.dpr.
   lowRes: false,
@@ -135,6 +222,8 @@ const Render = {
       this.borderColor[p] = this.packed(
         Math.min(255, r * 1.15 + 40), Math.min(255, g * 1.15 + 40), Math.min(255, b * 1.15 + 40));
     }
+    this.patRows = new Array(Game.players.length).fill(null);
+    this.patFill = new Array(Game.players.length).fill(null);
 
     // Hover highlight: a second image the size of tileCanvas, transparent
     // except the hovered nation's tiles, blitted in lockstep with it.
@@ -380,6 +469,55 @@ const Render = {
       window.innerHeight / GameMap.height) * 0.92;
   },
 
+  // --- Territory patterns (docs/customization.md §3) ---------------------------
+  // A cosmetic: a nation's fill alternates with a lighter second tone on a
+  // repeating 16x16 tile mask. Decided per pixel in paintTile, so it adds no
+  // draw pass. Borders, the alt view and fog are untouched.
+  PATTERNS: {
+    stripes: (x, y) => ((x + y) & 7) < 3,
+    bars: (x, y) => (y & 7) < 3,
+    checker: (x, y) => (((x >> 2) + (y >> 2)) & 1) === 1,
+    dots: (x, y) => ((x + ((y >> 3) & 1) * 4) & 7) < 3 && (y & 7) < 3,
+    hatch: (x, y) => ((x + y) & 7) < 2 || ((x - y) & 7) < 2,
+    zigzag: (x, y) => ((y + Math.abs((x & 15) - 8)) & 7) < 3
+  },
+  patMasks: {},      // PATTERNS key -> Uint16Array(16), one bit per tile
+  patRows: null,     // per player: its mask, or null
+  patFill: null,     // per player: the second tone, by terrain
+
+  patternMask(key) {
+    if (!Object.prototype.hasOwnProperty.call(this.PATTERNS, key)) return null;
+    let rows = this.patMasks[key];
+    if (!rows) {
+      rows = this.patMasks[key] = new Uint16Array(16);
+      for (let y = 0; y < 16; y++) {
+        for (let x = 0; x < 16; x++) if (this.PATTERNS[key](x, y)) rows[y] |= 1 << x;
+      }
+    }
+    return rows;
+  },
+
+  // Reads each player's pattern from Progress. Call once a match's cosmetics
+  // are known (after Progress.beginMatch).
+  applyPatterns() {
+    if (!this.patRows) return;
+    const SHADE = [1, 0.84, 0.7];
+    let changed = false;
+    for (let p = 0; p < Game.players.length; p++) {
+      const rows = this.patternMask(Progress.patternOf(p));
+      if (rows !== this.patRows[p]) changed = true;
+      this.patRows[p] = rows;
+      if (!rows || this.patFill[p]) continue;
+      const [r, g, b] = Game.players[p].color;
+      this.patFill[p] = new Uint32Array(3);
+      for (let t = 0; t < 3; t++) {
+        const s = SHADE[t] * 0.78;
+        this.patFill[p][t] = this.packed(Math.min(255, r * s + 12), Math.min(255, g * s + 12), Math.min(255, b * s + 12));
+      }
+    }
+    if (changed && this.shownOwner && this.shownOwner.length === GameMap.owner.length) this.repaintAll();
+  },
+
   // One tile's pixel: terrain tone if unowned, else the owner's fill,
   // brightened to a border tone if a neighbour's owner differs. Shared by
   // the full and incremental rebuilds so they can't drift apart.
@@ -402,7 +540,12 @@ const Render = {
         (x < w - 1 && owner[i + 1] !== o) ||
         (y > 0 && owner[i - w] !== o) ||
         (y < h - 1 && owner[i + w] !== o);
-      color = edge ? this.borderColor[o] : this.fillColor[o][GameMap.terrain[i]];
+      if (edge) {
+        color = this.borderColor[o];
+      } else {
+        const rows = this.patRows[o];
+        color = (rows && (rows[y & 15] >> (x & 15)) & 1 ? this.patFill[o] : this.fillColor[o])[GameMap.terrain[i]];
+      }
     }
     // Irradiated land (Game.fallout) gets a warning wash. Blended, not
     // overridden, so it stays correct on the rare owned tile.
@@ -3407,8 +3550,8 @@ const Render = {
     this.labelEm('');
     const mc = this.measureCtx;
     mc.font = '600 ' + font + 'px system-ui, sans-serif';
-    const emblem = sp.wantEmblem;
-    const nameW = mc.measureText(sp.wantName).width + (nIcons + (emblem ? 1 : 0)) * iconStep * font;
+    const emblem = sp.wantEmblem, flag = sp.wantFlag;
+    const nameW = mc.measureText(sp.wantName).width + (nIcons + (emblem ? 1 : 0) + (flag ? 1 : 0)) * iconStep * font;
     mc.font = font + 'px system-ui, sans-serif';
     const troopsW = mc.measureText(sp.wantTroops).width;
     mc.font = '600 100px system-ui, sans-serif';
@@ -3445,6 +3588,15 @@ const Render = {
     }
     g.font = '600 ' + font + 'px system-ui, sans-serif';
     g.textAlign = 'left';
+    if (flag) {
+      const fw = Math.round(iconSize), fh = Math.round(font * 0.7);
+      const fx = Math.round(x), fy = Math.round(nameY - fh / 2);
+      g.fillStyle = 'rgba(0,0,0,0.7)';
+      g.fillRect(fx - 1, fy - 1, fw + 2, fh + 2);
+      this.drawFlag(g, flag, fx, fy, fw, fh);
+      g.fillStyle = '#ffffff';
+      x += iconStep * font;
+    }
     if (emblem) {
       g.strokeText(emblem, x, nameY);
       g.fillStyle = '#ffd257';
@@ -3464,6 +3616,7 @@ const Render = {
     sp.font = font;
     sp.name = sp.wantName;
     sp.emblem = emblem;
+    sp.flag = flag;
     sp.troops = sp.wantTroops;
     // An icon whose SVG hasn't loaded yet leaves the sprite marked stale, so it
     // is redrawn once the image arrives.
@@ -3620,6 +3773,8 @@ const Render = {
       // shrink-to-fit below stays a single proportional step.
       const emblem = Progress.emblemOf(p.id);
       if (emblem) nIcons++;
+      const flag = Progress.flagOf(p.id);
+      if (flag) nIcons++;
       const nameW = (sp.nameEm + nIcons * 1.3) * font;   // icon (1.05em) + gap (0.25em), in ems
       const widest = Math.max(nameW, sp.troopsEm * font);
       if (widest > boxW * 0.92) {
@@ -3637,6 +3792,7 @@ const Render = {
       sp.wantTroops = troops;
       sp.wantName = p.name;
       sp.wantEmblem = emblem;
+      sp.wantFlag = flag;
       sp.px = px;
       sp.py = py;
       sp.usedAt = frame;
@@ -3646,7 +3802,7 @@ const Render = {
       // meantime the old sprite is stamped scaled to the new size, which is all
       // a nation growing a pixel needs. Growing past LABEL_UPSCALE_MAX (zooming
       // in) can't wait: an upscaled sprite is visibly blurry.
-      if (!sp.canvas || sp.icons !== icons || sp.name !== p.name || sp.emblem !== emblem || font > sp.font * this.LABEL_UPSCALE_MAX ||
+      if (!sp.canvas || sp.icons !== icons || sp.name !== p.name || sp.emblem !== emblem || sp.flag !== flag || font > sp.font * this.LABEL_UPSCALE_MAX ||
           ((sp.font !== font || sp.troops !== troops) && now - sp.drawnMs >= this.LABEL_REFRESH_MS)) stale.push(sp);
       L.font = font;
     }

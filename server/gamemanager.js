@@ -8,6 +8,7 @@ const Protocol = require('../js/net/protocol.js');
 const Client = require('./client');
 const GameServer = require('./gameserver');
 const log = require('./log');
+const { clean: cleanLoadout } = require('./loadouts');
 const { addressKey, MessageBudget, WindowCounter } = require('./floodguard');
 
 // How often the periodic reap runs (reap also runs inline on disconnect).
@@ -208,8 +209,9 @@ class GameManager {
   // Entry point from server/index.js: a freshly-upgraded WebSocket, nothing
   // parsed yet. Waits for exactly one message and routes off it. `ip` is the
   // caller's address (CF-Connecting-IP behind the tunnel), for the per-address
-  // caps; omitted or loopback means no caps.
-  handleConnection(ws, ip) {
+  // caps; omitted or loopback means no caps. `packs` is the paid packs owned
+  // by the account the socket's session cookie belongs to.
+  handleConnection(ws, ip, packs) {
     const addr = addressKey(ip);
 
     // ws already closes the socket on a protocol error, but emits 'error'
@@ -303,10 +305,13 @@ class GameManager {
       if (!existing) game.creatorAddr = addr;
       const client = new Client(ws);
       client.addr = addr;
+      client.packs = packs || [];
+      // Re-checked against this socket's own account: the stored loadout only
+      // proves that whoever posted it owned the pack.
       const clientID = game.joinClient(client, {
         username: msg.username, spectator: msg.spectator, public: msg.public,
         persistentID: msg.persistentID,
-        cosmetics: this.loadouts ? this.loadouts.get(msg.persistentID) : null
+        cosmetics: this.loadouts ? cleanLoadout(this.loadouts.get(msg.persistentID), client.packs) : null
       });
       if (clientID === null) return; // joinClient already closed/errored it (mid-game join)
       this._wire(game, ws, clientID);

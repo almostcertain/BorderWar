@@ -47,7 +47,7 @@ const earns = (id, over) => Progress.evaluate(summary(over)).includes(id);
 test('init: missing storage gives an empty state', () => {
   fresh();
   assert.deepStrictEqual(Progress.state, {
-    v: 1, unlocked: {}, counters: { wins: 0 }, equipped: { title: null, emblem: null, banner: null }
+    v: 1, unlocked: {}, counters: { wins: 0 }, equipped: { title: null, emblem: null, banner: null, flag: null, pattern: null }
   });
 });
 
@@ -78,7 +78,7 @@ test('init: unknown ids and bad values are dropped, good ones kept', () => {
   });
   assert.deepStrictEqual(Progress.state.unlocked, { victory: 1700000000000 });
   assert.deepStrictEqual(Progress.state.counters, { wins: 3 });
-  assert.deepStrictEqual(Progress.state.equipped, { title: 'title_veteran', emblem: null, banner: null });
+  assert.deepStrictEqual(Progress.state.equipped, { title: 'title_veteran', emblem: null, banner: null, flag: null, pattern: null });
   assert.strictEqual(Progress.has('toString'), false);
 });
 

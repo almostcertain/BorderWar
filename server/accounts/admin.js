@@ -6,6 +6,8 @@
 //   node server/accounts/admin.js reset-password <email>    set a temporary password, sign them out
 //   node server/accounts/admin.js revoke-sessions <email>   sign one account out everywhere
 //   node server/accounts/admin.js revoke-sessions --all     sign everyone out (docs/breach-response.md)
+//   node server/accounts/admin.js grant <email> <pack>      give an account a paid pack (docs/customization.md)
+//   node server/accounts/admin.js revoke <email> <pack>     take it away again (a refund)
 //
 // Safe to run while the server is up; SQLite handles the second connection.
 'use strict';
@@ -14,6 +16,7 @@ const crypto = require('crypto');
 const dbModule = require('./db');
 const passwords = require('./passwords');
 const validate = require('./validate');
+const entitlements = require('./entitlements');
 
 function findUser(db, email) {
   const clean = validate.email(email);
@@ -47,6 +50,7 @@ function exportUser(db, email, now) {
       createdAt: iso(user.created_at)
     },
     progress: { unlocked: progress.unlocked || {}, counters: progress.counters || {}, equipped: parse(user.equipped_json) },
+    entitlements: entitlements.history(db, user.id).map(e => ({ pack: e.sku, grantedAt: iso(e.granted_at), source: e.source, ref: e.ref })),
     sessions: sessions.map(s => ({ createdAt: iso(s.created_at), lastSeenAt: iso(s.last_seen_at), expiresAt: iso(s.expires_at) })),
     matches: matches.map(m => ({
       gameId: m.game_id, endedAt: iso(m.ended_at), durationTurns: m.duration_turns, map: m.map, mode: m.mode,
@@ -88,11 +92,26 @@ function accountStats(db, now) {
   return { total: Number(row.total), last24h: Number(row.day), last7d: Number(row.week) };
 }
 
+// Gives or takes one pack. Returns the account's packs afterwards, or null if
+// there is no such account.
+function setEntitlement(db, email, sku, on, now) {
+  const user = findUser(db, email);
+  if (!user) return null;
+  if (on) entitlements.grant(db, user.id, sku, 'admin', '', now);
+  else entitlements.revoke(db, user.id, sku);
+  return entitlements.list(db, user.id);
+}
+
 async function main(argv) {
-  const [command, arg] = argv;
-  const usage = 'Usage: node server/accounts/admin.js stats | export <email> | reset-password <email> | revoke-sessions <email>|--all';
-  if (!['stats', 'export', 'reset-password', 'revoke-sessions'].includes(command) || (command !== 'stats' && !arg)) {
+  const [command, arg, pack] = argv;
+  const usage = 'Usage: node server/accounts/admin.js stats | export <email> | reset-password <email> | revoke-sessions <email>|--all | grant <email> <pack> | revoke <email> <pack>';
+  const packCommand = command === 'grant' || command === 'revoke';
+  if (!['stats', 'export', 'reset-password', 'revoke-sessions', 'grant', 'revoke'].includes(command) || (command !== 'stats' && !arg)) {
     console.error(usage);
+    return 2;
+  }
+  if (packCommand && !entitlements.known(pack)) {
+    console.error('Unknown pack. Known packs: ' + Object.keys(require('../../js/progress-defs.js').PACKS).join(', '));
     return 2;
   }
   const db = dbModule.open(process.env.BORDERWAR_DB);
@@ -107,6 +126,9 @@ async function main(argv) {
     } else if (command === 'reset-password') {
       const temp = await resetPassword(db, arg);
       out = temp && 'Temporary password: ' + temp + '\nTheir sessions were ended. Ask them to change it after signing in.';
+    } else if (packCommand) {
+      const packs = setEntitlement(db, arg, pack, command === 'grant');
+      out = packs && 'Packs on this account: ' + (packs.join(', ') || 'none') + '\nThey see the change the next time they load the page.';
     } else {
       const count = revokeSessions(db, arg === '--all' ? null : arg);
       out = count === null ? null : 'Ended ' + count + ' session' + (count === 1 ? '' : 's') + '.';
@@ -129,4 +151,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { accountStats, exportUser, resetPassword, revokeSessions };
+module.exports = { accountStats, exportUser, resetPassword, revokeSessions, setEntitlement };

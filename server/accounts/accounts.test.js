@@ -252,7 +252,7 @@ test('routes: profile update', async () => {
   await b.post('register', { email: 'a@b.co', password: PASS });
   assert.strictEqual((await b.get('me')).body.user.displayName, 'Player');
   const up = await b.post('profile', { displayName: 'Ada', tag: 'xy', settings: { uiScale: 1.2 } });
-  assert.deepStrictEqual(up.body.user, { id: 1, email: 'a@b.co', displayName: 'Ada', tag: 'XY', settings: { uiScale: 1.2 } });
+  assert.deepStrictEqual(up.body.user, { id: 1, email: 'a@b.co', displayName: 'Ada', tag: 'XY', settings: { uiScale: 1.2 }, entitlements: [] });
   // Omitted fields are kept.
   assert.strictEqual((await b.post('profile', { tag: '' })).body.user.displayName, 'Ada');
   assert.strictEqual((await b.post('profile', { displayName: '[X] Ada' })).status, 400);
@@ -377,7 +377,7 @@ test('backup: one file a day, oldest pruned, restorable', () => {
 // --- Progress (docs/metaprogression.md §5.2, §6.4) ------------------------------
 
 const ProgressDefs = require('../../js/progress-defs.js');
-const NO_LOADOUT = { title: null, emblem: null, banner: null };
+const NO_LOADOUT = { title: null, emblem: null, banner: null, flag: null, pattern: null };
 
 test('progress: sanitize keeps only known, well-formed entries', () => {
   for (const junk of [null, undefined, 42, 'x', [], [1, 2], { unlocked: 'no', counters: 7, equipped: [] }]) {
@@ -394,7 +394,7 @@ test('progress: sanitize keeps only known, well-formed entries', () => {
     v: 1,
     unlocked: { victory: 1000, sea_legs: 3000 },   // a date in the future is pulled back to now
     counters: { wins: 7 },
-    equipped: { title: null, emblem: 'emblem_anchor', banner: null }
+    equipped: { title: null, emblem: 'emblem_anchor', banner: null, flag: null, pattern: null }
   });
   for (const bad of [-1, NaN, '7', null, {}]) {
     assert.deepStrictEqual(ProgressDefs.sanitize({ counters: { wins: bad } }).counters, {});
@@ -404,8 +404,8 @@ test('progress: sanitize keeps only known, well-formed entries', () => {
 });
 
 test('progress: merge is a union with the earlier date and larger counter', () => {
-  const a = { unlocked: { victory: 500, pact: 900 }, counters: { wins: 3 }, equipped: { title: 'title_veteran', emblem: null, banner: null } };
-  const b = { unlocked: { victory: 700, sea_legs: 100 }, counters: { wins: 9 }, equipped: { title: null, emblem: 'emblem_anchor', banner: null } };
+  const a = { unlocked: { victory: 500, pact: 900 }, counters: { wins: 3 }, equipped: { title: 'title_veteran', emblem: null, banner: null, flag: null, pattern: null } };
+  const b = { unlocked: { victory: 700, sea_legs: 100 }, counters: { wins: 9 }, equipped: { title: null, emblem: 'emblem_anchor', banner: null, flag: null, pattern: null } };
   const before = JSON.stringify([a, b]);
   const ab = ProgressDefs.merge(a, b), ba = ProgressDefs.merge(b, a);
   assert.deepStrictEqual(ab.unlocked, { victory: 500, pact: 900, sea_legs: 100 });
@@ -424,12 +424,13 @@ test('progress: merge is a union with the earlier date and larger counter', () =
 test('progress: an equipped item is cleared unless its achievement is unlocked', () => {
   const equipped = { title: 'title_veteran', emblem: 'emblem_anchor', banner: 'banner_iron' };
   assert.deepStrictEqual(ProgressDefs.equippable({ unlocked: { sea_legs: 1, victory: 1 }, equipped }),
-    { title: null, emblem: 'emblem_anchor', banner: null });
+    { title: null, emblem: 'emblem_anchor', banner: null, flag: null, pattern: null });
   assert.deepStrictEqual(ProgressDefs.equippable({ unlocked: {}, equipped }), NO_LOADOUT);
   assert.deepStrictEqual(ProgressDefs.equippable(null), NO_LOADOUT);
-  // Every cosmetic has exactly one achievement that unlocks it.
+  // Every cosmetic outside a paid pack has exactly one achievement that unlocks it.
   const unlockers = Object.values(ProgressDefs.ACHIEVEMENTS).map(a => a.unlocks).filter(Boolean);
-  assert.deepStrictEqual(unlockers.slice().sort(), Object.keys(ProgressDefs.COSMETICS).sort());
+  const earnable = Object.keys(ProgressDefs.COSMETICS).filter(id => !ProgressDefs.COSMETICS[id].pack);
+  assert.deepStrictEqual(unlockers.slice().sort(), earnable.sort());
 });
 
 test('db: an existing version 1 database gains the progress columns', () => {
@@ -465,7 +466,7 @@ test('routes: progress needs a session and the usual POST checks', async () => {
   assert.strictEqual((await b.post('progress', {}, { Origin: 'https://evil.example' })).status, 403);
   assert.strictEqual((await b.post('progress', {}, { 'Content-Type': 'text/plain' })).status, 415);
   // /api/me stays as it was.
-  assert.deepStrictEqual(Object.keys((await b.get('me')).body.user), ['id', 'email', 'displayName', 'tag', 'settings']);
+  assert.deepStrictEqual(Object.keys((await b.get('me')).body.user), ['id', 'email', 'displayName', 'tag', 'settings', 'entitlements']);
   s.close();
 });
 
@@ -478,7 +479,7 @@ test('routes: progress merges, drops junk and is repeat-safe', async () => {
   const first = { unlocked: { victory: 500, sea_legs: 600, bogus: 1 }, counters: { wins: 3, bogus: 9 },
     equipped: { title: 'title_veteran', emblem: 'emblem_anchor', banner: 'emblem_anchor' } };
   const want = { unlocked: { victory: 500, sea_legs: 600 }, counters: { wins: 3 },
-    equipped: { title: null, emblem: 'emblem_anchor', banner: null } };   // title_veteran is still locked
+    equipped: { title: null, emblem: 'emblem_anchor', banner: null, flag: null, pattern: null } };   // title_veteran is still locked
   const r1 = await b.post('progress', first);
   assert.strictEqual(r1.status, 200);
   assert.deepStrictEqual(r1.body, want);
@@ -494,7 +495,7 @@ test('routes: progress merges, drops junk and is repeat-safe', async () => {
   assert.deepStrictEqual(r2.body, { unlocked: { victory: 500, sea_legs: 600, wins_5: 800 }, counters: { wins: 3 }, equipped: want.equipped });
   // A loadout that is sent replaces the stored one whole.
   const r3 = await b.post('progress', { counters: { wins: 5 }, equipped: { title: 'title_veteran' } });
-  assert.deepStrictEqual(r3.body.equipped, { title: 'title_veteran', emblem: null, banner: null });
+  assert.deepStrictEqual(r3.body.equipped, { title: 'title_veteran', emblem: null, banner: null, flag: null, pattern: null });
   assert.deepStrictEqual(r3.body.counters, { wins: 5 });
   assert.deepStrictEqual((await b.post('progress', { equipped: NO_LOADOUT })).body.equipped, NO_LOADOUT);
   // A date in the future is stored as the server's now.
@@ -510,5 +511,59 @@ test('routes: progress merges, drops junk and is repeat-safe', async () => {
 
   const admin = require('./admin');
   assert.deepStrictEqual(admin.exportUser(s.accounts.db, 'a@b.co').progress, (await b.get('progress')).body);
+  s.close();
+});
+
+// --- Paid packs (docs/customization.md) ----------------------------------------
+
+test('packs: a pack item needs the entitlement, whatever is unlocked', () => {
+  const equipped = { flag: 'flag_cross', pattern: 'pattern_dots', emblem: 'emblem_anchor' };
+  const all = {};
+  for (const id of Object.keys(ProgressDefs.ACHIEVEMENTS)) all[id] = 1;
+  assert.deepStrictEqual(ProgressDefs.equippable({ unlocked: all, equipped }),
+    { title: null, emblem: 'emblem_anchor', banner: null, flag: null, pattern: null });
+  assert.deepStrictEqual(ProgressDefs.equippable({ unlocked: {}, equipped }, ['supporter']),
+    { title: null, emblem: null, banner: null, flag: 'flag_cross', pattern: 'pattern_dots' });
+  for (const junk of [null, 'supporter', { supporter: true }, ['nope', 7, '__proto__']]) {
+    assert.deepStrictEqual(ProgressDefs.equippable({ unlocked: {}, equipped }, junk), NO_LOADOUT);
+  }
+  // Every pack item names a pack that exists.
+  for (const c of Object.values(ProgressDefs.COSMETICS)) {
+    if (c.pack) assert.ok(Object.prototype.hasOwnProperty.call(ProgressDefs.PACKS, c.pack));
+  }
+});
+
+test('packs: grant and revoke show in /api/me, gate the loadout, and go with the account', async () => {
+  const entitlements = require('./entitlements');
+  const admin = require('./admin');
+  const s = await startServer();
+  const b = s.browser();
+  await b.post('register', { email: 'a@b.co', password: PASS });
+  const db = s.accounts.db;
+  const loadout = { equipped: { flag: 'flag_sun', pattern: 'pattern_stripes' } };
+
+  assert.deepStrictEqual((await b.get('me')).body.user.entitlements, []);
+  assert.deepStrictEqual((await b.post('progress', loadout)).body.equipped, NO_LOADOUT);
+
+  assert.strictEqual(admin.setEntitlement(db, 'nobody@b.co', 'supporter', true), null);
+  assert.strictEqual(entitlements.grant(db, 1, 'no_such_pack'), false);
+  assert.deepStrictEqual(admin.setEntitlement(db, 'a@b.co', 'supporter', true, () => 111), ['supporter']);
+  // A second grant (a retried webhook) keeps the first row.
+  entitlements.grant(db, 1, 'supporter', 'stripe', 'pi_test', () => 999);
+  assert.deepStrictEqual(entitlements.history(db, 1).map(r => Object.assign({}, r)),
+    [{ sku: 'supporter', granted_at: 111, source: 'admin', ref: '' }]);
+  assert.deepStrictEqual((await b.get('me')).body.user.entitlements, ['supporter']);
+  assert.deepStrictEqual((await b.post('progress', loadout)).body.equipped,
+    { title: null, emblem: null, banner: null, flag: 'flag_sun', pattern: 'pattern_stripes' });
+  assert.deepStrictEqual(admin.exportUser(db, 'a@b.co').entitlements,
+    [{ pack: 'supporter', grantedAt: new Date(111).toISOString(), source: 'admin', ref: '' }]);
+
+  // A refund: the stored loadout stops being served.
+  assert.deepStrictEqual(admin.setEntitlement(db, 'a@b.co', 'supporter', false), []);
+  assert.deepStrictEqual((await b.get('progress')).body.equipped, NO_LOADOUT);
+
+  admin.setEntitlement(db, 'a@b.co', 'supporter', true);
+  await b.post('delete-account', { password: PASS });
+  assert.strictEqual(db.prepare('SELECT COUNT(*) AS n FROM entitlements').get().n, 0);
   s.close();
 });
