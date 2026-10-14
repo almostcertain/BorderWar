@@ -61,9 +61,6 @@
   th:first-child, td:first-child { text-align:left; }
   th { position:sticky; top:0; background:var(--panel); color:var(--dim); font-weight:500; }
   textarea { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 10px; font:inherit; width:100%; min-height:120px; resize:vertical; }
-  #accBox { margin-top:18px; }
-  #accBox summary { font-size:13px; font-weight:bold; text-transform:uppercase; letter-spacing:.06em; margin-bottom:8px; }
-  #accBox summary span { font-weight:normal; text-transform:none; letter-spacing:0; margin-left:8px; }
   #accSearch, #accBox .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
   #accBoxTable { max-height:480px; }
   #accTable td, #accTable th { text-align:left; }
@@ -71,9 +68,11 @@
   #accTable button { padding:2px 7px; font-size:12px; margin:0 4px 2px 0; }
   #accTable button.on { border-color:var(--ok); color:var(--ok); }
   #accStatus { color:var(--dim); font-size:12px; }
-  #newsBox { margin-top:18px; }
-  #newsBox summary { font-size:13px; font-weight:bold; text-transform:uppercase; letter-spacing:.06em; margin-bottom:8px; }
-  #newsBox summary span { font-weight:normal; text-transform:none; letter-spacing:0; margin-left:8px; }
+  #tabs { display:flex; gap:4px; flex-wrap:wrap; border-bottom:1px solid var(--line); margin-bottom:16px; }
+  #tabs button { border:0; border-bottom:2px solid transparent; border-radius:6px 6px 0 0; background:none; color:var(--dim); padding:8px 14px; }
+  #tabs button:hover { color:var(--text); }
+  #tabs button[aria-selected="true"] { color:var(--text); border-bottom-color:var(--s1); }
+  #tabs span { font-size:12px; margin-left:6px; color:var(--dim); }
   #news { display:grid; gap:8px; max-width:560px; }
   #news input { width:100%; }
   #news .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
@@ -110,33 +109,41 @@
     <button id="pause" type="button">Pause</button>
     <button id="logout" type="button">Forget token</button>
   </header>
+  <nav id="tabs" role="tablist" aria-label="Sections">
+    <button type="button" role="tab" data-tab="overview">Overview</button>
+    <button type="button" role="tab" data-tab="history">History</button>
+    <button type="button" role="tab" data-tab="accounts" id="tabAccounts" hidden>Accounts<span id="accBrief"></span></button>
+    <button type="button" role="tab" data-tab="news">What's new<span id="newsBrief"></span></button>
+  </nav>
+  <section class="pane" data-pane="overview">
   <div class="tiles" id="tiles"></div>
-  <section id="history" hidden>
-    <h2>History</h2>
-    <div class="ranges" id="ranges" role="group" aria-label="Time range"></div>
-    <div class="charts" id="charts"></div>
-    <details id="tabledetails">
-      <summary>Data table</summary>
-      <div class="tablebox"><table id="table"></table></div>
-    </details>
-  </section>
   <h2>Active games</h2>
   <div id="active"></div>
   <h2>Lobbies</h2>
   <div id="lobbies"></div>
   <h2>Single player matches</h2>
   <div id="solo"></div>
-  <details id="accBox" hidden>
-  <summary>Accounts<span id="accBrief"></span></summary>
+  </section>
+  <section class="pane" data-pane="history" hidden>
+  <div id="history" hidden>
+    <div class="ranges" id="ranges" role="group" aria-label="Time range"></div>
+    <div class="charts" id="charts"></div>
+    <details id="tabledetails">
+      <summary>Data table</summary>
+      <div class="tablebox"><table id="table"></table></div>
+    </details>
+  </div>
+  <div id="historyEmpty" class="empty">Waiting for the first samples.</div>
+  </section>
+  <section class="pane" id="accBox" data-pane="accounts" hidden>
   <form id="accSearch" class="row">
     <input id="accQuery" type="search" maxlength="100" autocomplete="off" placeholder="Search email or name">
     <button type="submit">Search</button>
   </form>
   <div class="tablebox" id="accBoxTable"><table id="accTable"></table></div>
   <div class="row"><button id="accMore" type="button" hidden>Load more</button><span id="accStatus"></span></div>
-  </details>
-  <details id="newsBox" open>
-  <summary>What's new post<span id="newsBrief"></span></summary>
+  </section>
+  <section class="pane" id="newsBox" data-pane="news" hidden>
   <form id="news">
     <input id="newsTitle" type="text" maxlength="80" autocomplete="off" placeholder="Title">
     <div id="newsTools" role="toolbar" aria-label="Formatting">
@@ -155,7 +162,7 @@
       <span id="newsStatus"></span>
     </div>
   </form>
-  </details>
+  </section>
 </main>
 
 <script src="/js/markup.js"></script>
@@ -563,6 +570,7 @@
         var cutoff = Date.now() - RANGES[RANGES.length - 1].ms;
         while (hist.length && hist[0][0] < cutoff) hist.shift();
         $('history').hidden = false;
+        $('historyEmpty').hidden = true;
         renderCharts();
       })
       .catch(function () {});
@@ -573,18 +581,14 @@
     hist = [];
     lastT = 0;
     $('history').hidden = true;
+    $('historyEmpty').hidden = false;
   }
 
   // ---- What's new post (server/news.js). Loaded once per sign-in, so a
   // refresh never overwrites a draft.
   var newsLoaded = false;
-  var NEWS_OPEN_KEY = 'borderwar-admin-news-open';
-  try { if (localStorage.getItem(NEWS_OPEN_KEY) === '0') $('newsBox').open = false; } catch (e) {}
-  $('newsBox').addEventListener('toggle', function () {
-    try { localStorage.setItem(NEWS_OPEN_KEY, $('newsBox').open ? '1' : '0'); } catch (e) {}
-  });
   function newsStatus(post, verb) {
-    $('newsBrief').textContent = post ? '· live: ' + (post.title || 'untitled') : '· none';
+    $('newsBrief').textContent = post ? 'live' : 'none';
     $('newsStatus').style.color = '';
     $('newsStatus').textContent = post ? verb + ' ' + new Date(post.at).toLocaleString() : 'No post is showing.';
     $('newsRemove').disabled = !post;
@@ -782,15 +786,16 @@
         accAct(row, { action: 'export' }, function (j) { accDownload(row, j.export); });
       });
     });
-    $('accBrief').textContent = '· ' + accTotal + (accQuery ? ' matching' : '');
+    $('accBrief').textContent = accTotal + (accQuery ? ' matching' : '');
     $('accMore').hidden = accRows.length >= accTotal;
   }
   function accLoad(append) {
     accFetch('/admin/accounts?q=' + encodeURIComponent(accQuery) + '&offset=' + (append ? accRows.length : 0))
       .then(function (r) {
-        if (r.status === 404) { accLoaded = true; $('accBox').hidden = true; return; }
+        if (r.status === 404) { accLoaded = true; $('tabAccounts').hidden = true; return; }
         if (!r.ok) throw new Error(r.j.error || 'HTTP ' + r.status);
-        $('accBox').hidden = false;
+        $('tabAccounts').hidden = false;
+        try { if (localStorage.getItem(TAB_KEY) === 'accounts') showTab('accounts'); } catch (e) {}
         accPacks = r.j.packs;
         accTotal = r.j.total;
         accRows = append ? accRows.concat(r.j.users) : r.j.users;
@@ -862,7 +867,7 @@
     newsLoaded = false;
     accLoaded = false;
     accRows = [];
-    $('accBox').hidden = true;
+    $('tabAccounts').hidden = true;
     resetHistory();
     showLogin('');
   });
@@ -891,8 +896,30 @@
     if (paused) clearTimeout(timer); else refresh();
   });
 
+  // ---- Tabs. The chosen one is remembered; the charts are drawn again when
+  // History is shown, since they measure their width and a hidden pane has none.
+  var TAB_KEY = 'borderwar-admin-tab';
+  var tab = 'overview';
+  try { tab = localStorage.getItem(TAB_KEY) || tab; } catch (e) {}
+  function showTab(name) {
+    var buttons = document.querySelectorAll('#tabs button');
+    var ok = Array.prototype.some.call(buttons, function (b) { return b.dataset.tab === name && !b.hidden; });
+    if (!ok) name = 'overview';
+    tab = name;
+    Array.prototype.forEach.call(buttons, function (b) { b.setAttribute('aria-selected', b.dataset.tab === name ? 'true' : 'false'); });
+    Array.prototype.forEach.call(document.querySelectorAll('.pane'), function (p) { p.hidden = p.dataset.pane !== name; });
+    if (name === 'history' && view) renderCharts();
+  }
+  $('tabs').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    try { localStorage.setItem(TAB_KEY, b.dataset.tab); } catch (err) {}
+    showTab(b.dataset.tab);
+  });
+
   buildZones();
   buildCharts();
+  showTab(tab);
   if (token) refresh(); else showLogin('');
 })();
 </script>
