@@ -26,14 +26,14 @@ Object.assign(Game, {
   // A trade ship moves at BOAT_SPEED, so a warship at plain WARSHIP_SPEED
   // could never close the gap on any indirect route. Applied only in
   // warshipChaseTradeShip, not patrol.
-  WARSHIP_CHASE_SPEED_MULT: 1.5,
+  WARSHIP_CHASE_SPEED_MULT: 2,
   WARSHIP_REPATH_INTERVAL: 5,             // seconds between patrol-wander waypoint picks
   WARSHIP_CHASE_REPATH: 1.5,              // seconds between trade-ship-chase path refreshes
   WARSHIP_SNAP_MAX_DIST: 8,               // AI.warshipSite's own coast-to-water snap distance
   // Repair and retreat — Config.ts warshipRetreatHealthPercent / DockingRange /
   // PassiveHealing(+Range) / PortHealingBonusPerLevel, in this game's tiles
   // and 10 ticks/sec (OpenFront's ticks are the same 10/sec).
-  WARSHIP_RETREAT_HEALTH_PCT: 75,         // below this % of max health a patrolling warship heads for a Port
+  WARSHIP_RETREAT_HEALTH_PCT: 50,        // below this % of max health a patrolling warship heads for a Port
   WARSHIP_DOCK_RANGE: 5,                  // within this of the Port it docks
   WARSHIP_PASSIVE_HEAL: 1,                // hp/tick while within PASSIVE_HEAL_RANGE of any own Port
   WARSHIP_PASSIVE_HEAL_RANGE: 150,
