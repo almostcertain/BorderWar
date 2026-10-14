@@ -1858,7 +1858,7 @@ const UI = {
   // Red frame round the screen when a new land attack or boat is aimed at the
   // player. Keyed on object identity, so topping up an existing front (the sim
   // folds it into the same attack) does not flash again. Tribes are skipped,
-  // as in updateFronts.
+  // as in updateFronts, and so are counter-attacks (isFreshIncoming).
   updateAttackAlert() {
     if (Game.me < 0) return;
     const seen = this._attackSeen || (this._attackSeen = new WeakSet());
@@ -1879,7 +1879,11 @@ const UI = {
     if (a.target !== Game.me || a.attacker === Game.me || a.troops <= 0) return false;
     if (seen.has(a)) return false;
     seen.add(a);
-    return !Game.players[a.attacker].isTribe;
+    if (Game.players[a.attacker].isTribe) return false;
+    // A push back against the player's own attack on that nation is a defence,
+    // not a new threat.
+    for (const m of Game.attacks) if (m.attacker === Game.me && m.target === a.attacker) return false;
+    return true;
   },
 
   // Incoming-nuke warning. Read-only over Game.nukes. A nuke has no id but
