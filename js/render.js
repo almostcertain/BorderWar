@@ -2490,6 +2490,15 @@ const Render = {
     }
   },
 
+  // Ring colour for a boat or warship by its owner's relation to the viewer,
+  // independent of nation colour: mine white, allied green, tribe grey, else red.
+  relationRing(ownerId) {
+    if (ownerId === Game.me) return '#ffffff';
+    if (Game.areAllied(Game.me, ownerId)) return '#4caf50';
+    const o = Game.players[ownerId];
+    return o && o.isTribe ? '#9aa4b2' : '#ff5252';
+  },
+
   // A small bitmap circle of square 'dots', so the boat looks chunky like
   // the tile blit. Built once and reused.
   BOAT_DOT_RADIUS: 3,
@@ -2591,6 +2600,12 @@ const Render = {
       for (const [dx, dy] of dots) {
         ctx.fillRect(px + dx * unit - unit / 2, py + dy * unit - unit / 2, unit, unit);
       }
+
+      ctx.beginPath();
+      ctx.arc(px, py, size * 1.45, 0, Math.PI * 2);
+      ctx.strokeStyle = this.relationRing(b.attacker);
+      ctx.lineWidth = Math.max(1, size * 0.18);
+      ctx.stroke();
     }
   },
 
@@ -2759,19 +2774,14 @@ const Render = {
       ctx.save();
       ctx.translate(px, py);
 
-      // Aggro: while the ship has a live target (read-only look at sim state)
-      // its hull flashes red and white, so a fight is readable at a glance.
-      const aggro = !!w.target;
-      const flash = aggro && (((performance.now() / 250) | 0) & 1) === 0;
+      // The hull always keeps the owner's colour. Relation ring marks mine /
+      // ally / hostile; a live target (read-only look at sim state) adds a
+      // flashing halo outside it so a fight reads without hiding who owns what.
       ctx.beginPath();
       ctx.arc(0, 0, r * 0.95, 0, Math.PI * 2);
-      ctx.fillStyle = aggro
-        ? (flash ? '#e53935' : '#f5f5f5')
-        : `rgb(${(col[0] * 0.55) | 0}, ${(col[1] * 0.55) | 0}, ${(col[2] * 0.55) | 0})`;
+      ctx.fillStyle = `rgb(${(col[0] * 0.55) | 0}, ${(col[1] * 0.55) | 0}, ${(col[2] * 0.55) | 0})`;
       ctx.fill();
-      ctx.strokeStyle = aggro
-        ? (flash ? '#f5f5f5' : '#e53935')
-        : `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
+      ctx.strokeStyle = `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
       ctx.lineWidth = Math.max(1.2, r * 0.16);
       ctx.stroke();
 
@@ -2779,9 +2789,24 @@ const Render = {
       // used, just circular now.
       ctx.beginPath();
       ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
-      ctx.strokeStyle = aggro && !flash ? '#e53935' : '#ffffff';
+      ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = Math.max(1, r * 0.14);
       ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 1.2, 0, Math.PI * 2);
+      ctx.strokeStyle = this.relationRing(w.owner);
+      ctx.lineWidth = Math.max(1.2, r * 0.16);
+      ctx.stroke();
+
+      if (w.target) {
+        const flash = (((performance.now() / 250) | 0) & 1) === 0;
+        ctx.beginPath();
+        ctx.arc(0, 0, r * 1.55, 0, Math.PI * 2);
+        ctx.strokeStyle = flash ? '#e53935' : '#f5f5f5';
+        ctx.lineWidth = Math.max(1.5, r * 0.2);
+        ctx.stroke();
+      }
       ctx.restore();
 
       // Repair: a green + beside the bar while it runs for, or sits in, a Port.
