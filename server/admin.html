@@ -61,6 +61,16 @@
   th:first-child, td:first-child { text-align:left; }
   th { position:sticky; top:0; background:var(--panel); color:var(--dim); font-weight:500; }
   textarea { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 10px; font:inherit; width:100%; min-height:120px; resize:vertical; }
+  #accBox { margin-top:18px; }
+  #accBox summary { font-size:13px; font-weight:bold; text-transform:uppercase; letter-spacing:.06em; margin-bottom:8px; }
+  #accBox summary span { font-weight:normal; text-transform:none; letter-spacing:0; margin-left:8px; }
+  #accSearch, #accBox .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  #accBoxTable { max-height:480px; }
+  #accTable td, #accTable th { text-align:left; }
+  #accTable td.acts { white-space:normal; }
+  #accTable button { padding:2px 7px; font-size:12px; margin:0 4px 2px 0; }
+  #accTable button.on { border-color:var(--ok); color:var(--ok); }
+  #accStatus { color:var(--dim); font-size:12px; }
   #newsBox { margin-top:18px; }
   #newsBox summary { font-size:13px; font-weight:bold; text-transform:uppercase; letter-spacing:.06em; margin-bottom:8px; }
   #newsBox summary span { font-weight:normal; text-transform:none; letter-spacing:0; margin-left:8px; }
@@ -116,6 +126,15 @@
   <div id="lobbies"></div>
   <h2>Single player matches</h2>
   <div id="solo"></div>
+  <details id="accBox" hidden>
+  <summary>Accounts<span id="accBrief"></span></summary>
+  <form id="accSearch" class="row">
+    <input id="accQuery" type="search" maxlength="100" autocomplete="off" placeholder="Search email or name">
+    <button type="submit">Search</button>
+  </form>
+  <div class="tablebox" id="accBoxTable"><table id="accTable"></table></div>
+  <div class="row"><button id="accMore" type="button" hidden>Load more</button><span id="accStatus"></span></div>
+  </details>
   <details id="newsBox" open>
   <summary>What's new post<span id="newsBrief"></span></summary>
   <form id="news">
@@ -682,6 +701,116 @@
     if (confirm('Remove the post from the game menu?')) saveNews('', '');
   });
 
+  // ---- Accounts (server/accounts/admin.js). Hidden when the server has none.
+  var accRows = [], accTotal = 0, accQuery = '', accPacks = [], accLoaded = false;
+  function accStatus(msg, bad) {
+    $('accStatus').style.color = bad ? 'var(--bad)' : '';
+    $('accStatus').textContent = msg || '';
+  }
+  function accFetch(url, init) {
+    init = init || {};
+    init.cache = 'no-store';
+    init.headers = Object.assign({ Authorization: 'Bearer ' + token }, init.headers || {});
+    return fetch(url, init).then(function (res) {
+      return res.json().then(function (j) { return { ok: res.ok, status: res.status, j: j }; });
+    });
+  }
+  function accDate(ms) { return ms ? new Date(ms).toLocaleDateString() : '–'; }
+  function accAct(row, body, done) {
+    accStatus('Working…');
+    body.email = row.email;
+    accFetch('/admin/accounts/action', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    }).then(function (r) {
+      if (!r.ok) throw new Error(r.j.message || r.j.error || 'HTTP ' + r.status);
+      accStatus('');
+      done(r.j);
+    }).catch(function (e) { accStatus('Failed: ' + (e && e.message || 'server unreachable'), true); });
+  }
+  function accDownload(row, data) {
+    var a = el('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    a.download = 'account-' + row.id + '.json';
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+  function accRender() {
+    var table = $('accTable');
+    table.textContent = '';
+    var head = table.appendChild(el('tr'));
+    ['Name', 'Email', 'Created', 'Last active', 'Matches', 'Packs / actions'].forEach(function (h) { head.appendChild(el('th', null, h)); });
+    accRows.forEach(function (row) {
+      var tr = table.appendChild(el('tr'));
+      tr.appendChild(el('td', null, row.displayName + (row.tag ? ' [' + row.tag + ']' : '')));
+      tr.appendChild(el('td', null, row.email));
+      tr.appendChild(el('td', null, accDate(row.createdAt)));
+      tr.appendChild(el('td', null, row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : 'signed out'));
+      tr.appendChild(el('td', null, row.matches));
+      var td = tr.appendChild(el('td', 'acts'));
+      accPacks.forEach(function (pack) {
+        var has = row.packs.indexOf(pack) >= 0;
+        var b = td.appendChild(el('button', has ? 'on' : '', pack));
+        b.type = 'button';
+        b.title = (has ? 'Take away ' : 'Give ') + pack;
+        b.addEventListener('click', function () {
+          if (!confirm((has ? 'Take away ' : 'Give ') + pack + (has ? ' from ' : ' to ') + row.email + '?')) return;
+          accAct(row, { action: has ? 'revoke' : 'grant', pack: pack }, function (j) { row.packs = j.packs; accRender(); });
+        });
+      });
+      function btn(label, fn) {
+        var b = td.appendChild(el('button', null, label));
+        b.type = 'button';
+        b.addEventListener('click', fn);
+      }
+      btn('Reset password', function () {
+        if (!confirm('Reset the password for ' + row.email + '? They are signed out everywhere.')) return;
+        accAct(row, { action: 'reset-password' }, function (j) {
+          row.lastSeenAt = null;
+          accRender();
+          window.prompt('Temporary password for ' + row.email + ' (shown once). Send it to them securely.', j.tempPassword);
+        });
+      });
+      btn('Sign out', function () {
+        if (!confirm('Sign ' + row.email + ' out everywhere?')) return;
+        accAct(row, { action: 'revoke-sessions' }, function (j) {
+          row.lastSeenAt = null;
+          accRender();
+          accStatus('Ended ' + j.ended + ' session' + (j.ended === 1 ? '' : 's') + '.');
+        });
+      });
+      btn('Export', function () {
+        accAct(row, { action: 'export' }, function (j) { accDownload(row, j.export); });
+      });
+    });
+    $('accBrief').textContent = '· ' + accTotal + (accQuery ? ' matching' : '');
+    $('accMore').hidden = accRows.length >= accTotal;
+  }
+  function accLoad(append) {
+    accFetch('/admin/accounts?q=' + encodeURIComponent(accQuery) + '&offset=' + (append ? accRows.length : 0))
+      .then(function (r) {
+        if (r.status === 404) { accLoaded = true; $('accBox').hidden = true; return; }
+        if (!r.ok) throw new Error(r.j.error || 'HTTP ' + r.status);
+        $('accBox').hidden = false;
+        accPacks = r.j.packs;
+        accTotal = r.j.total;
+        accRows = append ? accRows.concat(r.j.users) : r.j.users;
+        accLoaded = true;
+        accStatus('');
+        accRender();
+      })
+      .catch(function (e) { accStatus('Could not load accounts: ' + (e && e.message || 'server unreachable'), true); });
+  }
+  $('accSearch').addEventListener('submit', function (e) {
+    e.preventDefault();
+    accQuery = $('accQuery').value.trim();
+    accLoad(false);
+  });
+  $('accMore').addEventListener('click', function () { accLoad(true); });
+  // Loaded once per sign-in; the search box reloads it.
+  function loadAccounts() {
+    if (!accLoaded) accLoad(false);
+  }
+
   function schedule() {
     clearTimeout(timer);
     if (!paused) timer = setTimeout(refresh, REFRESH_MS);
@@ -704,6 +833,7 @@
         if (!s) return;
         render(s);
         loadNews();
+        loadAccounts();
         if (!histTimer) loadHistory();
         lastUpdate = Date.now();
         $('status').textContent = 'Updated ' + fmtFull.format(lastUpdate);
@@ -730,6 +860,9 @@
     try { localStorage.removeItem(KEY); } catch (e) {}
     token = null;
     newsLoaded = false;
+    accLoaded = false;
+    accRows = [];
+    $('accBox').hidden = true;
     resetHistory();
     showLogin('');
   });

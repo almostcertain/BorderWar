@@ -102,6 +102,42 @@ function setEntitlement(db, email, sku, on, now) {
   return entitlements.list(db, user.id);
 }
 
+const LIST_MAX = 200;
+
+// One page of accounts, newest first, for the admin page. `query` matches part
+// of the email or display name. `lastSeenAt` comes from live sessions only: it
+// is null for someone who signed out everywhere. Leaves out secrets.
+function listUsers(db, opts) {
+  opts = opts || {};
+  const limit = Math.min(LIST_MAX, Math.max(1, Math.floor(opts.limit) || 50));
+  const offset = Math.max(0, Math.floor(opts.offset) || 0);
+  const q = String(opts.query || '').trim().toLowerCase().slice(0, 100);
+  const like = '%' + q.replace(/[\\%_]/g, '\\$&') + '%';
+  const where = q ? "WHERE lower(email) LIKE ? ESCAPE '\\' OR lower(display_name) LIKE ? ESCAPE '\\'" : '';
+  const args = q ? [like, like] : [];
+  const total = Number(db.prepare('SELECT COUNT(*) AS n FROM users ' + where).get(...args).n);
+  const rows = db.prepare(
+    'SELECT u.id, u.email, u.display_name, u.tag, u.created_at, '
+    + '(SELECT MAX(last_seen_at) FROM sessions s WHERE s.user_id = u.id) AS last_seen_at, '
+    + '(SELECT COUNT(*) FROM match_players p WHERE p.user_id = u.id) AS matches '
+    + 'FROM users u ' + where.replace(/\b(email|display_name)\b/g, 'u.$1')
+    + ' ORDER BY u.created_at DESC, u.id DESC LIMIT ? OFFSET ?'
+  ).all(...args, limit, offset);
+  return {
+    total,
+    users: rows.map((r) => ({
+      id: Number(r.id),
+      email: r.email,
+      displayName: r.display_name,
+      tag: r.tag,
+      createdAt: Number(r.created_at),
+      lastSeenAt: r.last_seen_at === null ? null : Number(r.last_seen_at),
+      matches: Number(r.matches),
+      packs: entitlements.list(db, r.id)
+    }))
+  };
+}
+
 async function main(argv) {
   const [command, arg, pack] = argv;
   const usage = 'Usage: node server/accounts/admin.js stats | export <email> | reset-password <email> | revoke-sessions <email>|--all | grant <email> <pack> | revoke <email> <pack>';
@@ -151,4 +187,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { accountStats, exportUser, resetPassword, revokeSessions, setEntitlement };
+module.exports = { accountStats, exportUser, findUser, listUsers, resetPassword, revokeSessions, setEntitlement };

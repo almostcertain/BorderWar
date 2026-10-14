@@ -12,6 +12,10 @@
 //                     pulling the latest code first for `update`. Only writes a
 //                     request file; tools/cloud/ does the work (docs/cloud-hosting.md).
 //                     Enabled when BORDERWAR_UPDATE_FILE is set; same token
+//   GET /admin/accounts[?q=text&offset=n]  one page of accounts (50), newest first;
+//                     needs `accountDb`. Same token
+//   POST /admin/accounts/action  { email, action: export | reset-password |
+//                     revoke-sessions | grant | revoke, pack? }; same token
 //
 // The token is BORDERWAR_ADMIN_TOKEN if set, otherwise a random one generated
 // on first start and kept in server/data/admin-token.txt (gitignored). There is
@@ -27,6 +31,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { ApiError, readJson } = require('./httpapi');
 
 const TOKEN_FILE = path.join(__dirname, 'data', 'admin-token.txt');
 const PAGE_FILE = path.join(__dirname, 'admin.html');
@@ -250,9 +255,65 @@ function create(opts) {
     return send(res, 200, json, JSON.stringify({ requested: mode }));
   }
 
+  // Account list and customer-service actions (server/accounts/admin.js).
+  // Never rejects. The caller has already checked the token.
+  async function accountsRoute(req, res, urlPath) {
+    const json = (status, body) => send(res, status, 'application/json; charset=utf-8', JSON.stringify(body));
+    try {
+      const acc = require('./accounts/admin');
+      const entitlements = require('./accounts/entitlements');
+      const packs = Object.keys(require('../js/progress-defs.js').PACKS);
+      if (urlPath === '/admin/accounts') {
+        const u = new URL(req.url, 'http://x');
+        const page = acc.listUsers(opts.accountDb, {
+          query: u.searchParams.get('q'), offset: Number(u.searchParams.get('offset')), limit: 50
+        });
+        return json(200, Object.assign({ packs }, page));
+      }
+      // POST /admin/accounts/action { email, action, pack? }
+      const body = await readJson(req);
+      const { email, action, pack } = body;
+      const user = typeof email === 'string' ? acc.findUser(opts.accountDb, email) : null;
+      if (!user) return json(404, { error: 'not-found' });
+      const note = (what) => log.info('admin', 'account action: ' + what + ' on user #' + user.id);
+      if (action === 'export') {
+        note('export');
+        return json(200, { export: acc.exportUser(opts.accountDb, email) });
+      }
+      if (action === 'reset-password') {
+        const temp = await acc.resetPassword(opts.accountDb, email);
+        note('reset-password');
+        return json(200, { tempPassword: temp });
+      }
+      if (action === 'revoke-sessions') {
+        const ended = acc.revokeSessions(opts.accountDb, email);
+        note('revoke-sessions');
+        return json(200, { ended });
+      }
+      if (action === 'grant' || action === 'revoke') {
+        if (!entitlements.known(pack)) return json(400, { error: 'invalid' });
+        const now = acc.setEntitlement(opts.accountDb, email, pack, action === 'grant');
+        note(action + ' ' + pack);
+        return json(200, { packs: now });
+      }
+      return json(400, { error: 'invalid' });
+    } catch (e) {
+      if (e instanceof ApiError) return json(e.status, { error: e.code, message: e.message });
+      log.error('admin', 'account request failed: ' + (e && e.message || e));
+      if (!res.headersSent) json(500, { error: 'server' });
+    }
+  }
+
   // Answers /admin and anything under /admin/.
   function handle(req, res) {
     const urlPath = req.url.split('?')[0];
+    if (urlPath === '/admin/accounts' || urlPath === '/admin/accounts/action') {
+      if (!opts.accountDb) return send(res, 404, 'text/plain', 'Not found');
+      const want = urlPath === '/admin/accounts' ? 'GET' : 'POST';
+      if (req.method !== want) return send(res, 405, 'text/plain', 'Method not allowed');
+      if (!authorized(req)) return send(res, 401, 'application/json; charset=utf-8', '{"error":"unauthorized"}');
+      return accountsRoute(req, res, urlPath);
+    }
     if (urlPath === '/admin/drain') {
       if (!opts.drain) return send(res, 404, 'text/plain', 'Not found');
       if (req.method !== 'POST') return send(res, 405, 'text/plain', 'Method not allowed');

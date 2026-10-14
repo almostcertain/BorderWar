@@ -186,6 +186,7 @@ try {
   admin = require('./admin').create({
     gameManager, wss, presence, news, log, updateFile: process.env.BORDERWAR_UPDATE_FILE || null, build: JSON.parse(BUILD_INFO).id, persistHistory: PORT === 8124,
     accountStats: accounts ? () => require('./accounts/admin').accountStats(accounts.db) : null,
+    accountDb: accounts ? accounts.db : null,
     drain: (maxMs) => drain('admin drain requested', maxMs)
   });
 } catch (e) {

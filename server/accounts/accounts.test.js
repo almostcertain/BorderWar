@@ -351,6 +351,35 @@ test('admin: account stats count total and recent signups', () => {
   db.close();
 });
 
+test('admin: list accounts pages newest first and searches', () => {
+  const admin = require('./admin');
+  const db = dbModule.open(':memory:');
+  const ins = db.prepare('INSERT INTO users (email, pass_hash, display_name, created_at) VALUES (?, ?, ?, ?)');
+  ins.run('old@b.co', 'x', 'Old', 1000);
+  ins.run('mid@b.co', 'x', 'Mid_Name', 2000);
+  ins.run('new@b.co', 'x', 'New', 3000);
+  const s = sessionsModule.create(db, () => 5000);
+  s.start(2);
+  db.prepare('INSERT INTO entitlements (user_id, sku, granted_at, source) VALUES (2, ?, 1, ?)').run('supporter', 'admin');
+
+  const all = admin.listUsers(db);
+  assert.strictEqual(all.total, 3);
+  assert.deepStrictEqual(all.users.map(u => u.email), ['new@b.co', 'mid@b.co', 'old@b.co']);
+  assert.strictEqual(all.users[1].lastSeenAt, 5000);
+  assert.strictEqual(all.users[0].lastSeenAt, null);
+  assert.deepStrictEqual(all.users[1].packs, ['supporter']);
+  assert.doesNotMatch(JSON.stringify(all), /pass_hash|"x"/);
+
+  const page = admin.listUsers(db, { limit: 1, offset: 1 });
+  assert.strictEqual(page.total, 3);
+  assert.deepStrictEqual(page.users.map(u => u.email), ['mid@b.co']);
+  assert.deepStrictEqual(admin.listUsers(db, { query: 'MID' }).users.map(u => u.id), [2]);
+  // `_` and `%` are literal, not wildcards.
+  assert.strictEqual(admin.listUsers(db, { query: '_' }).total, 1);
+  assert.strictEqual(admin.listUsers(db, { query: '%' }).total, 0);
+  db.close();
+});
+
 test('backup: one file a day, oldest pruned, restorable', () => {
   const fs = require('fs'), os = require('os'), path = require('path');
   const backup = require('./backup');
