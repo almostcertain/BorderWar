@@ -111,20 +111,11 @@
   </header>
   <nav id="tabs" role="tablist" aria-label="Sections">
     <button type="button" role="tab" data-tab="overview">Overview</button>
-    <button type="button" role="tab" data-tab="history">History</button>
     <button type="button" role="tab" data-tab="accounts" id="tabAccounts" hidden>Accounts<span id="accBrief"></span></button>
     <button type="button" role="tab" data-tab="news">What's new<span id="newsBrief"></span></button>
   </nav>
   <section class="pane" data-pane="overview">
   <div class="tiles" id="tiles"></div>
-  <h2>Active games</h2>
-  <div id="active"></div>
-  <h2>Lobbies</h2>
-  <div id="lobbies"></div>
-  <h2>Single player matches</h2>
-  <div id="solo"></div>
-  </section>
-  <section class="pane" data-pane="history" hidden>
   <div id="history" hidden>
     <div class="ranges" id="ranges" role="group" aria-label="Time range"></div>
     <div class="charts" id="charts"></div>
@@ -133,7 +124,12 @@
       <div class="tablebox"><table id="table"></table></div>
     </details>
   </div>
-  <div id="historyEmpty" class="empty">Waiting for the first samples.</div>
+  <h2>Active games</h2>
+  <div id="active"></div>
+  <h2>Lobbies</h2>
+  <div id="lobbies"></div>
+  <h2>Single player matches</h2>
+  <div id="solo"></div>
   </section>
   <section class="pane" id="accBox" data-pane="accounts" hidden>
   <form id="accSearch" class="row">
@@ -570,7 +566,6 @@
         var cutoff = Date.now() - RANGES[RANGES.length - 1].ms;
         while (hist.length && hist[0][0] < cutoff) hist.shift();
         $('history').hidden = false;
-        $('historyEmpty').hidden = true;
         renderCharts();
       })
       .catch(function () {});
@@ -581,7 +576,6 @@
     hist = [];
     lastT = 0;
     $('history').hidden = true;
-    $('historyEmpty').hidden = false;
   }
 
   // ---- What's new post (server/news.js). Loaded once per sign-in, so a
@@ -897,7 +891,7 @@
   });
 
   // ---- Tabs. The chosen one is remembered; the charts are drawn again when
-  // History is shown, since they measure their width and a hidden pane has none.
+  // Overview is shown, since they measure their width and a hidden pane has none.
   var TAB_KEY = 'borderwar-admin-tab';
   var tab = 'overview';
   try { tab = localStorage.getItem(TAB_KEY) || tab; } catch (e) {}
@@ -908,7 +902,7 @@
     tab = name;
     Array.prototype.forEach.call(buttons, function (b) { b.setAttribute('aria-selected', b.dataset.tab === name ? 'true' : 'false'); });
     Array.prototype.forEach.call(document.querySelectorAll('.pane'), function (p) { p.hidden = p.dataset.pane !== name; });
-    if (name === 'history' && view) renderCharts();
+    if (name === 'overview' && view) renderCharts();
   }
   $('tabs').addEventListener('click', function (e) {
     var b = e.target.closest('button');
