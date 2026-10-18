@@ -2803,7 +2803,7 @@ const Render = {
         const flash = (((performance.now() / 250) | 0) & 1) === 0;
         ctx.beginPath();
         ctx.arc(0, 0, r * 1.55, 0, Math.PI * 2);
-        ctx.strokeStyle = flash ? '#e53935' : '#f5f5f5';
+        ctx.strokeStyle = flash ? '#ffb300' : '#f5f5f5';   // amber: red is reserved for hostile in relationRing
         ctx.lineWidth = Math.max(1.5, r * 0.2);
         ctx.stroke();
       }
