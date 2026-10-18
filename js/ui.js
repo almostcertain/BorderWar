@@ -2950,7 +2950,10 @@ const UI = {
         box.checked = !box.checked;
         box.dispatchEvent(new Event('change', { bubbles: true }));
       });
-      const sync = () => b.classList.toggle('active', box.checked);
+      const sync = () => {
+        b.classList.toggle('active', box.checked);
+        b.textContent = box.dataset.toggle + ': ' + (box.checked ? 'Enabled' : 'Disabled');
+      };
       box.addEventListener('change', sync);
       window.addEventListener('pageshow', sync);
       box.classList.add('hidden');
