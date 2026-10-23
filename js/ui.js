@@ -2544,7 +2544,7 @@ const UI = {
       label.className = 'replayInfo';
       label.title = 'Watch';
       label.textContent = (record.result || 'Unfinished') + ' · ' +
-        (cfg.map === 'world' ? 'The World' : 'Procedural ' + (cfg.mapSize || ''));
+        (this.MAP_LABELS[cfg.map] || 'Procedural ' + (cfg.mapSize || ''));
       const sub = document.createElement('small');
       sub.textContent = when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
         when.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) +
@@ -2849,7 +2849,7 @@ const UI = {
   // Read the host panel's controls into the shape `start_game` carries
   // ({map, mapSize, bots, tribes}), clamped like main.js's singleplayer start().
   getHostConfig() {
-    const map = document.getElementById('hostMapType').value === 'world' ? 'world' : 'procedural';
+    const map = Protocol.normalizeMap(document.getElementById('hostMapType').value);
     const mapSize = document.getElementById('hostMapSize').value;
     const bots = Math.max(0, Math.min(100, parseInt(document.getElementById('hostBotCount').value, 10) || 0));
     const tribes = Math.max(0, Math.min(400, parseInt(document.getElementById('hostTribeCount').value, 10) || 0));
@@ -2912,7 +2912,14 @@ const UI = {
   // Create-game settings: each [data-pick] select shows as a row of tiles and
   // each [data-toggle] checkbox as a toggle tile. The native control stays the
   // source of truth (hidden), so reads and change listeners are unchanged.
-  MAP_PICK_NOTES: { world: 'Real-world map', procedural: 'Generated, with a seed' },
+  MAP_PICK_NOTES: {
+    world: 'Real-world map', europe: 'Real map', northamerica: 'Real map', asia: 'Real map',
+    africa: 'Real map', mena: 'Real map', procedural: 'Generated, with a seed'
+  },
+  MAP_LABELS: {
+    world: 'The World', europe: 'Europe', northamerica: 'North America', asia: 'Asia',
+    africa: 'Africa', mena: 'Middle East & N. Africa'
+  },
   setupPickers() {
     for (const sel of document.querySelectorAll('select[data-pick]')) {
       const wrap = document.createElement('div');

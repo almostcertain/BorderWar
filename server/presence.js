@@ -19,7 +19,7 @@ const TTL_MS = 75 * 1000;
 const MAX_IDS = 20000;
 const MAX_BODY = 256;
 const ID_RE = /^[0-9a-f]{16}$/;
-const MAP_SIZES = new Set(['small', 'medium', 'large', 'world']);
+const MAP_SIZES = new Set(['small', 'medium', 'large', 'world', 'europe', 'northamerica', 'asia', 'africa', 'mena']);
 const MODE_RE = /^[a-z_-]{1,16}$/;
 const MAX_AGE_S = 7 * 24 * 3600;
 

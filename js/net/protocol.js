@@ -49,6 +49,13 @@ const Protocol = {
   // City specializations; mirrors Game.SPECS (game/specialize.js).
   SPEC_TYPES: ['metropolis', 'tradehub', 'treasury', 'garrison'],
 
+  // Baked OpenFront maps (maps/<id>/); `config.map` is one of these or 'procedural'.
+  REAL_MAPS: ['world', 'europe', 'northamerica', 'asia', 'africa', 'mena'],
+
+  normalizeMap(map) {
+    return this.REAL_MAPS.includes(map) ? map : 'procedural';
+  },
+
   // The procedural generator's lobby knobs, carried as config.mapGen on
   // `start_game` and in gameStartInfo (js/map.js's resolveGenOptions reads
   // them; docs/procedural-maps.md describes each). The first value of each is

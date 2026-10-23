@@ -135,7 +135,7 @@ function create(opts) {
         stage: game.stage,
         isPublic: !!game.isPublic,
         isAuto: !!game.isAutoLobby,
-        map: cfg ? (cfg.map === 'world' ? 'world' : cfg.mapSize) : null,
+        map: cfg ? (cfg.map !== 'procedural' ? cfg.map : cfg.mapSize) : null,
         mode: cfg && cfg.gameMode || null,
         bots: cfg && Number.isInteger(cfg.bots) ? cfg.bots : null,
         tribes: cfg && Number.isInteger(cfg.tribes) ? cfg.tribes : null,

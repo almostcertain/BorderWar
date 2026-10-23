@@ -1,17 +1,18 @@
 'use strict';
 
-// Fetches the World map data (maps/world/{manifest.json, map.bin}) once per
-// page load and hands the parsed bytes to GameMap.loadWorld via
-// GameMap.worldData. Kept out of the sim: fetch() is non-deterministic, so
-// only the resulting bytes (a static asset, identical everywhere) reach it.
-// Preloaded at startup (main.js); ensure() is awaited again before Game.init.
+// Fetches a baked map (maps/<id>/{manifest.json, map.bin}) once per page load
+// and hands the parsed bytes to GameMap.loadWorld via GameMap.mapData[id].
+// Kept out of the sim: fetch() is non-deterministic, so only the resulting
+// bytes (a static asset, identical everywhere) reach it. 'world' is preloaded
+// at startup (main.js); ensure(id) is awaited again before Game.init.
 const WorldMapLoader = {
-  _promise: null,
+  _promises: {},
 
-  // Idempotent. Resolves once GameMap.worldData is populated. A failure
-  // clears the cached promise, so a later call retries.
-  ensure() {
-    if (!this._promise) {
+  // Idempotent per id. Resolves once GameMap.mapData[id] is populated. A
+  // failure clears the cached promise, so a later call retries.
+  ensure(id) {
+    id = id || 'world';
+    if (!this._promises[id]) {
       const fetchJSON = (url) => fetch(url).then(r => {
         if (!r.ok) throw new Error(url + ': HTTP ' + r.status);
         return r.json();
@@ -20,16 +21,16 @@ const WorldMapLoader = {
         if (!r.ok) throw new Error(url + ': HTTP ' + r.status);
         return r.arrayBuffer();
       });
-      this._promise = Promise.all([
-        fetchJSON('maps/world/manifest.json'),
-        fetchBytes('maps/world/map.bin')
+      this._promises[id] = Promise.all([
+        fetchJSON('maps/' + id + '/manifest.json'),
+        fetchBytes('maps/' + id + '/map.bin')
       ]).then(([manifest, buf]) => {
-        GameMap.worldData = { manifest: manifest.map, bytes: new Uint8Array(buf) };
+        GameMap.mapData[id] = { manifest: manifest.map, bytes: new Uint8Array(buf) };
       }).catch((err) => {
-        this._promise = null;
+        delete this._promises[id];
         throw err;
       });
     }
-    return this._promise;
+    return this._promises[id];
   }
 };

@@ -104,13 +104,13 @@ function boot(cfg) {
     vm.runInContext(bytes.toString('utf8'), ctx, { filename: file });
   }
   const sim = vm.runInContext('({ Game, GameMap, Hash, Executor, Protocol, AI })', ctx);
-  if (cfg.map === 'world') {
+  if (cfg.map && cfg.map !== 'procedural') {
     // No fetch() in this harness (nor in the sim it's checking, on purpose —
     // see js/net/worldmap.js) — read the same static asset a browser would
     // fetch directly off disk instead.
-    const worldManifest = JSON.parse(fs.readFileSync(path.join(root, 'maps/world/manifest.json'), 'utf8'));
-    const worldBytes = fs.readFileSync(path.join(root, 'maps/world/map.bin'));
-    sim.GameMap.worldData = { manifest: worldManifest.map, bytes: new Uint8Array(worldBytes.buffer, worldBytes.byteOffset, worldBytes.length) };
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, 'maps', cfg.map, 'manifest.json'), 'utf8'));
+    const bytes = fs.readFileSync(path.join(root, 'maps', cfg.map, 'map.bin'));
+    sim.GameMap.mapData[cfg.map] = { manifest: manifest.map, bytes: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length) };
   }
   return sim;
 }

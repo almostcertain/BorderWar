@@ -274,7 +274,7 @@ const Progress = {
       bots: Game.nationCount - Game.humanCount,
       nations: Game.nationCount,
       difficulty: Game.difficulty,
-      map: Game.sizeKey === 'world' ? 'world' : 'procedural',
+      map: ['small', 'medium', 'large'].includes(Game.sizeKey) || !Game.sizeKey ? 'procedural' : Game.sizeKey,
       size: Game.sizeKey,
       fog: !!Game.fog,
       team: !!Game.teams,

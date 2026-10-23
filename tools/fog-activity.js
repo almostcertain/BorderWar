@@ -33,9 +33,10 @@ const names = loader();
 const sources = names.slice(0, names.indexOf('ai') + 1).filter(n => !['render', 'input', 'ui', 'radial', 'main'].includes(n))
   .map(n => ({ file: `js/${n}.js`, text: fs.readFileSync(path.join(root, `js/${n}.js`), 'utf8') }));
 let world = null;
-if (MAP === 'world') {
-  const m = JSON.parse(fs.readFileSync(path.join(root, 'maps/world/manifest.json')));
-  const b = fs.readFileSync(path.join(root, 'maps/world/map.bin'));
+const REAL_MAP = ['world', 'europe', 'northamerica', 'asia', 'africa', 'mena'].includes(MAP);
+if (REAL_MAP) {
+  const m = JSON.parse(fs.readFileSync(path.join(root, 'maps', MAP, 'manifest.json')));
+  const b = fs.readFileSync(path.join(root, 'maps', MAP, 'map.bin'));
   world = { manifest: m.map, bytes: new Uint8Array(b.buffer, b.byteOffset, b.length) };
 }
 
@@ -44,11 +45,11 @@ function run(seed, fog) {
   for (const { file, text } of sources) vm.runInContext(text, ctx, { filename: file });
   const { Game, GameMap, Hash, AI } = vm.runInContext('({Game,GameMap,Hash,AI})', ctx);
   for (const [k, v] of SETS) AI[k] = v;
-  const cfg = MAP === 'world' ? { map: 'world', seed, bots: BOTS, tribes: TRIBES } : { size: MAP, seed, bots: BOTS, tribes: TRIBES };
+  const cfg = REAL_MAP ? { map: MAP, seed, bots: BOTS, tribes: TRIBES } : { size: MAP, seed, bots: BOTS, tribes: TRIBES };
   if (fog) cfg.fogOfWar = true;
   if (TEAMS) { cfg.gameMode = 'team'; cfg.playerTeams = TEAMS; }
   if (DIFFICULTY) cfg.difficulty = DIFFICULTY;
-  if (world) GameMap.worldData = world;
+  if (world) GameMap.mapData[MAP] = world;
 
   Game.init(Hash._syntheticGameStartInfo(cfg), 0);
   // Fog matches seat the human in init; a fog-off one takes the same tile.

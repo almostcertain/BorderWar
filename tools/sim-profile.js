@@ -22,9 +22,10 @@ const sources=names.slice(0,names.indexOf('ai')+1).filter(n=>!['render','input',
 const ctx=vm.createContext({console});
 for(const f of sources) vm.runInContext(fs.readFileSync(path.join(root,f),'utf8'),ctx,{filename:f});
 const {Game,GameMap,Hash,AI,TribeAI}=vm.runInContext('({Game,GameMap,Hash,AI,TribeAI})',ctx);
-const cfg=MAP==='world'?{map:'world',seed:SEED,bots:BOTS,tribes:TRIBES,ticks:TICKS}:{size:MAP,seed:SEED,bots:BOTS,tribes:TRIBES,ticks:TICKS};
+const REAL=['world','europe','northamerica','asia','africa','mena'].includes(MAP);
+const cfg=REAL?{map:MAP,seed:SEED,bots:BOTS,tribes:TRIBES,ticks:TICKS}:{size:MAP,seed:SEED,bots:BOTS,tribes:TRIBES,ticks:TICKS};
 if(FOG)cfg.fogOfWar=true;
-if(MAP==='world'){const m=JSON.parse(fs.readFileSync(path.join(root,'maps/world/manifest.json')));const b=fs.readFileSync(path.join(root,'maps/world/map.bin'));GameMap.worldData={manifest:m.map,bytes:new Uint8Array(b.buffer,b.byteOffset,b.length)};}
+if(REAL){const m=JSON.parse(fs.readFileSync(path.join(root,'maps/'+MAP+'/manifest.json')));const b=fs.readFileSync(path.join(root,'maps/'+MAP+'/map.bin'));GameMap.mapData[MAP]={manifest:m.map,bytes:new Uint8Array(b.buffer,b.byteOffset,b.length)};}
 const t0=performance.now();
 Game.init(Hash._syntheticGameStartInfo(cfg),0);
 console.log('init ms',(performance.now()-t0).toFixed(0),'map',GameMap.width,'x',GameMap.height,'fog',Game.fog);

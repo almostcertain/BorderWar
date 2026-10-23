@@ -43,6 +43,13 @@
 
   const BOTS_FOR_SIZE = { large: WORLD_BOTS };
   const TRIBES_FOR_SIZE = { large: WORLD_TRIBES };
+
+  // Baked maps: [nations, tribes]. Nations follow each manifest's nation
+  // count, tribes keep World's ~5x ratio.
+  const REAL_MAP_COUNTS = {
+    world: [WORLD_BOTS, WORLD_TRIBES], europe: [52, 260], northamerica: [71, 355],
+    asia: [25, 125], africa: [44, 220], mena: [35, 175]
+  };
   for (const key of ['small', 'medium']) {
     const tiles = Game.MAP_SIZES[key].width * Game.MAP_SIZES[key].height;
     BOTS_FOR_SIZE[key] = Math.max(1, Math.round(tiles * BOT_DENSITY));
@@ -68,15 +75,15 @@
     document.getElementById('hostBotCount'), document.getElementById('hostTribeCount'));
 
   // Map Size and the map options box only apply to the procedural
-  // generator, so they are hidden (not disabled) when World is picked.
+  // generator, so they are hidden (not disabled) when a baked map is picked.
   function applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes, prefix) {
-    const isWorld = mapType.value === 'world';
-    sizeRow.classList.toggle('hidden', isWorld);
-    document.getElementById(prefix ? prefix + 'MapGenBox' : 'mapGenBox').classList.toggle('hidden', isWorld);
-    if (!isWorld) UI.refreshMapPreview(prefix);
-    if (isWorld) {
-      bots.value = WORLD_BOTS;
-      tribes.value = WORLD_TRIBES;
+    const real = REAL_MAP_COUNTS[mapType.value];
+    sizeRow.classList.toggle('hidden', !!real);
+    document.getElementById(prefix ? prefix + 'MapGenBox' : 'mapGenBox').classList.toggle('hidden', !!real);
+    if (!real) UI.refreshMapPreview(prefix);
+    if (real) {
+      bots.value = real[0];
+      tribes.value = real[1];
     } else {
       bots.value = BOTS_FOR_SIZE[sizeSelect.value] || 9;
       tribes.value = TRIBES_FOR_SIZE[sizeSelect.value] || 16;
@@ -85,12 +92,12 @@
   function bindMapType(mapType, sizeRow, sizeSelect, bots, tribes, prefix) {
     mapType.addEventListener('change', () => {
       applyMapTypeDefaults(mapType, sizeRow, sizeSelect, bots, tribes, prefix);
-      if (mapType.value === 'world') {
-        // Preload eagerly the moment World is actually chosen, rather than
+      if (REAL_MAP_COUNTS[mapType.value]) {
+        // Preload eagerly the moment a baked map is chosen, rather than
         // waiting for Start — see js/net/worldmap.js. Failure is surfaced
         // when Start is actually pressed (the 'start' handler below); this
         // fire-and-forget call just avoids an unhandled-rejection warning.
-        WorldMapLoader.ensure().catch(() => {});
+        WorldMapLoader.ensure(mapType.value).catch(() => {});
       }
     });
     // Without this the fields would sit at their static HTML values (9/16)
@@ -106,12 +113,12 @@
     document.getElementById('hostMapSize'), document.getElementById('hostBotCount'), document.getElementById('hostTribeCount'), 'host');
 
   // Procedural is the default selection in both panels (index.html), but a
-  // browser can restore World on reload or back/forward without a change
+  // browser can restore a baked map on reload or back/forward without a change
   // event — start fetching it then rather than waiting for Start. Failure is
   // surfaced later, when Start is actually pressed.
   window.addEventListener('pageshow', () => {
-    if (mapTypeSelect.value === 'world' || document.getElementById('hostMapType').value === 'world') {
-      WorldMapLoader.ensure().catch(() => {});
+    for (const v of [mapTypeSelect.value, document.getElementById('hostMapType').value]) {
+      if (REAL_MAP_COUNTS[v]) WorldMapLoader.ensure(v).catch(() => {});
     }
   });
 
@@ -473,7 +480,7 @@
         lastTurnAt = performance.now();
         const cfg = info.config || {};
         presenceMatch = {
-          map: cfg.map === 'world' ? 'world' : cfg.mapSize, mode: cfg.gameMode,
+          map: cfg.map && cfg.map !== 'procedural' ? cfg.map : cfg.mapSize, mode: cfg.gameMode,
           bots: cfg.bots, tribes: cfg.tribes, tutorial: Tutorial.active, at: lastTurnAt
         };
         document.getElementById('overlay').classList.add('hidden');
@@ -481,12 +488,14 @@
         sendPresence();
       };
 
-      // World is normally preloaded already; this await is a safety net. A
-      // failed fetch must not leave the player on a menu that looks dead.
-      if (info.config && info.config.map === 'world') {
-        WorldMapLoader.ensure().then(beginMatch).catch(function(err) {
-          console.error('Failed to load the World map', err);
-          UI.setLobbyError('Failed to load the World map: ' + err.message);
+      // A baked map is normally preloaded already; this await is a safety net
+      // (and the only load for a joiner who never picked it). A failed fetch
+      // must not leave the player on a menu that looks dead.
+      const bakedMap = info.config && info.config.map;
+      if (bakedMap && bakedMap !== 'procedural') {
+        WorldMapLoader.ensure(bakedMap).then(beginMatch).catch(function(err) {
+          console.error('Failed to load the map', err);
+          UI.setLobbyError('Failed to load the map: ' + err.message);
           document.getElementById('overlay').classList.add('hidden');
         });
       } else {
@@ -521,7 +530,7 @@
     const tribes = Math.max(0, Math.min(TRIBE_CAP, parseInt(tribeInput.value, 10) || 0));
     const mapSize = sizeSelect.value;
     const mode = UI.getModeConfig('');
-    const procedural = mapTypeSelect.value !== 'world';
+    const procedural = !REAL_MAP_COUNTS[mapTypeSelect.value];
     const gen = UI.getMapGenConfig('');
 
     // A new match is a new connection. Tearing the old one down first stops a
@@ -542,7 +551,7 @@
       username: UI.getPlayerName() || 'You',
       // Procedural maps use the seed the options preview was drawn from.
       seed: procedural ? gen.seed : (Math.random() * 1e9) | 0,
-      map: procedural ? 'procedural' : 'world',
+      map: procedural ? 'procedural' : mapTypeSelect.value,
       mapSize: mapSize,
       mapGen: gen.mapGen,
       bots: bots,

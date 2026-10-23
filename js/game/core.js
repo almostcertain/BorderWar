@@ -195,17 +195,17 @@ const Game = {
     // game as it always was.
     this.fog = config.fogOfWar === true;
 
-    // `map: 'world'` selects OpenFront's real, baked "World" coastline
-    // instead of a procedural one; `mapSize` is meaningless for it (the real
-    // map has one fixed resolution, 2000x1000 — the same as MAP_SIZES.large)
-    // and is ignored. Every other value (including none) is the procedural
-    // generator, keyed by mapSize and shaped by the lobby's mapGen knobs.
-    if (config.map === 'world') {
-      if (!GameMap.worldData) {
-        throw new Error('Game.init: map "world" selected but GameMap.worldData was not preloaded (see js/net/worldmap.js)');
+    // Any `map` other than 'procedural' names a baked OpenFront map ('world',
+    // 'europe', ...) with its own fixed size; `mapSize` is ignored for it.
+    // 'procedural' (or none) is the generator, keyed by mapSize and shaped by
+    // the lobby's mapGen knobs.
+    if (config.map && config.map !== 'procedural') {
+      const data = GameMap.mapData[config.map];
+      if (!data) {
+        throw new Error('Game.init: map "' + config.map + '" selected but GameMap.mapData was not preloaded (see js/net/worldmap.js)');
       }
-      this.sizeKey = 'world';
-      GameMap.loadWorld(GameMap.worldData.bytes, GameMap.worldData.manifest);
+      this.sizeKey = config.map;
+      GameMap.loadWorld(data.bytes, data.manifest);
     } else {
       const sizeKey = config.mapSize;
       const size = this.MAP_SIZES[sizeKey] || this.MAP_SIZES.medium;

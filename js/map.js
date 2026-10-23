@@ -440,11 +440,9 @@ const GameMap = {
   // is not a spawn gate.
   MIN_LANDMASS_TILES: 70,
 
-  // Raw bytes + manifest for OpenFront's real "World" map, handed off by
-  // js/net/worldmap.js (ordinary client code — fetch() has no business in
-  // this file, see its own comment) once fetched. loadWorld reads this
-  // rather than taking a URL, so the file stays free of any network call.
-  worldData: null,
+  // Raw bytes + manifest per baked map id ('world', 'europe', ...), handed off
+  // by js/net/worldmap.js once fetched, so this file stays free of network calls.
+  mapData: {},
 
   // Parses the baked map.bin format (1 byte/tile, row-major): bit 7 =
   // land, bits 0-4 = magnitude (elevation on land). Shoreline, ocean and
