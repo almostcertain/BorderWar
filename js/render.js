@@ -239,6 +239,7 @@ const Render = {
     if (this.tileLayer) this.disposeLayer(this.tileLayer);
     if (this.hoverLayer) this.disposeLayer(this.hoverLayer);
     this.tileLayer = this.makeLayer(this.tileCanvas, true);
+    this.tileLayer.throttle = true;
     this.hoverLayer = this.makeLayer(this.hoverCanvas, false);
     this.hoverLayer.snap = true;
   },
@@ -260,12 +261,12 @@ const Render = {
 
   makeLayer(canvas, overlap) {
     const C = this.LAYER_CHUNK, w = canvas.width, h = canvas.height, o = overlap ? 1 : 0;
-    const layer = { canvas, cols: Math.ceil(w / C), rows: Math.ceil(h / C), chunks: [], alive: true };
+    const layer = { canvas, cols: Math.ceil(w / C), rows: Math.ceil(h / C), chunks: [], alive: true, epoch: 0 };
     for (let cy = 0; cy < layer.rows; cy++) {
       for (let cx = 0; cx < layer.cols; cx++) {
         const x = cx * C, y = cy * C;
         layer.chunks.push({ x, y, w: Math.min(C + o, w - x), h: Math.min(C + o, h - y),
-                            bmp: null, dirty: true, pending: false, put: false });
+                            bmp: null, bmpEpoch: 0, dirty: true, pending: false, put: false, at: 0 });
       }
     }
     return layer;
@@ -316,14 +317,31 @@ const Render = {
     }
   },
 
+  // Each new bitmap is an upload to Firefox's GPU process, and the jittered
+  // reveal dirties every front chunk every frame. So on a throttled layer a
+  // chunk waits between bitmaps, longer the smaller a tile is on screen and
+  // much longer off screen. See docs/perf-north-america-options.md.
+  REFRESH_MS_FAR: 66,        // tiles under 1.5 device px
+  REFRESH_MS_MID: 33,        // tiles under 3 device px
+  REFRESH_MS_OFFSCREEN: 500,
+
   // Starts a new bitmap for each dirty chunk not already waiting on one. A
   // chunk dirtied again while pending stays dirty and goes round once more.
-  refreshLayer(layer) {
+  // `s` is device px per tile; v* is the visible tile rect.
+  refreshLayer(layer, s, vx0, vx1, vy0, vy1) {
     if (layer.noBitmap) return;
+    const now = layer.throttle ? performance.now() : 0;
+    const onMs = s < 1.5 ? this.REFRESH_MS_FAR : s < 3 ? this.REFRESH_MS_MID : 0;
     for (const c of layer.chunks) {
       if (!c.dirty || c.pending) continue;
+      if (layer.throttle && c.bmp) {
+        const off = c.x > vx1 || c.x + c.w < vx0 || c.y > vy1 || c.y + c.h < vy0;
+        if (now - c.at < (off ? this.REFRESH_MS_OFFSCREEN : onMs)) continue;
+        c.at = now;
+      }
       c.dirty = false;
       c.pending = true;
+      const epoch = layer.epoch;
       let req;
       try {
         req = createImageBitmap(layer.canvas, c.x, c.y, c.w, c.h);
@@ -336,6 +354,7 @@ const Render = {
         if (!layer.alive) { bmp.close(); return; }
         if (c.bmp) c.bmp.close();
         c.bmp = bmp;
+        c.bmpEpoch = epoch;
       }, () => { c.pending = false; layer.noBitmap = true; });
     }
   },
@@ -343,14 +362,17 @@ const Render = {
   // Draws the layer with its top-left at (ox, oy) in the current transform
   // (one unit per tile), skipping chunks outside the viewport or `box`.
   drawLayer(ctx, layer, ox, oy, box) {
-    this.refreshLayer(layer);
     const s = this.cam.scale * this.dpr;
     const halfW = this.canvas.width / 2 / s, halfH = this.canvas.height / 2 / s;
     const vx0 = this.cam.x - halfW, vx1 = this.cam.x + halfW;
     const vy0 = this.cam.y - halfH, vy1 = this.cam.y + halfH;
+    this.refreshLayer(layer, s, vx0, vx1, vy0, vy1);
     for (const c of layer.chunks) {
       if (c.x > vx1 || c.x + c.w < vx0 || c.y > vy1 || c.y + c.h < vy0) continue;
       if (box && (c.x > box.maxX || c.x + c.w <= box.minX || c.y > box.maxY || c.y + c.h <= box.minY)) continue;
+      // A bitmap from before the layer's last epoch (the hover moved to
+      // another nation) would show the old tint as a chunk-sized square.
+      if (c.bmp && c.bmpEpoch !== layer.epoch) continue;
       if (layer.snap) {
         // A translucent layer's chunks can't overlap, so each edge lands on a
         // device pixel shared with its neighbour: a fractional edge would be
@@ -451,6 +473,7 @@ const Render = {
     // each rebuild repaints the hovered nation's whole tile set.
     if (id !== this.hoverBuiltFor ||
         ((territoryChanged || tileMoved) && now - this.hoverAnnexAt > this.ANNEX_HOVER_INTERVAL)) {
+      if (id !== this.hoverBuiltFor) this.hoverLayer.epoch++;
       this.buildHoverOverlay(id);
       this.hoverBuiltFor = id;
       this.hoverBuiltForTile = UI.hoverTile;
