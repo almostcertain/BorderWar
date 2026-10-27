@@ -2471,7 +2471,7 @@ const Render = {
       // Blue for the player's push, red for one landing on them, grey for a
       // retreating front.
       const colour = a.retreating ? '#9aa4b2' : (a.attacker === Game.me ? '#6db4ff' : '#ff6b6b');
-      const font = Math.max(13 * this.dpr, Math.min(19 * this.dpr, s * 1.6));
+      const font = Math.max(17 * this.dpr, Math.min(25 * this.dpr, s * 2.1));
       ctx.font = '600 ' + font.toFixed(1) + 'px system-ui, sans-serif';
       ctx.lineWidth = Math.max(2.5, font * 0.34);
       ctx.lineJoin = 'round';
