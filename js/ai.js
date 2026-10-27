@@ -1826,6 +1826,39 @@ const AI = {
     return out;
   },
 
+  // Points of interest (docs/points-of-interest.md): owner id -> score
+  // multiplier for each rival holding a POI within POI_AI_REACH of p's land.
+  // Unowned POIs need none; free-land expansion takes them anyway.
+  POI_AI_REACH: 30,
+  POI_AI_STEP: 3,
+  POI_PULL: { gold: 1.8, pass: 1.3 },
+  poiPull(p) {
+    let out = null;
+    for (const q of Game.pois) {
+      const o = GameMap.owner[q.tile];
+      if (o < 0 || o === p.id) continue;
+      if (!this.ownsNear(p, q.tile, this.POI_AI_REACH)) continue;
+      if (!out) out = new Map();
+      out.set(o, (out.get(o) || 1) * this.POI_PULL[q.kind]);
+    }
+    return out;
+  },
+
+  // Sampled on a POI_AI_STEP grid, close enough for a "nearby" test.
+  ownsNear(p, tile, r) {
+    const w = GameMap.width, h = GameMap.height, cx = tile % w, cy = (tile / w) | 0;
+    const s = this.POI_AI_STEP;
+    for (let dy = -r; dy <= r; dy += s) {
+      const y = cy + dy;
+      if (y < 0 || y >= h) continue;
+      for (let dx = -r; dx <= r; dx += s) {
+        const x = cx + dx;
+        if (x >= 0 && x < w && GameMap.owner[y * w + x] === p.id) return true;
+      }
+    }
+    return false;
+  },
+
   // Squared distance from the Drill to p's nearest border tile.
   drillHome2(p) {
     let best = Infinity;
@@ -1864,6 +1897,7 @@ const AI = {
     const atWar = myAttacks.length > 0;
 
     const hostiles = this.hostiles(p, targets);
+    const poi = this.poiPull(p);   // null unless a neighbour holds a nearby POI
     let best = null, bestScore = -Infinity;
     for (const [targetId, contact] of targets) {
       // Mid-war, this cycle exists only to look for a Tribe side-skirmish —
@@ -1892,6 +1926,7 @@ const AI = {
         const risk = pull ? 1 : this.provocation(p, t, targets, hostiles);
         if (risk < this.RISK_FLOOR) continue;   // not worth the enemy it makes
         score *= risk;
+        if (poi) score *= poi.get(targetId) || 1;
       }
       if (pull) score *= pull.get(targetId) || 1;
       if (score > bestScore) { bestScore = score; best = targetId; }

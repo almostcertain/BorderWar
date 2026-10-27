@@ -147,7 +147,9 @@ const LocalServer = {
         gameMode: opts.gameMode === 'team' ? 'team' : 'ffa',
         playerTeams: opts.playerTeams,
         // Fog of war (docs/fog-of-war.md): a strict boolean, off by default.
-        fogOfWar: opts.fogOfWar === true
+        fogOfWar: opts.fogOfWar === true,
+        // docs/points-of-interest.md: a strict boolean, procedural maps only.
+        pointsOfInterest: opts.pointsOfInterest === true
       },
       players: [{
         clientID: this.clientID,

@@ -46,7 +46,7 @@ const Render = {
   // platform and are slow to draw in Firefox on Windows. Each icon is
   // rasterised once per whole-pixel size and stamped with drawImage.
   ICON_NAMES: ['ally', 'teammate', 'target', 'traitor', 'embargo', 'expiring', 'drill',
-    'spec-ready', 'spec-metropolis', 'spec-tradehub', 'spec-treasury', 'spec-garrison'],
+    'spec-ready', 'spec-metropolis', 'spec-tradehub', 'spec-treasury', 'spec-garrison', 'gold', 'fort'],
   iconImages: null,
   iconCache: new Map(),
 
@@ -1296,6 +1296,7 @@ const Render = {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
     this.drawRailroads();
+    this.drawPOIs();
     this.drawStructures();
     // In a fog match the placement ghost and the map lettering move to the
     // end, over the fog layer (see below). With fog off the order is as it
@@ -1717,6 +1718,66 @@ const Render = {
 
   // Zoomed-out stand-in for structure icons: a small dot in the owner's
   // colour, so where things are built still reads without the clutter.
+  // Points of interest (docs/points-of-interest.md): a diamond badge ringed in
+  // the holder's colour, grey while unclaimed. Always drawn, whatever the zoom:
+  // there are only a few and they are what the map is fought over.
+  POI_LABEL_SCALE: 4,
+  drawPOIs() {
+    if (!Game.pois.length) return;
+    const ctx = this.ctx, s = this.cam.scale * this.dpr;
+    const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
+    const fog = this.fogged;
+    const r = Math.max(8 * this.dpr, this.structureRadius() * 1.5);
+    const label = this.cam.scale >= this.POI_LABEL_SCALE;
+    for (const q of Game.pois) {
+      if (fog && this.fogHides(q.tile)) continue;
+      const px = (q.tile % w + 0.5 - this.cam.x) * s + cw / 2;
+      const py = (((q.tile / w) | 0) + 0.5 - this.cam.y) * s + ch / 2;
+      const owner = GameMap.owner[q.tile];
+      const c = owner >= 0 ? Game.players[owner].color : [170, 176, 186];
+      if (q.kind === 'pass' && owner >= 0) {
+        const rr = Game.POI_FORT_RANGE * s;
+        if (px + rr > 0 && py + rr > 0 && px - rr < cw && py - rr < ch) {
+          ctx.beginPath();
+          ctx.arc(px, py, rr, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.06)`;
+          ctx.fill();
+          ctx.lineWidth = Math.max(1, this.dpr * 1.5);
+          ctx.strokeStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.35)`;
+          ctx.setLineDash([2 * this.dpr, 3 * this.dpr]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+      if (px < -r * 3 || py < -r * 3 || px > cw + r * 3 || py > ch + r * 3) continue;
+      ctx.beginPath();
+      ctx.moveTo(px, py - r);
+      ctx.lineTo(px + r, py);
+      ctx.lineTo(px, py + r);
+      ctx.lineTo(px - r, py);
+      ctx.closePath();
+      ctx.fillStyle = q.kind === 'gold' ? 'rgb(58, 44, 14)' : 'rgb(40, 44, 52)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1.5, r * 0.16);
+      ctx.strokeStyle = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+      ctx.stroke();
+      const img = this.icon(q.kind === 'gold' ? 'gold' : 'fort', r * 1.05);
+      if (img) ctx.drawImage(img, px - img.width / 2, py - img.height / 2);
+      if (label) {
+        const font = Math.round(Math.max(11, r * 0.5));
+        ctx.font = `600 ${font}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        const text = q.kind === 'gold' ? 'Gold Deposit +' + Game.POI_GOLD_PER_SEC + '/s' : 'Mountain Pass';
+        ctx.lineWidth = Math.max(2, font * 0.25);
+        ctx.strokeStyle = 'rgba(8, 14, 26, 0.85)';
+        ctx.strokeText(text, px, py + r + 2 * this.dpr);
+        ctx.fillStyle = q.kind === 'gold' ? '#ffd76a' : '#dfe5ee';
+        ctx.fillText(text, px, py + r + 2 * this.dpr);
+      }
+    }
+  },
+
   drawStructureDots() {
     const ctx = this.ctx, s = this.cam.scale * this.dpr;
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;

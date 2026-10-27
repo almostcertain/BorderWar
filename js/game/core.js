@@ -199,7 +199,8 @@ const Game = {
     // 'europe', ...) with its own fixed size; `mapSize` is ignored for it.
     // 'procedural' (or none) is the generator, keyed by mapSize and shaped by
     // the lobby's mapGen knobs.
-    if (config.map && config.map !== 'procedural') {
+    const procedural = !config.map || config.map === 'procedural';
+    if (!procedural) {
       const data = GameMap.mapData[config.map];
       if (!data) {
         throw new Error('Game.init: map "' + config.map + '" selected but GameMap.mapData was not preloaded (see js/net/worldmap.js)');
@@ -230,6 +231,9 @@ const Game = {
     const allSpawns = GameMap.findSpawns(H + botCount + tribeCount, this.rng);
     this.humanReserveTiles = allSpawns.slice(0, H);
     const npcSpawns = allSpawns.slice(H);
+    // Points of interest (game/poi.js): procedural maps only, off unless the
+    // config says exactly true.
+    this.initPOIs(procedural && config.pointsOfInterest === true, seed, allSpawns);
 
     // Each human is placed by its own roster entry's `.playerId` field, not
     // by array position — today the server always hands out contiguous
@@ -456,6 +460,7 @@ const Game = {
     if (!this.spawning) return 'Game already started';
     if (this.fog) return 'Spawns are random in fog of war';
     if (tile < 0 || !GameMap.isLand(tile)) return 'Choose a land tile';
+    if (this.poiNear(tile, this.POI_SPAWN_CLEAR)) return 'Too close to a point of interest';
     // "Unclaimed" already means "not currently held by anyone, human or
     // NPC" — so two humans picking distinct legal spots never collide, and a
     // human re-picking a tile inside their own current disc will (harmlessly)

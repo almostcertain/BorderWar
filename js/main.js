@@ -80,6 +80,7 @@
     const real = REAL_MAP_COUNTS[mapType.value];
     sizeRow.classList.toggle('hidden', !!real);
     document.getElementById(prefix ? prefix + 'MapGenBox' : 'mapGenBox').classList.toggle('hidden', !!real);
+    document.getElementById(prefix ? prefix + 'PoiRow' : 'poiRow').classList.toggle('hidden', !!real);
     if (!real) UI.refreshMapPreview(prefix);
     if (real) {
       bots.value = real[0];
@@ -559,7 +560,8 @@
       difficulty: difficultySelect.value,
       gameMode: mode.gameMode,
       playerTeams: mode.playerTeams,
-      fogOfWar: mode.fogOfWar
+      fogOfWar: mode.fogOfWar,
+      pointsOfInterest: mode.pointsOfInterest
     });
   }
 

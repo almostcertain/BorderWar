@@ -426,6 +426,7 @@
         <label>Tribes <input id="tribeCount" type="number" min="0" max="400" value="400"></label>
       </div>
       <input id="fogOfWar" type="checkbox" checked data-toggle="Fog of war" title="The map starts black and you only see what you have discovered. Hides the map preview.">
+      <div id="poiRow"><input id="pointsOfInterest" type="checkbox" checked data-toggle="Points of interest" title="Gold Deposits and Mountain Passes on the map. Hold their tile for extra gold or a free fort. Generated maps only."></div>
       <button id="startBtn">Start Game</button>
     </div>
 
@@ -539,6 +540,7 @@
         <label>Tribes <input id="hostTribeCount" type="number" min="0" max="400" value="400"></label>
       </div>
       <input id="hostFogOfWar" type="checkbox" checked data-toggle="Fog of war" title="The map starts black and players only see what they have discovered. Hides the map preview.">
+      <div id="hostPoiRow"><input id="hostPointsOfInterest" type="checkbox" checked data-toggle="Points of interest" title="Gold Deposits and Mountain Passes on the map. Hold their tile for extra gold or a free fort. Generated maps only."></div>
         <button id="hostStartBtn" class="hidden">Start Game</button>
         </div>
         <button id="hostLeaveBtn" class="lobbyLeave">Leave Lobby</button>
@@ -630,7 +632,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'game/specialize', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'render', 'input', 'account', 'progress-defs', 'progress', 'markup', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'game/specialize', 'game/poi', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'render', 'input', 'account', 'progress-defs', 'progress', 'markup', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

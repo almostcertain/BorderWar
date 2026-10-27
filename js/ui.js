@@ -877,7 +877,8 @@ const UI = {
       (p.team ? ' Team ' + escapeHtml(p.team) + (Game.onSameTeam(Game.me, p.id) ? ' (teammate)' : '') : '') +
       (Game.areAllied(Game.me, p.id) && !Game.onSameTeam(Game.me, p.id) ? ' ' + iconHtml('ally') + ' Allied' : '') +
       (Game.isTraitor(p) ? ' ' + iconHtml('traitor') + ' Traitor' : '') +
-      (!p.isTribe && p.id !== Game.me && Game.me >= 0 && !Game.canTrade(Game.me, p.id) ? ' ' + iconHtml('embargo') + ' No trade' : '');
+      (!p.isTribe && p.id !== Game.me && Game.me >= 0 && !Game.canTrade(Game.me, p.id) ? ' ' + iconHtml('embargo') + ' No trade' : '') +
+      this.poiHoldings(p.id);
     if (subEl._html !== sub) { subEl._html = sub; subEl.innerHTML = sub; }
     this.updateBotFace(p);
 
@@ -898,6 +899,19 @@ const UI = {
     // Treasuries are public, so a rival's gold is shown. The per-second
     // rate is left out: it is the same formula for everyone.
     document.getElementById('hpGoldValue').textContent = formatGoldTight(p.gold);
+  },
+
+  // Points of interest a nation holds, for the hover panel's sub line.
+  poiHoldings(id) {
+    let gold = 0, pass = 0;
+    for (const q of Game.pois) {
+      if (GameMap.owner[q.tile] !== id) continue;
+      if (q.kind === 'gold') gold++; else pass++;
+    }
+    const parts = [];
+    if (gold) parts.push(iconHtml('gold') + ' ' + gold + (gold === 1 ? ' deposit' : ' deposits'));
+    if (pass) parts.push(iconHtml('fort') + ' ' + pass + (pass === 1 ? ' pass' : ' passes'));
+    return parts.length ? ' ' + parts.join(' ') : '';
   },
 
   // A bot's opinion of the player as a face: its relations entry, banded the
@@ -2858,7 +2872,7 @@ const UI = {
     const gen = this.getMapGenConfig('host');
     const config = { map: map, mapSize: mapSize, mapGen: gen.mapGen, bots: bots, tribes: tribes,
       difficulty: difficulty, gameMode: mode.gameMode, playerTeams: mode.playerTeams,
-      fogOfWar: mode.fogOfWar };
+      fogOfWar: mode.fogOfWar, pointsOfInterest: mode.pointsOfInterest };
     // Procedural maps use the preview's seed; World keeps a fresh server seed.
     if (map === 'procedural') config.seed = gen.seed;
     return config;
@@ -2870,8 +2884,8 @@ const UI = {
   // as their OpenFront strings.
   modeIds(prefix) {
     return prefix
-      ? { mode: prefix + 'GameMode', teams: prefix + 'PlayerTeams', row: prefix + 'PlayerTeamsRow', fog: prefix + 'FogOfWar' }
-      : { mode: 'gameMode', teams: 'playerTeams', row: 'playerTeamsRow', fog: 'fogOfWar' };
+      ? { mode: prefix + 'GameMode', teams: prefix + 'PlayerTeams', row: prefix + 'PlayerTeamsRow', fog: prefix + 'FogOfWar', poi: prefix + 'PointsOfInterest' }
+      : { mode: 'gameMode', teams: 'playerTeams', row: 'playerTeamsRow', fog: 'fogOfWar', poi: 'pointsOfInterest' };
   },
 
   getModeConfig(prefix) {
@@ -2881,7 +2895,9 @@ const UI = {
     const playerTeams = /^\d+$/.test(raw) ? parseInt(raw, 10) : raw;
     // Fog of war (docs/fog-of-war.md) rides in the same config.
     const fogOfWar = !!document.getElementById(ids.fog).checked;
-    return { gameMode, playerTeams, fogOfWar };
+    // Points of interest only exist on procedural maps; the toggle hides otherwise.
+    const pointsOfInterest = !!document.getElementById(ids.poi).checked;
+    return { gameMode, playerTeams, fogOfWar, pointsOfInterest };
   },
 
   // Ticking Fog of war hides the whole map preview block (canvas, note, seed

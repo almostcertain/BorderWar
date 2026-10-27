@@ -174,6 +174,7 @@ Object.assign(Game, {
   // passes it, AI.fortSite does, so a bot doesn't queue a second fort beside
   // one it just started.
   fortInRange(tile, ownerId, includePending) {
+    if (this.pois.length && this.poiFortInRange(tile, ownerId)) return true;
     const w = GameMap.width, tx = tile % w, ty = (tile / w) | 0;
     const fr = this.fortRange(), r2 = fr * fr;
     for (const [bt, b] of this.buildings) {

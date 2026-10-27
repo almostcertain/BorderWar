@@ -147,7 +147,7 @@ Object.assign(Game, {
   // whose last tile is gone can stay technically alive for a while (the
   // death sweep also wants its troops under 20) and has nothing to tax.
   goldPerSecond(p) {
-    return p && p.alive && p.tiles.size > 0 ? this.GOLD_PER_SEC + this.specGoldPerSecond(p) : 0;
+    return p && p.alive && p.tiles.size > 0 ? this.GOLD_PER_SEC + this.specGoldPerSecond(p) + this.poiGoldPerSecond(p) : 0;
   },
 
 });

@@ -1137,6 +1137,8 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 }
 
 .hidden { display: none !important; }
+/* Wrapper only there so main.js can hide the toggle tile on real-world maps. */
+#poiRow, #hostPoiRow { display: contents; }
 
 .panel {
   max-width: 340px;

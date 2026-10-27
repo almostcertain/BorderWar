@@ -576,7 +576,9 @@ class GameServer {
         playerTeams: GameServer.normalizePlayerTeams(config.playerTeams),
         // Fog of war (docs/fog-of-war.md): a strict boolean. The auto lobby
         // always turns it on (_startAutoLobby).
-        fogOfWar: config.fogOfWar === true
+        fogOfWar: config.fogOfWar === true,
+        // docs/points-of-interest.md: a strict boolean, procedural maps only.
+        pointsOfInterest: config.pointsOfInterest === true
       },
       players: players
     };
