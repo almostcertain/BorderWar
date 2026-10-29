@@ -331,6 +331,21 @@ html, body {
 
 #debugToggle:active { filter: brightness(0.85); }
 
+/* Dev only (UI.DEBUG_HOST): top right of the main menu, in the in-game debug button's red. */
+#menuDebug { position: fixed; top: calc(env(safe-area-inset-top) + 56px); right: 8px; z-index: 5; display: flex; flex-direction: column; gap: 4px; }
+#menuDebug.hidden { display: none; }
+.panel #menuDebug button {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 120, 120, 0.35);
+  background: rgba(120, 30, 30, 0.55);
+  color: #fff;
+  white-space: nowrap;
+}
+.panel #menuDebug button:active { filter: brightness(0.85); }
+
 #debugPanel {
   position: fixed;
   /* Sits below #debugToggle. */
@@ -1713,7 +1728,6 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 #overlay.modeOpen #menuPitch,
 #overlay.modeOpen #installBtn,
 #overlay.modeOpen #menuFoot,
-#overlay.modeOpen #menuDebug,
 #overlay[data-mode="replay"] #nameRow,
 .menuPanel:has(#modeTabs.hidden) #menuFoot { display: none; }
 .menuPanel:has(#modeTabs.hidden) #modeBack { display: none; }
@@ -1732,10 +1746,8 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 .panel button#modeBack:hover { background: rgba(255, 255, 255, 0.18); }
 
 /* Replays / Achievements / What's new: secondary buttons in a row under the menu. */
-#menuFoot, #menuDebug { display: flex; gap: 8px; }
-#menuDebug.hidden { display: none; }
-.panel #menuFoot button,
-.panel #menuDebug button {
+#menuFoot { display: flex; gap: 8px; }
+.panel #menuFoot button {
   flex: 1 1 0;
   padding: 10px 6px;
   font-size: 14px;
@@ -1743,9 +1755,7 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
-.panel #menuDebug button { color: #ffb46b; }
-.panel #menuFoot button:hover,
-.panel #menuDebug button:hover { background: rgba(255, 255, 255, 0.18); }
+.panel #menuFoot button:hover { background: rgba(255, 255, 255, 0.18); }
 .panel #menuFoot button:active { background: rgba(255, 255, 255, 0.06); }
 
 /* --- What's new (UI.setupNews) ----------------------------------------------- */

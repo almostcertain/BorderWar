@@ -2292,7 +2292,7 @@ const UI = {
     });
     document.getElementById('cosmeticsLink').addEventListener('click', () => open('cosmetics'));
     document.getElementById('achClose').addEventListener('click', close);
-    if (this.DEBUG_HOST && /[?&]debug\b/.test(location.search)) {
+    if (this.DEBUG_HOST) {
       document.getElementById('menuDebug').classList.remove('hidden');
       document.getElementById('debugUnlockAll').addEventListener('click', () => Progress.debugSetAll(true));
       document.getElementById('debugLockAll').addEventListener('click', () => Progress.debugSetAll(false));
