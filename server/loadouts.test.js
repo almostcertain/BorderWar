@@ -360,3 +360,26 @@ test('a pack item shows only for a socket whose own account owns the pack', () =
   assert.deepStrictEqual(roster(), [{ title: null, emblem: null, banner: null, flag: 'flag_sun', pattern: null }, undefined]);
   s.close();
 });
+
+test('a rejoin with a known persistentID reclaims its old clientID', () => {
+  const s = setup();
+  const a = s.join('G1', 'Ada', PID_A);
+  const game = s.manager.getGame('G1');
+  game.start({ seed: 7 });
+  const oldID = [...game.clients.keys()][0];
+
+  a.emit('close');
+  assert.strictEqual(game.clients.get(oldID).active, false);
+
+  const ws = fakeSocket();
+  s.manager.handleConnection(ws);
+  ws.emit('message', JSON.stringify(Protocol.msg.rejoin('G1', 0, PID_A)));
+  assert.strictEqual(ws.last('start').myClientID, oldID);
+  assert.strictEqual(game.clients.size, 1);
+  assert.strictEqual(game.clients.get(oldID).active, true);
+
+  // The replaced socket closing late must not disconnect the new one.
+  a.emit('close');
+  assert.strictEqual(game.clients.get(oldID).active, true);
+  s.close();
+});

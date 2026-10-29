@@ -269,7 +269,7 @@ class GameManager {
         }
         // rejoinClient may itself close the connection (nothing-to-rejoin);
         // a null return means it already did, and there is nothing to wire.
-        const clientID = game.rejoinClient(ws, msg.lastTurn);
+        const clientID = game.rejoinClient(ws, msg.lastTurn, msg.persistentID);
         if (clientID === null) return;
         this._wire(game, ws, clientID);
         return;
@@ -350,7 +350,7 @@ class GameManager {
       }
     });
     ws.on('close', () => {
-      game.removeClient(clientID);
+      game.removeClient(clientID, ws);
       this.reap();
     });
   }

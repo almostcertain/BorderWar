@@ -159,17 +159,39 @@ class GameServer {
     return clientID;
   }
 
-  // Best-effort rejoin: no identity reunification. The `rejoin` message
-  // carries a persistentID, but the server keeps no persistentID -> roster
-  // mapping and (per D2) could not verify one anyway. So this replies `start`
-  // with turns.slice(lastTurn) under a FRESH clientID: the client catches up
-  // but does not resume control of its old nation.
-  rejoinClient(ws, lastTurn) {
+  // A rejoin carrying the persistentID of a roster client takes that slot
+  // back (same clientID, so its intents still resolve to its nation). The id
+  // is never broadcast, but isn't verified either (D2). Unknown ids get a
+  // fresh clientID: the client catches up but controls nothing.
+  rejoinClient(ws, lastTurn, persistentID) {
     if (this.stage === Protocol.GAME_PHASE.LOBBY) {
       log.warn(this._tag, 'rejected rejoin: game has not started');
       Client.closeWithError(ws, 'nothing-to-rejoin',
         'Game "' + this.gameID + '" has not started yet — send join, not rejoin.');
       return null;
+    }
+
+    const turnFrom = (Number.isInteger(lastTurn) && lastTurn >= 0) ? lastTurn : 0;
+    let prior = null;
+    if (persistentID) {
+      for (const c of this.clients.values()) {
+        if (c.persistentID === persistentID) { prior = c; break; }
+      }
+    }
+    if (prior) {
+      const oldWs = prior.ws;
+      const wasDisconnected = !prior.active;
+      prior.ws = ws;
+      prior.active = true;
+      prior.isAlive = true;
+      prior.lastPing = Date.now();
+      this._emptySince = null;
+      // The old socket may still be half-open; its close must not count.
+      if (oldWs && oldWs !== ws) { try { oldWs.close(1000); } catch (e) { /* already closed */ } }
+      if (wasDisconnected) this.intents.push(Protocol.stamp(Protocol.intent.markDisconnected(false), prior.clientID));
+      log.info(this._tag, who(prior) + ' reclaimed its slot from turn ' + turnFrom);
+      this._send(ws, Protocol.msg.start(this.turns.slice(turnFrom), this.gameStartInfo, prior.clientID));
+      return prior.clientID;
     }
 
     const client = new Client(ws);
@@ -195,9 +217,10 @@ class GameServer {
   // ACTIVE: keep the roster entry and hand off to _disconnectClient, which
   // injects a server-authored mark_disconnected(true) intent into the turn
   // stream for every client's Executor to apply.
-  removeClient(clientID) {
+  removeClient(clientID, ws) {
     const client = this.clients.get(clientID);
     if (!client) return;
+    if (ws && client.ws !== ws) return; // a replaced socket closing after a rejoin
 
     if (this.stage === Protocol.GAME_PHASE.ACTIVE) {
       this._disconnectClient(client, 'connection closed');
