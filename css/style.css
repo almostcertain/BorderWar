@@ -332,8 +332,9 @@ html, body {
 #debugToggle:active { filter: brightness(0.85); }
 
 /* Dev only (UI.DEBUG_HOST): top right of the main menu, in the in-game debug button's red. */
-#menuDebug { position: fixed; top: calc(env(safe-area-inset-top) + 56px); right: 8px; z-index: 5; display: flex; flex-direction: column; gap: 4px; }
-#menuDebug.hidden { display: none; }
+#menuDebug { position: fixed; top: calc(env(safe-area-inset-top) + 56px); right: 8px; z-index: 5; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+#menuDebug.hidden, #menuDebugBody.hidden { display: none; }
+#menuDebugBody { display: flex; flex-direction: column; gap: 4px; }
 .panel #menuDebug button {
   padding: 4px 10px;
   font-size: 11px;

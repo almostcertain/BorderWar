@@ -2294,6 +2294,11 @@ const UI = {
     document.getElementById('achClose').addEventListener('click', close);
     if (this.DEBUG_HOST) {
       document.getElementById('menuDebug').classList.remove('hidden');
+      const body = document.getElementById('menuDebugBody'), toggle = document.getElementById('menuDebugToggle');
+      toggle.addEventListener('click', () => {
+        body.classList.toggle('hidden');
+        toggle.textContent = body.classList.contains('hidden') ? 'Debug ▸' : 'Debug ▾';
+      });
       document.getElementById('debugUnlockAll').addEventListener('click', () => Progress.debugSetAll(true));
       document.getElementById('debugLockAll').addEventListener('click', () => Progress.debugSetAll(false));
     }
