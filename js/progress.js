@@ -150,6 +150,7 @@ const Progress = {
     this.matchEarned.push(id);
     this.save();
     if (this.onUnlock) this.onUnlock(id);
+    this._checkCompletions();
     return true;
   },
 
@@ -167,6 +168,17 @@ const Progress = {
     for (const id of Object.keys(A)) {
       const def = A[id];
       if (def.counter && (this.state.counters[def.counter] || 0) >= def.n) this.unlock(id);
+    }
+    this._checkCompletions();
+  },
+
+  _checkCompletions() {
+    const A = ProgressDefs.ACHIEVEMENTS;
+    for (const id of Object.keys(A)) {
+      const group = A[id].completes;
+      if (!group || this.has(id)) continue;
+      const rest = Object.keys(A).filter(k => k !== id && A[k].group === group && A[k].enabled !== false);
+      if (rest.every(k => this.has(k))) this.unlock(id);
     }
   },
 

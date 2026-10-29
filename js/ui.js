@@ -2281,14 +2281,14 @@ const UI = {
   setupProgress() {
     const overlay = document.getElementById('achOverlay');
     const close = () => overlay.classList.add('hidden');
-    document.getElementById('achLink').addEventListener('click', () => {
+    const open = tab => {
+      this.achTab = tab;
       this.renderAchievements();
       overlay.classList.remove('hidden');
-    });
+    };
+    document.getElementById('achLink').addEventListener('click', () => open('medals'));
+    document.getElementById('cosmeticsLink').addEventListener('click', () => open('cosmetics'));
     document.getElementById('achClose').addEventListener('click', close);
-    for (const tab of document.querySelectorAll('#achTabs button')) {
-      tab.addEventListener('click', () => { this.achTab = tab.dataset.tab; this.renderAchievements(); });
-    }
     document.getElementById('achLoadout').addEventListener('click', e => {
       const btn = e.target.closest('button[data-type]');
       if (!btn || btn.disabled) return;
@@ -2306,7 +2306,8 @@ const UI = {
 
   renderAchievements() {
     const cosmetics = this.achTab === 'cosmetics';
-    for (const tab of document.querySelectorAll('#achTabs button')) tab.classList.toggle('active', tab.dataset.tab === this.achTab);
+    document.getElementById('achTitle').textContent = cosmetics ? 'Cosmetics' : 'Achievements';
+    document.getElementById('achCount').classList.toggle('hidden', cosmetics);
     document.getElementById('achList').classList.toggle('hidden', cosmetics);
     document.getElementById('achLoadout').classList.toggle('hidden', !cosmetics);
     this.renderLoadout();
@@ -2323,7 +2324,7 @@ const UI = {
         const secret = it.def.hidden && !got;
         let sub = secret ? 'Keep playing to find this one.' : it.def.desc;
         const reward = !secret && it.def.unlocks ? ProgressDefs.COSMETICS[it.def.unlocks] : null;
-        if (reward) sub += ' Unlocks ' + (reward.type === 'banner' ? 'a victory banner' : reward.type === 'emblem' ? 'the ' + reward.name + ' emblem' : 'the title "' + reward.name + '"') + '.';
+        if (reward) sub += ' Unlocks ' + (reward.type === 'banner' ? 'a victory banner' : reward.type === 'emblem' ? 'the ' + reward.name + ' emblem' : reward.type === 'flag' ? 'the ' + reward.name + ' flag' : 'the title "' + reward.name + '"') + '.';
         if (got) sub += ' · ' + new Date(it.unlockedAt).toLocaleDateString();
         else if (it.progress) sub += ' · ' + Math.min(it.progress.have, it.progress.need) + '/' + it.progress.need;
         html += `<div class="achRow${got ? ' earned' : ''}" data-group="${group.id}">`
@@ -2396,7 +2397,7 @@ const UI = {
   unlockLine(def) {
     const c = def.unlocks ? ProgressDefs.COSMETICS[def.unlocks] : null;
     if (!c) return '';
-    const kind = { title: 'title', emblem: 'emblem', banner: 'victory banner' }[c.type];
+    const kind = { title: 'title', emblem: 'emblem', banner: 'victory banner', flag: 'flag' }[c.type];
     return `<small>Unlocked ${kind}: ${c.glyph ? c.glyph + ' ' : ''}${escapeHtml(c.name)}</small>`;
   },
 

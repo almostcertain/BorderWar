@@ -4,7 +4,8 @@
 //
 // Achievement fields: name, desc, group; optional `hidden` (shown as ??? until
 // earned), `mp` (multiplayer only), `n` (the threshold `desc` quotes), `counter`
-// (earned when that counter reaches `n`), `unlocks` (a cosmetic id), and
+// (earned when that counter reaches `n`), `completes` (a group id; earned once
+// every other enabled achievement in it is), `unlocks` (a cosmetic id), and
 // `enabled: false` for one whose condition isn't tracked yet (never shown).
 const ProgressDefs = {
   VERSION: 1,
@@ -31,6 +32,7 @@ const ProgressDefs = {
     victory:       { group: 'first', name: 'Victory', desc: 'Win a match.' },
     sea_legs:      { group: 'first', name: 'Sea Legs', desc: 'Land a naval invasion on another landmass.', unlocks: 'emblem_anchor' },
     pact:          { group: 'first', name: 'Pact', desc: 'Form an alliance.' },
+    first_steps:   { group: 'first', name: 'Standard Bearer', desc: 'Earn every other First steps achievement.', completes: 'first', unlocks: 'flag_borderwar' },
 
     wins_5:        { group: 'mastery', name: 'Veteran', desc: 'Win 5 matches.', counter: 'wins', n: 5, unlocks: 'title_veteran' },
     wins_25:       { group: 'mastery', name: 'Warlord', desc: 'Win 25 matches.', counter: 'wins', n: 25, unlocks: 'banner_warlord' },
@@ -70,6 +72,7 @@ const ProgressDefs = {
 
   COSMETICS: {
     // `art` is drawn by Render.drawFlag: a layout and its colours.
+    flag_borderwar:       { type: 'flag', name: 'BorderWar', art: { kind: 'chevron', colors: ['#3d7dff', '#ff9f43'] } },
     flag_tricolour:       { type: 'flag', pack: 'supporter', name: 'Tricolour', art: { kind: 'v3', colors: ['#1d3557', '#f1faee', '#e9c46a'] } },
     flag_bars:            { type: 'flag', pack: 'supporter', name: 'Three Bars', art: { kind: 'h3', colors: ['#2b2d42', '#8d99ae', '#ef233c'] } },
     flag_cross:           { type: 'flag', pack: 'supporter', name: 'Northern Cross', art: { kind: 'cross', colors: ['#14213d', '#fca311'] } },
