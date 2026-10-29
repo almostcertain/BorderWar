@@ -689,6 +689,7 @@ const Progress = {
 
   // The signed-in account's paid packs. The server decides these; a guest has none.
   entitlements() {
+    if (this.debugPacks) return Object.keys(ProgressDefs.PACKS);
     const user = typeof Account !== 'undefined' ? Account.user : null;
     return ProgressDefs.entitlements(user && user.entitlements);
   },
@@ -709,6 +710,27 @@ const Progress = {
     if (pack) return this.entitlements().indexOf(pack) !== -1;
     const by = this.unlockerOf(cosmeticId);
     return !!by && this.has(by);
+  },
+
+  // Dev menu only (UI.setupProgress): own everything, or nothing. Paid packs are
+  // faked on this browser; the server still decides what other players see.
+  debugPacks: false,
+  debugSetAll(on) {
+    const A = ProgressDefs.ACHIEVEMENTS, now = Date.now();
+    this.state.unlocked = {};
+    this.state.counters = {};
+    for (const c of ProgressDefs.COUNTERS) this.state.counters[c] = 0;
+    for (const type of ProgressDefs.COSMETIC_TYPES) this.state.equipped[type] = null;
+    if (on) {
+      for (const id of Object.keys(A)) {
+        if (A[id].enabled === false) continue;
+        this.state.unlocked[id] = now;
+        if (A[id].counter) this.state.counters[A[id].counter] = Math.max(this.state.counters[A[id].counter], A[id].n);
+      }
+    }
+    this.debugPacks = on;
+    this.save();
+    this.sendLoadout();
   },
 
   // `id` null clears the slot.
