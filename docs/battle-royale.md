@@ -28,7 +28,7 @@ Last nation standing wins.
 
 ## Values as built
 
-- **Cost:** 20M flat (`DRILL_COST`). Tunable constant.
+- **Cost:** 35M flat (`DRILL_COST`). Tunable constant.
 - **Countdown:** 20 s from placement to first shrink (`DRILL_COUNTDOWN_S`).
 - **Shrink:** radius falls linearly from start radius to zero over 300 s
   (`DRILL_SHRINK_S`), without stopping.
@@ -137,7 +137,7 @@ within a phase run in parallel and touch disjoint files.
 - Done when: radius schedule is correct at placement, countdown end, midpoint
   and end; matches with no Drill are unaffected.
 - Notes for later tasks (BR-1/BR-2 as built):
-  - `js/game/drill.js`: constants `DRILL_COST` (20M), `DRILL_COUNTDOWN_S`,
+  - `js/game/drill.js`: constants `DRILL_COST` (35M), `DRILL_COUNTDOWN_S`,
     `DRILL_SHRINK_S`, `DRILL_FP` (1024 fixed-point units per tile).
   - `Game.drill` (drill.js:34): `{ ownerId, tile, cx, cy, placedTick,
     startTick, endTick, r0, r, rPrev }`. `r0` is whole tiles; `r` (current
