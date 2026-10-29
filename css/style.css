@@ -1793,6 +1793,11 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 .achGroup { margin-top: 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; }
 .achRow { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); opacity: 0.6; }
 .achRow.earned { opacity: 1; background: rgba(255, 200, 80, 0.1); }
+.panel button.achReward { flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 8px; margin-left: auto; font-size: 12px; text-align: left; background: rgba(61, 125, 255, 0.25); border: 1px solid rgba(61, 125, 255, 0.6); }
+.panel button.achReward:hover { background: rgba(61, 125, 255, 0.4); }
+.panel button.achReward.got { background: rgba(255, 159, 67, 0.2); border-color: rgba(255, 159, 67, 0.7); }
+.achReward span { display: flex; flex-direction: column; }
+.achReward small { font-size: 10px; opacity: 0.75; }
 .achMedal { flex: none; font-size: 20px; line-height: 1; color: rgba(255, 255, 255, 0.4); }
 .achRow.earned .achMedal, .achToastRow .achMedal, #endEarned .achMedal { color: #ffc850; }
 .achText { display: flex; flex-direction: column; min-width: 0; font-size: 14px; }
@@ -1810,6 +1815,17 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 .packCard.owned { background: rgba(255, 200, 80, 0.12); outline-color: rgba(255, 200, 80, 0.6); }
 .packCard small { opacity: 0.8; }
 .packCard .packStatus { font-style: italic; }
+.achSection { display: flex; flex-direction: column; gap: 6px; }
+/* Desktop: a wide panel with the groups in columns instead of one long list. */
+@media (min-width: 900px) and (min-height: 600px) {
+  #achOverlay .optionsPanel { max-width: 1040px; max-height: min(100%, 820px); gap: 14px; padding: 24px 28px; }
+  #achList, #achLoadout { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px 20px; align-content: start; padding-right: 8px; }
+  #achList.hidden, #achLoadout.hidden { display: none; }
+  #achLoadout .packCard { grid-column: 1 / -1; }
+  .achSection { align-self: start; }
+  .achGroup { margin-top: 0; }
+  #achClose { align-self: center; min-width: 200px; }
+}
 .playerTitle { font-size: 0.7em; font-weight: 400; font-style: italic; opacity: 0.7; }
 .rTitle { font-size: 10px; font-weight: 400; font-style: italic; opacity: 0.75; }
 

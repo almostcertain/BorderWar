@@ -2287,6 +2287,9 @@ const UI = {
       overlay.classList.remove('hidden');
     };
     document.getElementById('achLink').addEventListener('click', () => open('medals'));
+    document.getElementById('achList').addEventListener('click', e => {
+      if (e.target.closest('button.achReward')) open('cosmetics');
+    });
     document.getElementById('cosmeticsLink').addEventListener('click', () => open('cosmetics'));
     document.getElementById('achClose').addEventListener('click', close);
     document.getElementById('achLoadout').addEventListener('click', e => {
@@ -2318,22 +2321,33 @@ const UI = {
     for (const group of ProgressDefs.GROUPS) {
       const rows = items.filter(it => it.def.group === group.id);
       if (!rows.length) continue;
-      html += `<div class="achGroup">${escapeHtml(group.name)}</div>`;
+      html += `<section class="achSection"><div class="achGroup">${escapeHtml(group.name)}</div>`;
       for (const it of rows) {
         const got = !!it.unlockedAt;
         const secret = it.def.hidden && !got;
         let sub = secret ? 'Keep playing to find this one.' : it.def.desc;
         const reward = !secret && it.def.unlocks ? ProgressDefs.COSMETICS[it.def.unlocks] : null;
-        if (reward) sub += ' Unlocks ' + (reward.type === 'banner' ? 'a victory banner' : reward.type === 'emblem' ? 'the ' + reward.name + ' emblem' : reward.type === 'flag' ? 'the ' + reward.name + ' flag' : 'the title "' + reward.name + '"') + '.';
         if (got) sub += ' · ' + new Date(it.unlockedAt).toLocaleDateString();
         else if (it.progress) sub += ' · ' + Math.min(it.progress.have, it.progress.need) + '/' + it.progress.need;
         html += `<div class="achRow${got ? ' earned' : ''}" data-group="${group.id}">`
           + `<span class="achMedal" aria-hidden="true">${got ? '★' : '☆'}</span>`
-          + `<span class="achText"><b>${escapeHtml(secret ? '???' : it.def.name)}</b><small>${escapeHtml(sub)}</small></span></div>`;
+          + `<span class="achText"><b>${escapeHtml(secret ? '???' : it.def.name)}</b><small>${escapeHtml(sub)}</small></span>`
+          + (reward ? this.rewardChip(it.def.unlocks, got) : '') + '</div>';
       }
+      html += '</section>';
     }
     document.getElementById('achList').innerHTML = html;
     document.getElementById('achGuestNote').classList.toggle('hidden', !Account.available || !!Account.user);
+  },
+
+  // The cosmetic an achievement grants, as a button that opens the Cosmetics screen.
+  rewardChip(id, got) {
+    const c = ProgressDefs.COSMETICS[id];
+    const kind = { title: 'Title', emblem: 'Emblem', banner: 'Banner', flag: 'Flag', pattern: 'Pattern' }[c.type];
+    const pic = Render.swatchURL(id);
+    return `<button type="button" class="achReward${got ? ' got' : ''}" data-cosmetic="${id}" title="View in Cosmetics">`
+      + `${pic ? `<img class="loadoutPic" src="${pic}" alt="">` : ''}`
+      + `<span><small>${got ? 'Unlocked' : 'Reward'} · ${kind}</small>${c.glyph ? c.glyph + ' ' : ''}${escapeHtml(c.name)}</span></button>`;
   },
 
   // One row of choices per cosmetic type; a locked one names what unlocks it.
@@ -2355,7 +2369,7 @@ const UI = {
     // Paid slots first: they are what the card above is selling.
     const types = ProgressDefs.COSMETIC_TYPES.slice().sort((a, b) => (a === 'flag' || a === 'pattern' ? 0 : 1) - (b === 'flag' || b === 'pattern' ? 0 : 1));
     for (const type of types) {
-      html += `<div class="achGroup">${LABELS[type]} <span>${NOTES[type]}</span></div><div class="loadoutRow">`;
+      html += `<section class="achSection"><div class="achGroup">${LABELS[type]} <span>${NOTES[type]}</span></div><div class="loadoutRow">`;
       html += `<button type="button" data-type="${type}" data-id="" class="${eq[type] ? '' : 'active'}">None</button>`;
       for (const id of Object.keys(ProgressDefs.COSMETICS)) {
         const c = ProgressDefs.COSMETICS[id];
@@ -2371,7 +2385,7 @@ const UI = {
           + `${owned ? '' : ' disabled'} title="${escapeHtml(tip)}">${pic ? `<img class="loadoutPic" src="${pic}" alt="">` : ''}`
           + `${c.glyph ? c.glyph + ' ' : ''}${escapeHtml(c.name)}</button>`;
       }
-      html += '</div>';
+      html += '</div></section>';
     }
     document.getElementById('achLoadout').innerHTML = html;
   },
