@@ -194,36 +194,10 @@ const Render = {
     this.fogSource = null;         // the fog layer restarts from the new match's vision grid (updateFog)
     this.dropFogBitmaps();
 
-    // Unclaimed ground, one tone per terrain: grassy plains, dun highland,
-    // bare grey mountain.
-    const water = this.packed(18, 34, 60);
-    const bare = [this.packed(78, 94, 72), this.packed(104, 96, 66), this.packed(122, 120, 114)];
-    this.bareTone = bare;
     this.altRel = null;   // alt view's relation table is per-match, like the colours below
     this.altView = false;
-    this.terrain = new Uint32Array(w * h);
-    for (let i = 0; i < w * h; i++) {
-      this.terrain[i] = GameMap.owner[i] === WATER ? water : bare[GameMap.terrain[i]];
-    }
-
-    // Owned tiles keep the nation's colour but darken over rough ground, so
-    // ranges stay legible once the map is carved up — which is the whole point
-    // of having terrain, since that is when it decides where fronts stall.
-    const SHADE = [1, 0.84, 0.7];
-    this.fillColor = [];
-    this.borderColor = new Uint32Array(Game.players.length);
-    for (let p = 0; p < Game.players.length; p++) {
-      const [r, g, b] = Game.players[p].color;
-      this.fillColor[p] = new Uint32Array(3);
-      for (let t = 0; t < 3; t++) {
-        const s = SHADE[t] * 0.62;
-        this.fillColor[p][t] = this.packed(r * s, g * s, b * s);
-      }
-      this.borderColor[p] = this.packed(
-        Math.min(255, r * 1.15 + 40), Math.min(255, g * 1.15 + 40), Math.min(255, b * 1.15 + 40));
-    }
     this.patRows = new Array(Game.players.length).fill(null);
-    this.patFill = new Array(Game.players.length).fill(null);
+    this.buildPalette();
 
     // Hover highlight: a second image the size of tileCanvas, transparent
     // except the hovered nation's tiles, blitted in lockstep with it.
@@ -242,6 +216,105 @@ const Render = {
     this.tileLayer.throttle = true;
     this.hoverLayer = this.makeLayer(this.hoverCanvas, false);
     this.hoverLayer.snap = true;
+  },
+
+  // --- Map style (docs/atlas-map-style.md) -------------------------------------
+  // 'classic' or 'atlas'. Only changes the colours paintTile uses.
+  mapStyle: 'classic',
+  ATLAS: {
+    water: [176, 190, 180],
+    coast: [74, 56, 40],
+    bare: [[228, 214, 176], [212, 192, 150], [190, 174, 146]],
+    ink: [60, 40, 28],
+    sepia: [150, 110, 70],
+    bg: '#241b12'
+  },
+
+  setMapStyle(style) {
+    style = style === 'atlas' ? 'atlas' : 'classic';
+    if (style === this.mapStyle) return;
+    this.mapStyle = style;
+    if (!this.tileCanvas) return;
+    this.buildPalette();
+    this.applyPatterns();
+    if (this.shownOwner) this.repaintAll();
+  },
+
+  // A nation colour pulled toward grey and sepia, so washes sit on paper.
+  atlasTone(rgb) {
+    const A = this.ATLAS, lum = rgb[0] * 0.3 + rgb[1] * 0.59 + rgb[2] * 0.11;
+    return rgb.map((c, k) => {
+      const d = c + (lum - c) * 0.15;
+      return d + (A.sepia[k] - d) * 0.07;
+    });
+  },
+
+  mixRGB(a, b, t) { return this.packed(a[0] + (b[0] - a[0]) * t | 0, a[1] + (b[1] - a[1]) * t | 0, a[2] + (b[2] - a[2]) * t | 0); },
+
+  // Terrain, fill and border colours for the current style and players.
+  buildPalette() {
+    const w = GameMap.width, h = GameMap.height, n = Game.players.length;
+    const atlas = this.mapStyle === 'atlas', A = this.ATLAS;
+    // Unclaimed ground, one tone per terrain: grassy plains, dun highland,
+    // bare grey mountain (classic), or paper shades (atlas).
+    const water = atlas ? this.packed(...A.water) : this.packed(18, 34, 60);
+    const coast = atlas ? this.packed(...A.coast) : water;
+    const bare = atlas ? A.bare.map(c => this.packed(...c))
+      : [this.packed(78, 94, 72), this.packed(104, 96, 66), this.packed(122, 120, 114)];
+    this.bareTone = bare;
+    this.altFill = null;   // derived from bareTone
+    this.terrain = new Uint32Array(w * h);
+    const own = GameMap.owner;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (own[i] !== WATER) { this.terrain[i] = bare[GameMap.terrain[i]]; continue; }
+        const shore = atlas && (
+          (x > 0 && own[i - 1] !== WATER) || (x < w - 1 && own[i + 1] !== WATER) ||
+          (y > 0 && own[i - w] !== WATER) || (y < h - 1 && own[i + w] !== WATER));
+        this.terrain[i] = shore ? coast : water;
+      }
+    }
+
+    // Owned tiles keep the nation's colour but darken over rough ground, so
+    // ranges stay legible once the map is carved up — which is the whole point
+    // of having terrain, since that is when it decides where fronts stall.
+    const SHADE = [1, 0.84, 0.7];
+    this.fillColor = [];
+    this.borderColor = new Uint32Array(n);
+    for (let p = 0; p < n; p++) {
+      const [r, g, b] = Game.players[p].color;
+      this.fillColor[p] = new Uint32Array(3);
+      if (atlas) {
+        const tone = this.atlasTone([r, g, b]);
+        for (let t = 0; t < 3; t++) this.fillColor[p][t] = this.mixRGB(A.bare[t], tone, 0.6);
+        this.borderColor[p] = this.mixRGB(tone.map(c => c * 0.67), A.ink, 0.18);
+        continue;
+      }
+      for (let t = 0; t < 3; t++) {
+        const s = SHADE[t] * 0.62;
+        this.fillColor[p][t] = this.packed(r * s, g * s, b * s);
+      }
+      this.borderColor[p] = this.packed(
+        Math.min(255, r * 1.15 + 40), Math.min(255, g * 1.15 + 40), Math.min(255, b * 1.15 + 40));
+    }
+    this.patFill = new Array(n).fill(null);
+  },
+
+  // A pattern's second tone, by terrain.
+  patternFill(p) {
+    const [r, g, b] = Game.players[p].color, out = new Uint32Array(3);
+    if (this.mapStyle === 'atlas') {
+      const tone = this.atlasTone([r, g, b]);
+      for (let t = 0; t < 3; t++) out[t] = this.mixRGB(this.ATLAS.bare[t], tone, 0.4);
+      return out;
+    }
+    const SHADE = [1, 0.84, 0.7];
+    for (let t = 0; t < 3; t++) {
+      const s = SHADE[t] * 0.78;
+      out[t] = this.packed(Math.min(255, r * s + 12), Math.min(255, g * s + 12), Math.min(255, b * s + 12));
+    }
+    return out;
   },
 
   // --- Chunked bitmap layers ---------------------------------------------------
@@ -524,19 +597,12 @@ const Render = {
   // are known (after Progress.beginMatch).
   applyPatterns() {
     if (!this.patRows) return;
-    const SHADE = [1, 0.84, 0.7];
     let changed = false;
     for (let p = 0; p < Game.players.length; p++) {
       const rows = this.patternMask(Progress.patternOf(p));
       if (rows !== this.patRows[p]) changed = true;
       this.patRows[p] = rows;
-      if (!rows || this.patFill[p]) continue;
-      const [r, g, b] = Game.players[p].color;
-      this.patFill[p] = new Uint32Array(3);
-      for (let t = 0; t < 3; t++) {
-        const s = SHADE[t] * 0.78;
-        this.patFill[p][t] = this.packed(Math.min(255, r * s + 12), Math.min(255, g * s + 12), Math.min(255, b * s + 12));
-      }
+      if (rows && !this.patFill[p]) this.patFill[p] = this.patternFill(p);
     }
     if (changed && this.shownOwner && this.shownOwner.length === GameMap.owner.length) this.repaintAll();
   },
@@ -1285,7 +1351,7 @@ const Render = {
     const ctx = this.ctx;
     this.clampCamera();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#060a14';
+    ctx.fillStyle = this.mapStyle === 'atlas' ? this.ATLAS.bg : '#060a14';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     const s = this.cam.scale * this.dpr;

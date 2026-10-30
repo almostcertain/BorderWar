@@ -7,7 +7,7 @@ const Options = (function() {
   // Battery saver starts on for phones and tablets, off where there is a mouse.
   const touchDevice = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
   // Music starts off on a developer's own machine, on for players on the live site.
-  const DEFAULTS = { lowGfx: false, saveBattery: touchDevice, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false, musicOn: !UI.DEBUG_HOST, musicVol: 0.7 };
+  const DEFAULTS = { lowGfx: false, saveBattery: touchDevice, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false, musicOn: !UI.DEBUG_HOST, musicVol: 0.7, mapStyle: 'classic' };
   const values = Object.assign({}, DEFAULTS);
 
   try {
@@ -24,6 +24,7 @@ const Options = (function() {
 
   function apply() {
     Render.setLowRes(values.lowGfx);
+    Render.setMapStyle(values.mapStyle);
     MenuBg.setEnabled(!values.lowGfx);
     document.body.classList.toggle('noHint', values.hideHint);
     document.documentElement.style.setProperty('--ui-scale', values.uiScale);
@@ -65,6 +66,10 @@ const Options = (function() {
   scaleEl.value = String(values.uiScale);
   if (scaleEl.value !== String(values.uiScale)) scaleEl.value = '1';
   scaleEl.addEventListener('change', () => set('uiScale', parseFloat(scaleEl.value)));
+  const styleEl = document.getElementById('optMapStyle');
+  styleEl.value = values.mapStyle;
+  if (styleEl.value !== values.mapStyle) styleEl.value = 'classic';
+  styleEl.addEventListener('change', () => set('mapStyle', styleEl.value));
   // Menus are silent, so moving the slider plays the music until the dialog
   // closes: otherwise there would be nothing to set the volume against.
   const volEl = document.getElementById('optMusicVol');
