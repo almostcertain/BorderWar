@@ -210,16 +210,15 @@ const Render = {
     this.hoverBuiltFor = -1;
     this.hoverBox = null;
 
-    if (this.tileLayer) this.disposeLayer(this.tileLayer);
     if (this.hoverLayer) this.disposeLayer(this.hoverLayer);
-    this.tileLayer = this.makeLayer(this.tileCanvas, true);
-    this.tileLayer.throttle = true;
+    this.makeTileLayer();
     this.hoverLayer = this.makeLayer(this.hoverCanvas, false);
     this.hoverLayer.snap = true;
   },
 
   // --- Map style (docs/atlas-map-style.md) -------------------------------------
-  // 'classic' or 'atlas'. Only changes the colours paintTile uses.
+  // 'classic' or 'atlas'. Atlas recolours paintTile and draws the territory
+  // see-through over paper/relief bases blended by zoom.
   mapStyle: 'classic',
   ATLAS: {
     water: [176, 190, 180],
@@ -231,7 +230,122 @@ const Render = {
     fog: [226, 211, 172],            // unexplored land is blank parchment
     RIPPLES: [3, 6, 10],             // tiles out from the shore
     RIPPLE_INK: [0.2, 0.13, 0.07],
-    BAND: 0.35                       // the band inside a border, from fill toward border tone
+    BAND: 0.35,                      // the band inside a border, from fill toward border tone
+    FILL: 0.6,                       // nation colour's share of an owned tile, over the paper
+    // Zoom blend, in CSS px per tile: paper below NEAR_FROM, relief above
+    // NEAR_TO. Nation colour keeps its strength; the relief shows through it.
+    NEAR_FROM: 2.5,
+    NEAR_TO: 5,
+    relief: [[200, 196, 146], [196, 172, 124], [176, 162, 140], [214, 206, 190]]   // lowland, highland, mountain, peak
+  },
+
+  // 0 zoomed out (paper) to 1 zoomed in (relief).
+  atlasNear() {
+    const A = this.ATLAS;
+    const t = Math.min(1, Math.max(0, (this.cam.scale - A.NEAR_FROM) / (A.NEAR_TO - A.NEAR_FROM)));
+    return t * t * (3 - 2 * t);
+  },
+
+  disposeAtlasBases() {
+    if (this.groundLayer) { this.disposeLayer(this.groundLayer); this.groundLayer = null; }
+    if (this.reliefLayer) { this.disposeLayer(this.reliefLayer); this.reliefLayer = null; }
+  },
+
+  // The two fixed bases under Atlas territory: the flat paper map (`ground`)
+  // and a shaded relief made from the terrain tiers, blurred and roughened.
+  buildAtlasBases(ground) {
+    const w = GameMap.width, h = GameMap.height, n = w * h, own = GameMap.owner, tier = GameMap.terrain;
+    const canvasOf = px => {
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d'), img = g.createImageData(w, h);
+      new Uint32Array(img.data.buffer).set(px);
+      g.putImageData(img, 0, 0);
+      return c;
+    };
+    const groundCanvas = canvasOf(ground);
+    this.groundLayer = this.makeLayer(groundCanvas, false);
+    this.groundLayer.snap = true;   // drawn translucent mid-blend
+
+    const hb = new Float32Array(n);
+    for (let i = 0; i < n; i++) hb[i] = own[i] === WATER ? -0.2 : tier[i] * 0.5;
+    const tmp = new Float32Array(n);
+    for (let pass = 0; pass < 2; pass++) this.boxBlur(hb, tmp, w, h, 3);
+    // Cosmetic value noise (render only): roughness that grows with altitude.
+    const hash = (x, y) => { let k = Math.imul(x, 374761393) + Math.imul(y, 668265263) | 0; k = Math.imul(k ^ (k >>> 13), 1274126177); return ((k ^ (k >>> 16)) >>> 0) / 4294967296; };
+    const vn = (x, y) => {
+      const xi = Math.floor(x), yi = Math.floor(y); let fx = x - xi, fy = y - yi;
+      fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+      const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+      return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+    };
+    const ht = new Float32Array(n);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x, e = Math.max(0, hb[i]);
+        ht[i] = hb[i] + (vn(x / 9, y / 9) - 0.5) * 0.22 * (0.3 + e) + (vn(x / 3.5, y / 3.5) - 0.5) * 0.12 * e;
+      }
+    }
+    const R = this.ATLAS.relief, relief = new Uint32Array(n);
+    const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (own[i] === WATER) { relief[i] = ground[i]; continue; }
+        const e = Math.max(0, Math.min(1, hb[i]));
+        let c = e < 0.5 ? lerp(R[0], R[1], e * 2) : lerp(R[1], R[2], e * 2 - 1);
+        if (e > 0.8) c = lerp(c, R[3], (e - 0.8) * 3);
+        // Lit from the north-west.
+        const up = x > 0 && y > 0 ? ht[i - w - 1] : ht[i], dn = x < w - 1 && y < h - 1 ? ht[i + w + 1] : ht[i];
+        const s = 1 + Math.max(-0.35, Math.min(0.35, (up - dn) * 1.6));
+        relief[i] = this.packed(Math.min(255, c[0] * s) | 0, Math.min(255, c[1] * s) | 0, Math.min(255, c[2] * s) | 0);
+      }
+    }
+    this.reliefLayer = this.makeLayer(canvasOf(relief), true);
+  },
+
+  // In-place separable box blur of radius r.
+  boxBlur(a, tmp, w, h, r) {
+    const k = 1 / (2 * r + 1);
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (let d = -r; d <= r; d++) s += a[row + Math.min(w - 1, Math.max(0, x + d))];
+        tmp[row + x] = s * k;
+      }
+    }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (let d = -r; d <= r; d++) s += tmp[Math.min(h - 1, Math.max(0, y + d)) * w + x];
+        a[y * w + x] = s * k;
+      }
+    }
+  },
+
+  // The territory layer's chunks: opaque in Classic, see-through in Atlas.
+  makeTileLayer() {
+    if (this.tileLayer) this.disposeLayer(this.tileLayer);
+    const atlas = this.mapStyle === 'atlas';
+    this.tileLayer = this.makeLayer(this.tileCanvas, !atlas);
+    this.tileLayer.throttle = true;
+    this.tileLayer.snap = atlas;
+  },
+
+  // Atlas: paper fading to relief as the camera zooms in.
+  drawAtlasBase(ctx) {
+    const t = this.atlasNear(), ox = -this.cam.x, oy = -this.cam.y;
+    if (t > 0) {
+      ctx.imageSmoothingEnabled = true;
+      this.drawLayer(ctx, this.reliefLayer, ox, oy);
+      ctx.imageSmoothingEnabled = false;
+    }
+    if (t < 1) {
+      ctx.globalAlpha = 1 - t;
+      this.drawLayer(ctx, this.groundLayer, ox, oy);
+      ctx.globalAlpha = 1;
+    }
   },
 
   // Distance in tiles (4-way steps) from each sea tile to land, up to `max`;
@@ -266,6 +380,7 @@ const Render = {
     this.mapStyle = style;
     if (!this.tileCanvas) return;
     this.buildPalette();
+    this.makeTileLayer();
     this.applyPatterns();
     this.fogSource = null;   // repaint the fog layer in the new style's colour (updateFog)
     if (this.shownOwner) this.repaintAll();
@@ -366,21 +481,33 @@ const Render = {
       : [this.packed(78, 94, 72), this.packed(104, 96, 66), this.packed(122, 120, 114)];
     this.bareTone = bare;
     this.altFill = null;   // derived from bareTone
-    this.terrain = new Uint32Array(w * h);
+    const ground = new Uint32Array(w * h);
     const own = GameMap.owner;
     // Atlas: tiles of sea by distance from land, for the inked shore and the
     // ripple lines that follow it out to sea.
     const sea = atlas ? this.seaDistance(A.RIPPLES[A.RIPPLES.length - 1]) : null;
     const ripple = atlas ? A.RIPPLES.map((d, k) => this.mixRGB(A.water, A.coast, A.RIPPLE_INK[k])) : null;
     for (let i = 0; i < w * h; i++) {
-      if (own[i] !== WATER) { this.terrain[i] = bare[GameMap.terrain[i]]; continue; }
+      if (own[i] !== WATER) { ground[i] = bare[GameMap.terrain[i]]; continue; }
       let c = water;
       if (atlas) {
         const d = sea[i];
         if (d === 1) c = coast;
         else { const k = A.RIPPLES.indexOf(d); if (k >= 0) c = ripple[k]; }
       }
-      this.terrain[i] = c;
+      ground[i] = c;
+    }
+    // Atlas: the territory layer is see-through wherever nobody owns land,
+    // over two fixed bases blended by zoom (drawAtlasBase). Owned colours
+    // carry their mix as alpha, so over the paper base they look as if mixed.
+    this.disposeAtlasBases();
+    if (atlas) {
+      this.ground = ground;
+      this.terrain = new Uint32Array(w * h);
+      this.buildAtlasBases(ground);
+    } else {
+      this.ground = null;
+      this.terrain = ground;
     }
 
     // Owned tiles keep the nation's colour but darken over rough ground, so
@@ -394,15 +521,17 @@ const Render = {
       const [r, g, b] = Game.players[p].color;
       this.fillColor[p] = new Uint32Array(3);
       if (atlas) {
-        const tone = this.atlasTone([r, g, b]);
-        for (let t = 0; t < 3; t++) this.fillColor[p][t] = this.mixRGB(A.bare[t], tone, 0.6);
-        const border = tone.map(c => c * 0.67);
-        this.borderColor[p] = this.mixRGB(border, A.ink, 0.18);
-        this.bandColor[p] = new Uint32Array(3);
-        for (let t = 0; t < 3; t++) {
-          const fill = A.bare[t].map((c, k) => c + (tone[k] - c) * 0.6);
-          this.bandColor[p][t] = this.mixRGB(fill, border, A.BAND);
-        }
+        const tone = this.atlasTone([r, g, b]), F = A.FILL;
+        const border = tone.map(c => c * 0.55);
+        this.borderColor[p] = this.mixRGB(border, A.ink, 0.25);
+        // The band is the fill mixed BAND of the way to the border tone; as a
+        // colour over the base that is alpha 1-(1-BAND)(1-FILL).
+        const bandA = 1 - (1 - A.BAND) * (1 - F);
+        const band = tone.map((c, k) => ((1 - A.BAND) * F * c + A.BAND * border[k]) / bandA);
+        const fill = this.packed(tone[0] | 0, tone[1] | 0, tone[2] | 0, F * 255 | 0);
+        const bandC = this.packed(band[0] | 0, band[1] | 0, band[2] | 0, bandA * 255 | 0);
+        this.fillColor[p].fill(fill);
+        this.bandColor[p] = new Uint32Array(3).fill(bandC);
         continue;
       }
       for (let t = 0; t < 3; t++) {
@@ -420,8 +549,7 @@ const Render = {
     const [r, g, b] = Game.players[p].color, out = new Uint32Array(3);
     if (this.mapStyle === 'atlas') {
       const tone = this.atlasTone([r, g, b]);
-      for (let t = 0; t < 3; t++) out[t] = this.mixRGB(this.ATLAS.bare[t], tone, 0.4);
-      return out;
+      return out.fill(this.packed(tone[0] | 0, tone[1] | 0, tone[2] | 0, 0.4 * 255 | 0));
     }
     const SHADE = [1, 0.84, 0.7];
     for (let t = 0; t < 3; t++) {
@@ -757,14 +885,18 @@ const Render = {
         color = (rows && (rows[y & 15] >> (x & 15)) & 1 ? this.patFill[o] : this.fillColor[o])[GameMap.terrain[i]];
       }
     }
+    const fallout = Game.fallout && Game.fallout.size && Game.fallout.has(i);
+    const dead = !fallout && Game.drillDeadLand > 0 && Game.drillDead[i] && o !== WATER;
+    // Atlas leaves unowned ground see-through; a tinted tile needs its colour.
+    if ((fallout || dead) && this.ground && (color >>> 24) === 0) color = this.ground[i];
     // Irradiated land (Game.fallout) gets a warning wash. Blended, not
     // overridden, so it stays correct on the rare owned tile.
-    if (Game.fallout && Game.fallout.size && Game.fallout.has(i)) color = this.tintFallout(color);
+    if (fallout) color = this.tintFallout(color);
     // The Drill's dead zone (Game.drillDead, permanent): dead land reads as a
     // dark irradiated violet, distinct from fallout's yellow-green. The sweep
     // queues every land tile it kills in dirtyTiles, so this repaints only
     // what died; dead water is tinted by drawDrill's circle overlay.
-    else if (Game.drillDeadLand > 0 && Game.drillDead[i] && o !== WATER) color = this.tintDead(color);
+    else if (dead) color = this.tintDead(color);
     px[i] = color;
   },
 
@@ -1488,6 +1620,7 @@ const Render = {
     const s = this.cam.scale * this.dpr;
     ctx.imageSmoothingEnabled = false;
     ctx.setTransform(s, 0, 0, s, this.canvas.width / 2, this.canvas.height / 2);
+    if (this.mapStyle === 'atlas' && this.groundLayer) this.drawAtlasBase(ctx);
     this.drawLayer(ctx, this.tileLayer, -this.cam.x, -this.cam.y);
     this.drawHoverHighlight(territoryChanged, ctx);
     ctx.setTransform(1, 0, 0, 1, 0, 0);

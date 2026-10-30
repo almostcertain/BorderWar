@@ -33,6 +33,12 @@ Each step is playable on its own. Switch styles in Options → Map style.
   else Georgia; no font download), ink with a paper halo, troops in italic.
   Long names on big labels curve; names with icons stay straight. Label
   redraws cost about 0.3 ms more per frame than Classic (medium map bench).
+- Step 4 done: in Atlas the territory layer is see-through over two fixed
+  bases, paper (`groundLayer`) and relief (`reliefLayer`), crossfaded between
+  `NEAR_FROM` and `NEAR_TO` px per tile. Nation colour keeps the same
+  strength at every zoom (fading it read as the map changing darkness). Relief is the terrain tiers blurred, roughened with noise and
+  lit from the north-west. Large map: bases build in ~190 ms; drawing costs
+  ~0.5–1 ms more per frame than Classic (labels included).
 
 ## Notes
 
