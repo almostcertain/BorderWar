@@ -39,6 +39,19 @@ Each step is playable on its own. Switch styles in Options → Map style.
   strength at every zoom (fading it read as the map changing darkness). Relief is the terrain tiers blurred, roughened with noise and
   lit from the north-west. Large map: bases build in ~190 ms; drawing costs
   ~0.5–1 ms more per frame than Classic (labels included).
+- Step 5 done: mountain, hill and tree marks fade in with the relief at
+  mockup density, one mark per 3 tiles. Highland is drawn as hills or as
+  forest (greener relief, tree clumps) in broad noise patches, roughly half
+  each (`atlasForest`); looks only, both are the same terrain in play. Plains
+  carry no marks, so trees always mean highland. They're painted per 64-tile chunk at 4/8/16 px per tile and cached
+  (`drawTerrainGlyphs`, ~1 ms to paint a dense chunk, at most ~3 ms of
+  painting per frame); drawing costs 0.1–0.7 ms per frame. The chunk cache
+  is 3× the screen's device pixels (16M minimum), and the paint resolution
+  drops until everything on screen fits it: with a fixed 16M cache a
+  1920x1080 @2x screen evicted and repainted 5–7 visible chunks every frame
+  (low fps, flickering symbols). Peak cache there is ~22M px (~90 MB). Buildings are
+  paper discs with ink symbols in an owner-coloured ring. Town names dropped:
+  cities have no names.
 
 ## Notes
 

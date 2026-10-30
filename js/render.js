@@ -236,7 +236,7 @@ const Render = {
     // NEAR_TO. Nation colour keeps its strength; the relief shows through it.
     NEAR_FROM: 2.5,
     NEAR_TO: 5,
-    relief: [[200, 196, 146], [196, 172, 124], [176, 162, 140], [214, 206, 190]]   // lowland, highland, mountain, peak
+    relief: [[200, 196, 146], [196, 172, 124], [176, 162, 140], [214, 206, 190], [150, 162, 106]]   // lowland, highland, mountain, peak, forest
   },
 
   // 0 zoomed out (paper) to 1 zoomed in (relief).
@@ -247,6 +247,8 @@ const Render = {
   },
 
   disposeAtlasBases() {
+    this.glyphs = null;
+    this.dropGlyphChunks();
     if (this.groundLayer) { this.disposeLayer(this.groundLayer); this.groundLayer = null; }
     if (this.reliefLayer) { this.disposeLayer(this.reliefLayer); this.reliefLayer = null; }
   },
@@ -295,6 +297,9 @@ const Render = {
         const e = Math.max(0, Math.min(1, hb[i]));
         let c = e < 0.5 ? lerp(R[0], R[1], e * 2) : lerp(R[1], R[2], e * 2 - 1);
         if (e > 0.8) c = lerp(c, R[3], (e - 0.8) * 3);
+        // Forest patches of highland read greener (see atlasForest).
+        const fw = Math.max(0, 1 - Math.abs(e - 0.5) * 2.5);
+        if (fw > 0) c = lerp(c, R[4], 0.5 * fw * this.atlasForest(vn, x, y));
         // Lit from the north-west.
         const up = x > 0 && y > 0 ? ht[i - w - 1] : ht[i], dn = x < w - 1 && y < h - 1 ? ht[i + w + 1] : ht[i];
         const s = 1 + Math.max(-0.35, Math.min(0.35, (up - dn) * 1.6));
@@ -302,6 +307,184 @@ const Render = {
       }
     }
     this.reliefLayer = this.makeLayer(canvasOf(relief), true);
+    this.placeTerrainGlyphs(hash, vn);
+  },
+
+  // --- Atlas terrain symbols ---
+  // Mountains, hills and tree clumps on a jittered grid, fading in with the
+  // relief. Far too many to stamp one by one each frame, so each
+  // GLYPH_BUCKET square of map is painted once into a chunk at a
+  // power-of-two resolution near the current zoom, and the chunks are cached
+  // (as ImageBitmaps, for Firefox) up to GLYPH_CACHE_PX.
+  GLYPH_STEP: 3,             // tiles between grid points
+  GLYPH_BUCKET: 64,          // tiles per chunk side
+  GLYPH_PAD: 4,              // tiles a symbol may reach past its chunk
+  GLYPH_CACHE_PX: 16e6,      // device px of chunks kept, at least; more on big screens (drawTerrainGlyphs)
+  GLYPH_BAKE_MS: 3,          // chunk painting allowed per frame (one always goes)
+  glyphs: null,
+  glyphSprites: new Map(),
+  glyphChunks: new Map(),    // "bx,by,k" -> chunk, oldest use first
+  glyphCachePx: 0,
+
+  // Highland is drawn as either hills or forest, in broad patches: 0 hills
+  // to 1 forest. Looks only; both are the same terrain in play.
+  atlasForest(vn, x, y) {
+    const v = vn(x / 34 + 50, y / 34 + 20), t = Math.min(1, Math.max(0, (v - 0.45) / 0.1));
+    return t * t * (3 - 2 * t);
+  },
+
+  placeTerrainGlyphs(hash, vn) {
+    const w = GameMap.width, h = GameMap.height, tier = GameMap.terrain, own = GameMap.owner;
+    const G = this.GLYPH_STEP, B = this.GLYPH_BUCKET, cols = Math.ceil(w / B), rows = Math.ceil(h / B);
+    const cells = Array.from({ length: cols * rows }, () => []);
+    const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h) ? -1 : own[y * w + x] === WATER ? -1 : tier[y * w + x];
+    const put = (x, y, kind, size) => {
+      const tx = Math.max(0, Math.min(w - 1, Math.round(x))), ty = Math.max(0, Math.min(h - 1, Math.round(y)));
+      cells[((ty / B) | 0) * cols + ((tx / B) | 0)].push(x, y, kind, size);
+    };
+    for (let gy = G / 2; gy < h; gy += G) {
+      for (let gx = G / 2; gx < w; gx += G) {
+        const x = gx + (hash(gx, gy * 7) - 0.5) * G * 0.8, y = gy + (hash(gx * 3, gy) - 0.5) * G * 0.8;
+        const tx = Math.round(x), ty = Math.round(y), t = at(tx, ty);
+        if (t < 0) continue;
+        // Keep marks off the edges of their ground, so they don't straddle a
+        // coast or spill onto lower land.
+        if (at(tx - 1, ty) < t || at(tx + 1, ty) < t || at(tx, ty - 1) < t) continue;
+        const roll = hash(gx * 5, gy * 11);
+        if (t === 2) put(x, y, 0, 3.6 + roll * 1.4);
+        else if (t === 1 && this.atlasForest(vn, x, y) > 0.5) {
+          if (roll < 0.85) { put(x - 0.8, y, 2, 2.1); put(x + 0.8, y + 0.7, 2, 2.1); }
+        } else if (t === 1 && roll < 0.65) put(x, y, 1, 2.8);
+      }
+    }
+    for (const c of cells) {
+      // Back to front, so nearer marks overlap the ones behind.
+      const idx = []; for (let k = 0; k < c.length; k += 4) idx.push(k);
+      idx.sort((a, b) => c[a + 1] - c[b + 1]);
+      const sorted = []; for (const k of idx) sorted.push(c[k], c[k + 1], c[k + 2], c[k + 3]);
+      c.length = 0; c.push(...sorted);
+    }
+    this.glyphs = { cols, rows, cells };
+    this.glyphSprites.clear();
+  },
+
+  // A symbol `px` device px wide, its base centre at (width / 2, height - 2).
+  glyphSprite(kind, px) {
+    const key = kind * 10000 + px;
+    let c = this.glyphSprites.get(key);
+    if (c) return c;
+    const S = px / 2;
+    c = document.createElement('canvas');
+    c.width = Math.ceil(S * 2 + 4);
+    c.height = Math.ceil(S * 1.8 + 4);
+    const g = c.getContext('2d'), x = c.width / 2, y = c.height - 2;
+    g.lineJoin = 'round';
+    g.lineWidth = Math.max(1, S * (kind === 2 ? 0.12 : 0.08));
+    g.strokeStyle = 'rgba(52,34,22,0.85)';
+    if (kind === 0) {
+      const peakX = x - S * 0.12, peakY = y - S * 1.3;
+      g.beginPath(); g.moveTo(x - S, y); g.lineTo(peakX, peakY); g.lineTo(x + S, y); g.closePath();
+      g.fillStyle = 'rgba(246,236,212,0.75)'; g.fill();
+      g.beginPath(); g.moveTo(peakX, peakY); g.lineTo(x + S, y); g.lineTo(x + S * 0.08, y); g.closePath();
+      g.fillStyle = 'rgba(70,48,30,0.4)'; g.fill();
+      g.beginPath(); g.moveTo(x - S, y); g.lineTo(peakX, peakY); g.lineTo(x + S, y); g.stroke();
+    } else if (kind === 1) {
+      g.beginPath(); g.moveTo(x - S, y); g.quadraticCurveTo(x, y - S * 1.1, x + S, y); g.stroke();
+      g.beginPath();
+      g.moveTo(x + S * 0.2, y - S * 0.42); g.lineTo(x + S * 0.42, y - 1);
+      g.moveTo(x + S * 0.52, y - S * 0.28); g.lineTo(x + S * 0.7, y - 1);
+      g.stroke();
+    } else {
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x, y - S * 0.7); g.stroke();
+      g.beginPath(); g.arc(x, y - S * 1.15, S * 0.6, 0, Math.PI * 2);
+      g.fillStyle = 'rgb(128,140,86)'; g.fill(); g.stroke();
+    }
+    this.glyphSprites.set(key, c);
+    return c;
+  },
+
+  // Paints chunk (bx, by) at k device px per tile.
+  bakeGlyphChunk(bx, by, k) {
+    const B = this.GLYPH_BUCKET, P = this.GLYPH_PAD, size = (B + 2 * P) * k;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const g = c.getContext('2d'), cell = this.glyphs.cells[by * this.glyphs.cols + bx];
+    const ox = bx * B - P, oy = by * B - P;
+    for (let i = 0; i < cell.length; i += 4) {
+      const sp = this.glyphSprite(cell[i + 2], Math.max(3, Math.round(cell[i + 3] * k)));
+      g.drawImage(sp, Math.round((cell[i] - ox) * k - sp.width / 2), Math.round((cell[i + 1] - oy) * k - sp.height + 2));
+    }
+    const chunk = { canvas: c, bmp: null, px: size * size, dead: false };
+    try {
+      createImageBitmap(c).then(bmp => {
+        if (chunk.dead) { bmp.close(); return; }
+        chunk.bmp = bmp;
+        chunk.canvas = null;
+      }, () => {});
+    } catch (e) { /* no createImageBitmap: keep stamping the canvas */ }
+    return chunk;
+  },
+
+  dropGlyphChunks() {
+    for (const ch of this.glyphChunks.values()) { ch.dead = true; if (ch.bmp) ch.bmp.close(); }
+    this.glyphChunks.clear();
+    this.glyphCachePx = 0;
+  },
+
+  drawTerrainGlyphs(ctx) {
+    const t = this.atlasNear(), G = this.glyphs;
+    if (t <= 0.02 || !G) return;
+    const s = this.cam.scale * this.dpr, cw = this.canvas.width, ch = this.canvas.height;
+    const B = this.GLYPH_BUCKET, P = this.GLYPH_PAD, chunks = this.glyphChunks;
+    const halfW = cw / 2 / s, halfH = ch / 2 / s;
+    const bx0 = Math.max(0, Math.floor((this.cam.x - halfW - P) / B)), bx1 = Math.min(G.cols - 1, Math.floor((this.cam.x + halfW + P) / B));
+    const by0 = Math.max(0, Math.floor((this.cam.y - halfH - P) / B)), by1 = Math.min(G.rows - 1, Math.floor((this.cam.y + halfH + P) / B));
+    // Paint resolution: the power of two nearest the screen's px per tile,
+    // lowered until every chunk on screen fits the cache with room to spare.
+    // If they didn't fit, each frame would evict chunks it is about to draw
+    // and repaint them: slow, and they flicker.
+    const budget = Math.max(this.GLYPH_CACHE_PX, 3 * cw * ch);
+    const onScreen = (bx1 - bx0 + 1) * (by1 - by0 + 1);
+    let k = 2;
+    while (k * 1.41 < s && k < 16) k *= 2;
+    while (k > 2 && onScreen * ((B + 2 * P) * k) ** 2 > budget * 0.6) k /= 2;
+    const until = performance.now() + this.GLYPH_BAKE_MS;
+    let baked = 0;
+    ctx.save();
+    ctx.globalAlpha = t;
+    ctx.imageSmoothingEnabled = true;
+    for (let by = by0; by <= by1; by++) {
+      for (let bx = bx0; bx <= bx1; bx++) {
+        if (!G.cells[by * G.cols + bx].length) continue;
+        const key = bx + ',' + by + ',' + k;
+        let chunk = chunks.get(key);
+        if (chunk) { chunks.delete(key); chunks.set(key, chunk); }
+        else if (baked === 0 || performance.now() < until) {
+          chunk = this.bakeGlyphChunk(bx, by, k);
+          chunks.set(key, chunk);
+          this.glyphCachePx += chunk.px;
+          baked++;
+        } else {
+          // Not painted at this zoom yet: show it at a neighbouring one meanwhile.
+          chunk = chunks.get(bx + ',' + by + ',' + (k * 2)) || chunks.get(bx + ',' + by + ',' + (k / 2));
+          if (!chunk) continue;
+        }
+        const img = chunk.bmp || chunk.canvas;
+        if (!img) continue;
+        const x = ((bx * B - P) - this.cam.x) * s + cw / 2, y = ((by * B - P) - this.cam.y) * s + ch / 2;
+        const size = (B + 2 * P) * s;
+        ctx.drawImage(img, x, y, size, size);
+      }
+    }
+    ctx.restore();
+    // Forget the least recently drawn chunks past the cache budget.
+    while (this.glyphCachePx > budget && chunks.size) {
+      const [key, old] = chunks.entries().next().value;
+      chunks.delete(key);
+      old.dead = true;
+      if (old.bmp) old.bmp.close();
+      this.glyphCachePx -= old.px;
+    }
   },
 
   // In-place separable box blur of radius r.
@@ -382,6 +565,7 @@ const Render = {
     this.buildPalette();
     this.makeTileLayer();
     this.applyPatterns();
+    this.structSprites.clear();   // building icons are styled too
     this.fogSource = null;   // repaint the fog layer in the new style's colour (updateFog)
     if (this.shownOwner) this.repaintAll();
   },
@@ -1625,6 +1809,7 @@ const Render = {
     this.drawHoverHighlight(territoryChanged, ctx);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     const atlas = this.mapStyle === 'atlas';
+    if (atlas) this.drawTerrainGlyphs(ctx);
     if (atlas && !fog) this.drawPaper(ctx);
 
     this.drawRailroads();
@@ -1737,15 +1922,19 @@ const Render = {
   // still moving, to draw straight onto the map.
   paintStructureIcon(ctx, type, owner, built, px, py, r) {
     const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
-    // Disc is a dimmed tone of the owner's colour. Fully opaque, so the
+    // Disc is a dimmed tone of the owner's colour (Classic) or paper with an
+    // ink symbol in an owner-coloured ring (Atlas). Fully opaque, so the
     // hover overlay drawn beneath never shows through.
+    const atlas = this.mapStyle === 'atlas';
+    const ring = atlas ? this.atlasTone(c).map(v => v * 0.75 | 0) : c;
     ctx.beginPath();
     ctx.arc(px, py, r, 0, Math.PI * 2);
-    ctx.fillStyle = `rgb(${(c[0] * 0.62) | 0}, ${(c[1] * 0.62) | 0}, ${(c[2] * 0.62) | 0})`;
+    ctx.fillStyle = atlas ? 'rgb(242,232,206)' : `rgb(${(c[0] * 0.62) | 0}, ${(c[1] * 0.62) | 0}, ${(c[2] * 0.62) | 0})`;
     ctx.fill();
-    ctx.strokeStyle = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
-    ctx.lineWidth = Math.max(1.5, r * 0.18);
+    ctx.strokeStyle = `rgb(${ring[0]}, ${ring[1]}, ${ring[2]})`;
+    ctx.lineWidth = Math.max(1.5, r * (atlas ? 0.22 : 0.18));
     ctx.stroke();
+    const glyph = atlas ? this.ATLAS_INK : '#ffffff';
 
     const def = Game.unitDef(type);
     if (def) {
@@ -1753,7 +1942,7 @@ const Render = {
       // still reads as the visually "solid" one at a glance.
       ctx.globalAlpha = built ? 1 : 0.45;
       // Hand-drawn glyphs, not emoji: colour emoji ignore fillStyle.
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = glyph;
       if (type === 'factory') {
         // A single low, wide block with a smokestack — deliberately
         // squatter than the city's skyline so the two read as different
@@ -1780,7 +1969,7 @@ const Render = {
         // Anchor glyph, stroked: ring at top, stem through a crossbar, wide
         // fluke at the base.
         ctx.lineWidth = Math.max(1.5, r * 0.16);
-        ctx.strokeStyle = '#ffffff';
+        ctx.strokeStyle = glyph;
         ctx.lineCap = 'round';
 
         const ringR = r * 0.22, ringY = py - r * 0.66;
@@ -1838,7 +2027,7 @@ const Render = {
         // A dish (arc) on a short mast, distinct from the Silo's solid
         // rocket silhouette — this shoots nukes down, it doesn't launch.
         ctx.lineWidth = Math.max(1.5, r * 0.16);
-        ctx.strokeStyle = '#ffffff';
+        ctx.strokeStyle = glyph;
         ctx.lineCap = 'round';
         const mastTop = py - r * 0.05, mastBot = py + r * 0.6;
         ctx.beginPath();
@@ -1864,7 +2053,7 @@ const Render = {
         ctx.arc(px, top - r * 0.08, r * 0.13, 0, Math.PI * 2);
         ctx.fill();
         ctx.lineWidth = Math.max(1.2, r * 0.13);
-        ctx.strokeStyle = '#ffffff';
+        ctx.strokeStyle = glyph;
         ctx.lineCap = 'round';
         const waveY = top - r * 0.08, waveR = r * 0.48;
         ctx.beginPath();
@@ -2125,7 +2314,7 @@ const Render = {
       const owner = GameMap.owner[b.tile];
       const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
       const x = Math.round(px - h), y = Math.round(py - h);
-      ctx.fillStyle = 'rgba(8, 14, 26, 0.9)';
+      ctx.fillStyle = this.mapStyle === 'atlas' ? 'rgba(48, 30, 18, 0.9)' : 'rgba(8, 14, 26, 0.9)';
       ctx.fillRect(x - o, y - o, d + o * 2, d + o * 2);
       ctx.fillStyle = b.built ? `rgb(${c[0]}, ${c[1]}, ${c[2]})` : `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.5)`;
       ctx.fillRect(x, y, d, d);
