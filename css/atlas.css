@@ -84,7 +84,11 @@ html.atlas #popBar { background: var(--a-wash); box-shadow: inset 0 0 0 1px var(
 html.atlas #popBarFill { background-color: var(--a-sea); }
 html.atlas #popBarMarch { background: var(--a-march); }
 html.atlas #popBarPeak { background: rgba(58, 38, 22, 0.6); }
-html.atlas #popBarLabel { color: #fbf5e6; text-shadow: 0 1px 2px rgba(40, 20, 5, 0.85); }
+html.atlas #popBarLabel {
+  color: #fffaf0;
+  font-weight: 700;
+  text-shadow: 0 0 2px #2a1708, 0 0 2px #2a1708, 0 1px 2px #2a1708, 0 0 5px rgba(42, 23, 8, 0.8);
+}
 html.atlas .frontChip { background: var(--a-paper-2); border-color: var(--a-line); color: var(--a-ink); }
 html.atlas .frontChip.mine { border-color: var(--a-sea); }
 html.atlas .frontChip.theirs { border-color: var(--a-rubric); }
@@ -93,13 +97,22 @@ html.atlas #ratio::-webkit-slider-runnable-track { background: var(--a-line); }
 html.atlas #ratio::-moz-range-track { background: var(--a-line); }
 html.atlas #ratio::-webkit-slider-thumb { background: var(--a-ink); border-color: var(--a-paper-solid); }
 html.atlas #ratio::-moz-range-thumb { background: var(--a-ink); border-color: var(--a-paper-solid); }
-html.atlas .buildBtn { background: var(--a-paper-2); border-color: var(--a-line); color: var(--a-ink); }
-html.atlas .bbKey { color: var(--a-ink-2); border-color: var(--a-line); }
-html.atlas .bbCost { color: var(--a-brass); }
+html.atlas .buildBtn {
+  background: var(--a-paper-3);
+  border-color: var(--a-line-strong);
+  color: var(--a-ink);
+  box-shadow: 0 1px 0 rgba(255, 248, 230, 0.7) inset, 0 1px 3px rgba(50, 30, 12, 0.3);
+}
+html.atlas .bbKey { color: var(--a-ink); border-color: var(--a-line); font-size: 10px; font-weight: 700; opacity: 0.8; }
+html.atlas .bbIcon { color: var(--a-ink); }
+html.atlas .bbCost { color: #6b4a0c; font-size: 11px; font-weight: 700; }
 html.atlas .bbCount { background: var(--a-sea); border-color: var(--a-paper-solid); color: #fbf5e6; }
-html.atlas .buildBtn.poor .bbCost { color: var(--a-rubric); }
-html.atlas .buildBtn.armed { border-color: var(--a-rubric); background: var(--a-paper-3); }
-html.atlas #hint.warn { color: var(--a-rubric); }
+html.atlas .buildBtn.poor { opacity: 0.8; }
+html.atlas .buildBtn.locked { opacity: 0.6; }
+html.atlas .buildBtn.poor .bbCost { color: var(--a-rubric-2); }
+html.atlas .buildBtn.armed { border-color: var(--a-rubric); background: #cdb078; box-shadow: 0 0 0 1px var(--a-rubric), 0 1px 3px rgba(50, 30, 12, 0.3); }
+html.atlas #hint { color: var(--a-ink); font-size: 12px; opacity: 0.8; }
+html.atlas #hint.warn { color: var(--a-rubric); opacity: 1; font-weight: 700; }
 
 /* --- Hover panel, tooltip, city specialisation ------------------------------ */
 html.atlas #hpPopBar { background: var(--a-wash); }
