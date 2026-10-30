@@ -3843,13 +3843,164 @@ const Render = {
       this.measureCtx = document.createElement('canvas').getContext('2d');
       this.measureCtx.font = '600 100px system-ui, sans-serif';
     }
+    if (this.mapStyle === 'atlas') {
+      if (!this.atlasMeasureCtx) {
+        this.atlasMeasureCtx = document.createElement('canvas').getContext('2d');
+        this.atlasMeasureCtx.font = 'bold 100px ' + this.ATLAS_FONT;
+      }
+      return this.atlasTextWidth(this.atlasMeasureCtx, text.toUpperCase(), 100) / 100;
+    }
     return this.measureCtx.measureText(text).width / 100;
+  },
+
+  // --- Atlas lettering ---
+  // Names in spaced capitals and ink, like an engraved map. System serif
+  // faces, so nothing is downloaded; Palatino where present, else Georgia.
+  ATLAS_FONT: '"Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif',
+  ATLAS_TRACK: 0.14,          // letter spacing, in ems
+  ATLAS_ARC: 2.4,             // arc radius as a multiple of the name's width
+  ATLAS_INK: 'rgb(48,30,18)',
+  ATLAS_HALO: 'rgba(242,230,200,0.9)',
+
+  // Width of `text` letter-spaced at `font` px; g.font must already be set.
+  atlasTextWidth(g, text, font) {
+    return g.measureText(text).width + Math.max(0, text.length - 1) * this.ATLAS_TRACK * font;
+  },
+
+  // Draws `text` letter-spaced, centred on x, along an arc of radius `arcR`
+  // whose ends dip below y (0 = straight). Stroke (halo) then fill per letter.
+  atlasLetter(g, text, x, y, font, arcR) {
+    const track = this.ATLAS_TRACK * font;
+    g.textAlign = 'center';
+    if (!arcR && 'letterSpacing' in g) {
+      // One call instead of one per letter. The spacing trails the last
+      // letter too, so shift right by half of it to stay centred.
+      g.letterSpacing = track + 'px';
+      g.strokeText(text, x + track / 2, y);
+      g.fillText(text, x + track / 2, y);
+      g.letterSpacing = '0px';
+      return;
+    }
+    const total = this.atlasTextWidth(g, text, font);
+    let pos = -total / 2;
+    for (const ch of text) {
+      const cw = g.measureText(ch).width, mid = pos + cw / 2;
+      if (arcR) {
+        const a = mid / arcR;
+        g.save();
+        g.translate(x + arcR * Math.sin(a), y + arcR - arcR * Math.cos(a));
+        g.rotate(a);
+        g.strokeText(ch, 0, 0);
+        g.fillText(ch, 0, 0);
+        g.restore();
+      } else {
+        g.strokeText(ch, x + mid, y);
+        g.fillText(ch, x + mid, y);
+      }
+      pos += cw + track;
+    }
+  },
+
+  renderAtlasLabelSprite(sp, now) {
+    const font = sp.want, icons = sp.wantIcons;
+    let nIcons = 0;
+    for (const [, bit] of this.LABEL_ICON_BITS) if (icons & bit) nIcons++;
+    const iconStep = 1.3;
+    const emblem = sp.wantEmblem, flag = sp.wantFlag;
+    const nPrefix = nIcons + (emblem ? 1 : 0) + (flag ? 1 : 0);
+    const name = sp.wantName.toUpperCase();
+    const nameFont = 'bold ' + font + 'px ' + this.ATLAS_FONT, troopFont = 'italic bold ' + Math.round(font * 0.88) + 'px ' + this.ATLAS_FONT;
+    const mc = this.measureCtx || (this.labelEm(''), this.measureCtx);
+    mc.font = nameFont;
+    const textW = this.atlasTextWidth(mc, name, font);
+    // Long names on big labels curve gently, as on old maps; anything with
+    // icons in front stays straight so the icons line up with it.
+    const arcR = !nPrefix && name.length >= 5 && font >= 14 * this.dpr ? textW * this.ATLAS_ARC : 0;
+    const sag = arcR ? Math.ceil(textW * textW / (8 * arcR)) : 0;
+    const nameW = textW + nPrefix * iconStep * font;
+    mc.font = troopFont;
+    const troopsW = mc.measureText(sp.wantTroops).width;
+    mc.font = '600 100px system-ui, sans-serif';
+    const pad = Math.ceil(font * 0.15 + 2);
+    const w = Math.ceil(Math.max(nameW, troopsW)) + pad * 2;
+    const h = Math.ceil(font * 2.6) + pad * 2 + sag;
+
+    let c = sp.canvas;
+    if (!c) c = sp.canvas = document.createElement('canvas');
+    if (c.width < w || c.height < h) {
+      c.width = Math.max(c.width, Math.ceil(w * 1.2));
+      c.height = Math.max(c.height, h);
+    }
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, c.width, c.height);
+
+    const cx = w / 2, cy = pad + font * 1.3;
+    const nameY = cy - font * 0.55;
+    g.textBaseline = 'middle';
+    g.lineJoin = 'round';
+    g.lineWidth = Math.max(2.5, font * 0.22);
+    g.strokeStyle = this.ATLAS_HALO;
+    g.fillStyle = this.ATLAS_INK;
+
+    let x = cx - nameW / 2, missingIcon = false;
+    const iconSize = font * 1.05;
+    for (const [iconName, bit] of this.LABEL_ICON_BITS) {
+      if (!(icons & bit)) continue;
+      const img = this.icon(iconName, iconSize);
+      if (img) g.drawImage(img, Math.round(x), Math.round(nameY - img.height / 2));
+      else missingIcon = true;
+      x += iconStep * font;
+    }
+    if (flag) {
+      const fw = Math.round(iconSize), fh = Math.round(font * 0.7);
+      const fx = Math.round(x), fy = Math.round(nameY - fh / 2);
+      g.fillStyle = this.ATLAS_INK;
+      g.fillRect(fx - 1, fy - 1, fw + 2, fh + 2);
+      this.drawFlag(g, flag, fx, fy, fw, fh);
+      x += iconStep * font;
+    }
+    g.font = nameFont;
+    if (emblem) {
+      g.textAlign = 'left';
+      g.fillStyle = '#b8862a';
+      g.strokeText(emblem, x, nameY);
+      g.fillText(emblem, x, nameY);
+      x += iconStep * font;
+    }
+    g.fillStyle = this.ATLAS_INK;
+    this.atlasLetter(g, name, x + textW / 2, nameY, font, arcR);
+
+    g.font = troopFont;
+    g.textAlign = 'center';
+    g.fillStyle = this.ATLAS_INK;
+    const troopY = cy + font * 0.6 + sag;
+    g.strokeText(sp.wantTroops, cx, troopY);
+    g.fillText(sp.wantTroops, cx, troopY);
+
+    this.finishLabelSprite(sp, w, h, cx, cy, font, emblem, flag, missingIcon ? -1 : icons, now);
+  },
+
+  finishLabelSprite(sp, w, h, cx, cy, font, emblem, flag, icons, now) {
+    sp.w = w; sp.h = h; sp.ox = cx; sp.oy = cy;
+    sp.font = font;
+    sp.name = sp.wantName;
+    sp.emblem = emblem;
+    sp.flag = flag;
+    sp.troops = sp.wantTroops;
+    sp.style = this.mapStyle;
+    // An icon whose SVG hasn't loaded yet (icons -1) leaves the sprite marked
+    // stale, so it is redrawn once the image arrives.
+    sp.icons = icons;
+    sp.drawnAt = this.labelFrame;
+    sp.drawnMs = now;
+    this.snapshotLabelSprite(sp);
   },
 
   // Rasterises `sp` at its wanted whole-pixel font. Layout matches what
   // drawLabels used to letter directly onto the map: icons then the name on
   // one line, the troop count centred under it, both outlined in black.
   renderLabelSprite(sp, now) {
+    if (this.mapStyle === 'atlas') { this.renderAtlasLabelSprite(sp, now); return; }
     const font = sp.want, icons = sp.wantIcons;
     let nIcons = 0;
     for (const [, bit] of this.LABEL_ICON_BITS) if (icons & bit) nIcons++;
@@ -3921,18 +4072,7 @@ const Render = {
     g.strokeText(sp.wantTroops, cx, cy + font * 0.6);
     g.fillText(sp.wantTroops, cx, cy + font * 0.6);
 
-    sp.w = w; sp.h = h; sp.ox = cx; sp.oy = cy;
-    sp.font = font;
-    sp.name = sp.wantName;
-    sp.emblem = emblem;
-    sp.flag = flag;
-    sp.troops = sp.wantTroops;
-    // An icon whose SVG hasn't loaded yet leaves the sprite marked stale, so it
-    // is redrawn once the image arrives.
-    sp.icons = missingIcon ? -1 : icons;
-    sp.drawnAt = this.labelFrame;
-    sp.drawnMs = now;
-    this.snapshotLabelSprite(sp);
+    this.finishLabelSprite(sp, w, h, cx, cy, font, emblem, flag, missingIcon ? -1 : icons, now);
   },
 
   // Firefox copies a canvas to its GPU process on every drawImage, so
@@ -4075,8 +4215,10 @@ const Render = {
       if (noTrade) { icons |= 16; nIcons++; }
 
       const sp = this.labelSprite(p.id);
-      if (sp.measuredName !== p.name) { sp.measuredName = p.name; sp.nameEm = this.labelEm(p.name); }
-      if (sp.measuredTroops !== troops) { sp.measuredTroops = troops; sp.troopsEm = this.labelEm(troops); }
+      // Keyed by style too: Atlas letters names wider (capitals, spacing).
+      const nameKey = this.mapStyle + '|' + p.name, troopKey = this.mapStyle + '|' + troops;
+      if (sp.measuredName !== nameKey) { sp.measuredName = nameKey; sp.nameEm = this.labelEm(p.name); }
+      if (sp.measuredTroops !== troopKey) { sp.measuredTroops = troopKey; sp.troopsEm = this.labelEm(troops); }
 
       // Icons scale with the font, so the whole name line does too and the
       // shrink-to-fit below stays a single proportional step.
@@ -4111,7 +4253,7 @@ const Render = {
       // meantime the old sprite is stamped scaled to the new size, which is all
       // a nation growing a pixel needs. Growing past LABEL_UPSCALE_MAX (zooming
       // in) can't wait: an upscaled sprite is visibly blurry.
-      if (!sp.canvas || sp.icons !== icons || sp.name !== p.name || sp.emblem !== emblem || sp.flag !== flag || font > sp.font * this.LABEL_UPSCALE_MAX ||
+      if (!sp.canvas || sp.style !== this.mapStyle || sp.icons !== icons || sp.name !== p.name || sp.emblem !== emblem || sp.flag !== flag || font > sp.font * this.LABEL_UPSCALE_MAX ||
           ((sp.font !== font || sp.troops !== troops) && now - sp.drawnMs >= this.LABEL_REFRESH_MS)) stale.push(sp);
       L.font = font;
     }

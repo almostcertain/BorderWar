@@ -29,6 +29,10 @@ Each step is playable on its own. Switch styles in Options → Map style.
 - Step 1 done. Step 2 done: on the large map Atlas draws no slower than
   Classic (bench draw 3.8 ms vs 4.1 ms per frame); `drawPaper` is ~0.01 ms of
   CPU, but its GPU fill isn't measured, so check real fps on a weak machine.
+- Step 3 done: names in letter-spaced capitals in a system serif (Palatino,
+  else Georgia; no font download), ink with a paper halo, troops in italic.
+  Long names on big labels curve; names with icons stay straight. Label
+  redraws cost about 0.3 ms more per frame than Classic (medium map bench).
 
 ## Notes
 
