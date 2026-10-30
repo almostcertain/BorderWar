@@ -4725,7 +4725,7 @@ const Render = {
     const emblem = sp.wantEmblem, flag = sp.wantFlag;
     const nPrefix = nIcons + (emblem ? 1 : 0) + (flag ? 1 : 0);
     const name = sp.wantName.toUpperCase();
-    const nameFont = 'bold ' + font + 'px ' + this.ATLAS_FONT, troopFont = 'italic bold ' + Math.round(font * 0.88) + 'px ' + this.ATLAS_FONT;
+    const nameFont = 'bold ' + font + 'px ' + this.ATLAS_FONT, troopFont = 'bold ' +Math.round(font * 0.88) + 'px ' + this.ATLAS_FONT;
     const mc = this.measureCtx || (this.labelEm(''), this.measureCtx);
     mc.font = nameFont;
     const textW = this.atlasTextWidth(mc, name, font);
