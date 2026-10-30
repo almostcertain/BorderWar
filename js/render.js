@@ -219,11 +219,11 @@ const Render = {
   // --- Map style (docs/atlas-map-style.md) -------------------------------------
   // 'classic' or 'atlas'. Atlas recolours paintTile and draws the territory
   // see-through over paper/relief bases blended by zoom.
-  mapStyle: 'classic',
+  mapStyle: 'atlas',
   ATLAS: {
-    water: [176, 190, 180],
+    water: [164, 192, 192],
     coast: [74, 56, 40],
-    bare: [[228, 214, 176], [212, 192, 150], [190, 174, 146]],
+    bare: [[232, 214, 166], [216, 190, 136], [190, 172, 140]],
     ink: [60, 40, 28],
     sepia: [150, 110, 70],
     bg: '#241b12',
@@ -232,6 +232,7 @@ const Render = {
     RIPPLE_INK: [0.2, 0.13, 0.07],
     BAND: 0.35,                      // the band inside a border, from fill toward border tone
     FILL: 0.6,                       // nation colour's share of an owned tile, over the paper
+    TRIBE_LIGHT: 0.3,                // tribe colours lifted this far toward white
     // Zoom blend, in CSS px per tile: paper below NEAR_FROM, relief above
     // NEAR_TO. Nation colour keeps its strength; the relief shows through it.
     NEAR_FROM: 2.5,
@@ -241,7 +242,7 @@ const Render = {
     NEAR_TINT: 0.75,                // strength of the zoomed-in tint (drawAtlasTerritory); lower is lighter
     SHADE_K: 0.9,                   // relief shading: brightness change per unit of slope
     SHADE_MAX: 0.18,                 // and its limit either way
-    relief: [[200, 196, 146], [196, 172, 124], [176, 162, 140], [214, 206, 190], [150, 162, 106]]   // lowland, highland, mountain, peak, forest
+    relief: [[203, 198, 130], [204, 171, 107], [180, 161, 132], [217, 206, 184], [149, 165, 90]]   // lowland, highland, mountain, peak, forest
   },
 
   // 0 zoomed out (paper) to 1 zoomed in (relief).
@@ -837,8 +838,8 @@ const Render = {
   atlasTone(rgb) {
     const A = this.ATLAS, lum = rgb[0] * 0.3 + rgb[1] * 0.59 + rgb[2] * 0.11;
     return rgb.map((c, k) => {
-      const d = c + (lum - c) * 0.15;
-      return d + (A.sepia[k] - d) * 0.07;
+      const d = c + (lum - c) * 0.08;
+      return d + (A.sepia[k] - d) * 0.04;
     });
   },
 
@@ -851,8 +852,8 @@ const Render = {
   // Ice, tundra, taiga, cold steppe, forest, grassland, steppe, rainforest, savanna, desert.
   BIOME_CLASSIC: [[150, 158, 164], [98, 104, 90], [54, 80, 62], [100, 100, 80], [62, 92, 60],
     [86, 104, 70], [116, 110, 76], [44, 86, 52], [114, 112, 66], [148, 130, 90]],
-  BIOME_ATLAS: [[236, 238, 234], [204, 202, 174], [154, 168, 124], [206, 200, 162], [166, 180, 118],
-    [198, 200, 142], [216, 202, 152], [140, 168, 102], [210, 198, 130], [232, 212, 162]],
+  BIOME_ATLAS: [[236, 239, 233], [206, 203, 161], [152, 173, 107], [210, 201, 144], [165, 186, 93],
+    [200, 203, 116], [224, 203, 128], [134, 176, 77], [218, 200, 98], [242, 212, 137]],
   BIOME_TREES: [0, 0, 1, 0, 1, 0.25, 0, 1, 0.35, 0],
   BIOME_COLD: [1, 1, 0.6, 0.5, 0, 0, 0, 0, 0, 0],   // how far snow comes down the mountains
   // Rough [top, bottom] latitudes of the baked maps; procedural maps draw theirs from the seed.
@@ -975,7 +976,7 @@ const Render = {
     const clim = this.climate(), biomeTone = [];
     for (let b = 0; b < this.BIOME_CLASSIC.length; b++) {
       for (let t = 0; t < 3; t++) {
-        biomeTone.push(atlas ? this.mixRGB(A.bare[t], this.BIOME_ATLAS[b], [0.3, 0.18, 0.08][t])
+        biomeTone.push(atlas ? this.mixRGB(A.bare[t], this.BIOME_ATLAS[b], [0.42, 0.26, 0.12][t])
           : this.packed(...this.classicGroundRGB(b, t)));
       }
     }
@@ -1013,7 +1014,8 @@ const Render = {
       const [r, g, b] = Game.players[p].color;
       this.fillColor[p] = new Uint32Array(3);
       if (atlas) {
-        const tone = this.atlasTone([r, g, b]), F = A.FILL;
+        let tone = this.atlasTone([r, g, b]), F = A.FILL;
+        if (Game.players[p].isTribe) tone = tone.map(c => c + (255 - c) * A.TRIBE_LIGHT);
         const border = tone.map(c => c * 0.55);
         this.borderColor[p] = this.mixRGB(border, A.ink, 0.25);
         // The band is the fill mixed BAND of the way to the border tone; as a

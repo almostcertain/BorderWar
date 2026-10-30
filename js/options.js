@@ -7,7 +7,7 @@ const Options = (function() {
   // Battery saver starts on for phones and tablets, off where there is a mouse.
   const touchDevice = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
   // Music starts off on a developer's own machine, on for players on the live site.
-  const DEFAULTS = { lowGfx: false, saveBattery: touchDevice, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false, musicOn: !UI.DEBUG_HOST, musicVol: 0.7, mapStyle: 'classic' };
+  const DEFAULTS = { lowGfx: false, saveBattery: touchDevice, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false, musicOn: !UI.DEBUG_HOST, musicVol: 0.7, mapStyle: 'atlas' };
   const values = Object.assign({}, DEFAULTS);
 
   try {
