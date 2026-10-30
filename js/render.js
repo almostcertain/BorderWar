@@ -254,6 +254,7 @@ const Render = {
 
   disposeAtlasBases() {
     this.glyphs = null;
+    this.farShown = null;
     this.reliefData = null;
     this.dropChunks();
     if (this.groundLayer) { this.disposeLayer(this.groundLayer); this.groundLayer = null; }
@@ -415,7 +416,13 @@ const Render = {
       const sorted = []; for (const k of idx) sorted.push(c[k], c[k + 1], c[k + 2], c[k + 3]);
       c.length = 0; c.push(...sorted);
     }
-    this.glyphs = { cols, rows, cells };
+    // Per tile, for the far symbols: 1 mountain, 2 hills, 3 wooded highland.
+    const cls = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      if (own[i] === WATER || tier[i] === 0) continue;
+      cls[i] = tier[i] === 2 ? 1 : forest[i] > 0.5 ? 3 : 2;
+    }
+    this.glyphs = { cols, rows, cells, cls, hash };
     this.glyphSprites.clear();
   },
 
@@ -563,15 +570,13 @@ const Render = {
   // view's chunks fit their share of the cache: if they didn't, each frame
   // would evict chunks it is about to draw and repaint them, which is slow
   // and flickers). has(bx, by) skips empty squares.
-  drawChunks(ctx, kind, B, P, maxK, cols, rows, has, paint) {
+  drawChunks(ctx, kind, B, P, maxK, cols, rows, has, paint, minK = 2) {
     const s = this.cam.scale * this.dpr, cw = this.canvas.width, ch = this.canvas.height, chunks = this.chunks;
-    const halfW = cw / 2 / s, halfH = ch / 2 / s;
-    const bx0 = Math.max(0, Math.floor((this.cam.x - halfW - P) / B)), bx1 = Math.min(cols - 1, Math.floor((this.cam.x + halfW + P) / B));
-    const by0 = Math.max(0, Math.floor((this.cam.y - halfH - P) / B)), by1 = Math.min(rows - 1, Math.floor((this.cam.y + halfH + P) / B));
+    const [bx0, bx1, by0, by1] = this.chunkRange(B, P, cols, rows);
     const share = this.chunkBudget() * 0.4, onScreen = (bx1 - bx0 + 1) * (by1 - by0 + 1);
-    let k = 2;
+    let k = minK;
     while (k * 1.41 < s && k < maxK) k *= 2;
-    while (k > 2 && onScreen * ((B + 2 * P) * k) ** 2 > share) k /= 2;
+    while (k > minK && onScreen * ((B + 2 * P) * k) ** 2 > share) k /= 2;
     const size = (B + 2 * P) * s;
     for (let by = by0; by <= by1; by++) {
       for (let bx = bx0; bx <= bx1; bx++) {
@@ -579,29 +584,39 @@ const Render = {
         const base = kind + ',' + bx + ',' + by + ',', key = base + k;
         let chunk = chunks.get(key);
         if (chunk) { chunks.delete(key); chunks.set(key, chunk); }
-        else if (this.chunkBaked === 0 || performance.now() < this.chunkUntil) {
-          const c = paint(bx, by, k);
-          chunk = { canvas: c, bmp: null, px: c.width * c.height, dead: false };
-          try {
-            createImageBitmap(c).then(bmp => {
-              if (chunk.dead) { bmp.close(); return; }
-              chunk.bmp = bmp;
-              chunk.canvas = null;
-            }, () => {});
-          } catch (e) { /* no createImageBitmap: keep stamping the canvas */ }
-          chunks.set(key, chunk);
-          this.chunkPx += chunk.px;
-          this.chunkBaked++;
-        } else {
-          // Not painted at this zoom yet: show it at a neighbouring one meanwhile.
-          chunk = chunks.get(base + (k * 2)) || chunks.get(base + (k / 2));
-          if (!chunk) continue;
-        }
+        // Not painted at this zoom yet: show it at a neighbouring one meanwhile.
+        else chunk = this.makeChunk(key, () => paint(bx, by, k)) || chunks.get(base + (k * 2)) || chunks.get(base + (k / 2));
+        if (!chunk) continue;
         const img = chunk.bmp || chunk.canvas;
         if (!img) continue;
         ctx.drawImage(img, ((bx * B - P) - this.cam.x) * s + cw / 2, ((by * B - P) - this.cam.y) * s + ch / 2, size, size);
       }
     }
+  },
+
+  // The squares of B tiles (plus P either side) the view covers: [bx0, bx1, by0, by1].
+  chunkRange(B, P, cols, rows) {
+    const s = this.cam.scale * this.dpr, halfW = this.canvas.width / 2 / s, halfH = this.canvas.height / 2 / s;
+    return [Math.max(0, Math.floor((this.cam.x - halfW - P) / B)), Math.min(cols - 1, Math.floor((this.cam.x + halfW + P) / B)),
+      Math.max(0, Math.floor((this.cam.y - halfH - P) / B)), Math.min(rows - 1, Math.floor((this.cam.y + halfH + P) / B))];
+  },
+
+  // Paints and caches chunk `key`, or null once the frame's painting budget is spent.
+  makeChunk(key, paint) {
+    if (this.chunkBaked > 0 && performance.now() >= this.chunkUntil) return null;
+    const c = paint();
+    const chunk = { canvas: c, bmp: null, px: c.width * c.height, dead: false };
+    try {
+      createImageBitmap(c).then(bmp => {
+        if (chunk.dead) { bmp.close(); return; }
+        chunk.bmp = bmp;
+        chunk.canvas = null;
+      }, () => {});
+    } catch (e) { /* no createImageBitmap: keep stamping the canvas */ }
+    this.chunks.set(key, chunk);
+    this.chunkPx += chunk.px;
+    this.chunkBaked++;
+    return chunk;
   },
 
   // Forgets the least recently drawn chunks past the budget.
@@ -640,6 +655,115 @@ const Render = {
       (bx, by, k) => this.bakeGlyphChunk(bx, by, k));
     ctx.restore();
     this.trimChunks();
+  },
+
+  // --- Far terrain symbols ---
+  // Zoomed out, the relief and its marks fade away. Instead one symbol per
+  // cell of about FAR_STEP CSS px marks the cell's main terrain tier, placed
+  // at that terrain's centre in the cell. Only sim tiers count: lowland woods
+  // are looks only. Drawn over the territory, fading out as the marks fade in.
+  FAR_STEP: 11,              // CSS px between symbols
+  FAR_ALPHA: 0.9,
+  FAR_MOUNTAIN: 0.2,         // share of a cell that must be mountain to mark it
+  FAR_HIGHLAND: 0.45,        // and highland (hills or wooded)
+
+  drawFarGlyphs(ctx) {
+    const t = this.atlasNear(), G = this.glyphs;
+    if (t >= 0.98 || !G) return;
+    // Baked near the screen's scale; the cell size follows, so symbols keep
+    // their screen size and spacing at every zoom.
+    const s = this.cam.scale * this.dpr;
+    let k = 0.125;
+    while (k * 1.41 < s && k < 8) k *= 2;
+    // Each level has its own cells, so no other level can stand in for a
+    // missing square. Keep showing the last level until the new one's view is
+    // all painted, else the symbols blink out while zooming.
+    const want = this.farLevel(k), shown = this.farShown;
+    let L = want, has = null;
+    if (shown && shown.k !== want.k && shown.dpr === want.dpr && !this.farReady(want)) {
+      L = shown;
+      has = (bx, by) => this.chunks.has(L.kind + ',' + bx + ',' + by + ',' + L.k);
+    } else this.farShown = want;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = (1 - t) * this.FAR_ALPHA;
+    ctx.imageSmoothingEnabled = true;
+    this.drawChunks(ctx, L.kind, L.B, L.P, L.k, L.cols, L.rows, has,
+      (bx, by) => this.bakeFarChunk(bx, by, L.k, L.B, L.P, L.step), L.k);
+    ctx.restore();
+    this.trimChunks();
+  },
+
+  farLevel(k) {
+    const dpr = this.dpr, step = Math.max(2, Math.round(this.FAR_STEP * dpr / k));
+    const B = Math.max(64, Math.round(256 / k));
+    return { k, dpr, step, B, P: step + Math.ceil(16 * dpr / k), kind: 'f' + step,
+      cols: Math.ceil(GameMap.width / B), rows: Math.ceil(GameMap.height / B) };
+  },
+
+  // Paints level L's missing squares in view, within the frame's budget; true once all are there.
+  farReady(L) {
+    const [bx0, bx1, by0, by1] = this.chunkRange(L.B, L.P, L.cols, L.rows);
+    let ready = true;
+    for (let by = by0; by <= by1; by++) {
+      for (let bx = bx0; bx <= bx1; bx++) {
+        const key = L.kind + ',' + bx + ',' + by + ',' + L.k;
+        if (!this.chunks.has(key) && !this.makeChunk(key, () => this.bakeFarChunk(bx, by, L.k, L.B, L.P, L.step))) ready = false;
+      }
+    }
+    return ready;
+  },
+
+  // Far symbols for the cells whose corner lies in square (bx, by) of B tiles.
+  bakeFarChunk(bx, by, k, B, P, step) {
+    const w = GameMap.width, h = GameMap.height, { cls, hash } = this.glyphs;
+    const c = document.createElement('canvas');
+    c.width = c.height = Math.ceil((B + 2 * P) * k);
+    const g = c.getContext('2d'), ox = bx * B - P, oy = by * B - P;
+    const n = [0, 0, 0, 0], sx = [0, 0, 0, 0], sy = [0, 0, 0, 0], marks = [];
+    const cx1 = Math.ceil(Math.min(w, (bx + 1) * B) / step), cy1 = Math.ceil(Math.min(h, (by + 1) * B) / step);
+    for (let cy = Math.ceil(by * B / step); cy < cy1; cy++) {
+      for (let cx = Math.ceil(bx * B / step); cx < cx1; cx++) {
+        const x0 = cx * step, y0 = cy * step, x1 = Math.min(w, x0 + step), y1 = Math.min(h, y0 + step);
+        n.fill(0); sx.fill(0); sy.fill(0);
+        for (let y = y0; y < y1; y++) {
+          for (let x = x0, i = y * w + x0; x < x1; x++, i++) {
+            const v = cls[i];
+            if (v) { n[v]++; sx[v] += x; sy[v] += y; }
+          }
+        }
+        const area = (x1 - x0) * (y1 - y0), high = n[2] + n[3];
+        let kind, cnt, X, Y;
+        if (n[1] >= area * this.FAR_MOUNTAIN) { kind = 0; cnt = n[1]; X = sx[1]; Y = sy[1]; }
+        else if (high >= area * this.FAR_HIGHLAND) { kind = n[3] > n[2] ? 2 : 1; cnt = high; X = sx[2] + sx[3]; Y = sy[2] + sy[3]; }
+        else continue;
+        // Full cells all centre alike; a little jitter keeps them off a grid.
+        const fill = cnt / area, j = step * 0.5 * fill, r = hash(cx * 31 + 5, cy * 17 + 3);
+        // Size: random, and mountains also grow toward the heart of a range.
+        const size = kind === 0 ? 0.7 + 0.35 * Math.min(1, fill * 1.5) + r * 0.35 : kind === 1 ? 0.75 + r * 0.45 : 1;
+        marks.push(X / cnt + 0.5 + (hash(cx, cy * 7) - 0.5) * j, Y / cnt + 0.5 + (hash(cx * 13, cy) - 0.5) * j, kind, size, r);
+      }
+    }
+    // Back to front, so nearer symbols overlap the ones behind.
+    const order = [];
+    for (let m = 0; m < marks.length; m += 5) order.push(m);
+    order.sort((a, b) => marks[a + 1] - marks[b + 1]);
+    const unit = this.FAR_STEP * this.dpr;
+    for (const m of order) {
+      const kind = marks[m + 2], x = (marks[m] - ox) * k, y = (marks[m + 1] - oy) * k, r = marks[m + 4];
+      const px = Math.max(5, Math.round(unit * [0.95, 0.8, 0.62][kind] * marks[m + 3]));
+      if (kind === 2) {
+        // Two trees, each sized on its own.
+        const a = this.glyphSprite(2, Math.max(4, Math.round(px * (0.65 + r * 0.5))));
+        const b = this.glyphSprite(2, Math.max(4, Math.round(px * (0.65 + (r * 7.31 % 1) * 0.5))));
+        g.drawImage(a, Math.round(x - a.width / 2 - px * 0.3), Math.round(y + px * 0.4 - a.height));
+        g.drawImage(b, Math.round(x - b.width / 2 + px * 0.3), Math.round(y + px * 0.75 - b.height));
+      } else {
+        const sp = this.glyphSprite(kind, px);
+        g.drawImage(sp, Math.round(x - sp.width / 2), Math.round(y - sp.height / 2));
+      }
+    }
+    return c;
   },
 
   // In-place separable box blur of radius r.
@@ -2117,6 +2241,7 @@ const Render = {
     if (this.mapStyle === 'atlas' && this.groundLayer) {
       this.drawAtlasBase(ctx);
       this.drawAtlasTerritory(ctx);
+      this.drawFarGlyphs(ctx);
     } else this.drawLayer(ctx, this.tileLayer, -this.cam.x, -this.cam.y);
     this.drawHoverHighlight(territoryChanged, ctx);
     ctx.setTransform(1, 0, 0, 1, 0, 0);

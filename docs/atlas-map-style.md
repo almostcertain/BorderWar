@@ -72,6 +72,26 @@ Each step is playable on its own. Switch styles in Options → Map style.
   territory (end of `drawAtlasBase`), so they take the nation's tint and
   borders run over mountains instead of being hidden by them.
 
+- Far symbols (`drawFarGlyphs`): below `NEAR_FROM` the relief and its marks
+  are gone, so terrain vanished under territory. Zoomed out, one symbol per
+  cell of ~`FAR_STEP` (11) CSS px marks the cell's main tier: mountain if at
+  least `FAR_MOUNTAIN` (20%) of it is mountain, so thin ranges survive,
+  else hills or trees if `FAR_HIGHLAND` (45%) is highland. The symbol sits
+  at that terrain's centroid in the cell, so ranges keep their shape. Only
+  sim tiers count; lowland woods don't. The cell size follows the zoom, so
+  symbols keep their screen size and spacing. They're drawn over the
+  territory (it's opaque far out) and crossfade with the near marks between
+  `NEAR_FROM` and `NEAR_TO`. Baked into the chunk cache at the power of two
+  nearest the screen's scale (`minK` lets it go below 2 px per tile); a
+  ~310 px chunk bakes in 0.2–1.6 ms, and a whole-map view is ~6 chunks.
+  Sizes vary per symbol (hashed); mountains also grow toward the heart of a
+  range, and each tree of a pair is sized on its own. Each zoom level has its
+  own cells, so a neighbouring level can't stand in for a missing square the
+  way relief chunks do: the last fully drawn level stays up until the new
+  level's view is all painted (`farReady`). Before that, fast zooming blanked
+  the symbols for up to a second.
+  Picked from four mockups (colour zones, pattern fill, symbols, hybrid).
+
 ## Interface theme
 
 With Atlas on, the whole interface follows: menus, dialogs, the HUD and
