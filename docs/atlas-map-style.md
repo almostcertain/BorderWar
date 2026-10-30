@@ -43,15 +43,44 @@ Each step is playable on its own. Switch styles in Options → Map style.
   mockup density, one mark per 3 tiles. Highland is drawn as hills or as
   forest (greener relief, tree clumps) in broad noise patches, roughly half
   each (`atlasForest`); looks only, both are the same terrain in play. Plains
-  carry no marks, so trees always mean highland. They're painted per 64-tile chunk at 4/8/16 px per tile and cached
-  (`drawTerrainGlyphs`, ~1 ms to paint a dense chunk, at most ~3 ms of
-  painting per frame); drawing costs 0.1–0.7 ms per frame. The chunk cache
-  is 3× the screen's device pixels (16M minimum), and the paint resolution
-  drops until everything on screen fits it: with a fixed 16M cache a
-  1920x1080 @2x screen evicted and repainted 5–7 visible chunks every frame
-  (low fps, flickering symbols). Peak cache there is ~22M px (~90 MB). Buildings are
-  paper discs with ink symbols in an owner-coloured ring. Town names dropped:
-  cities have no names.
+  carry no marks, so trees always mean highland. Buildings are paper discs
+  with ink symbols in an owner-coloured ring. Town names dropped: cities have
+  no names.
+- Step 6: tried rhumb lines at sea, reverted. Other ornaments not pursued.
+- Sharp relief (after step 5): `reliefLayer` is one pixel per tile and smears
+  zoomed in, so up close the relief is repainted per 32-tile square at the
+  zoom's resolution (`paintReliefChunk`, at most 8 px per tile), interpolating
+  height, shading, forest weight and sea distance between tile centres.
+  Coasts and ripple lines come out crisp and the land gets a fine grain.
+  Shading is interpolated, not re-derived per pixel: a slope taken from the
+  interpolated height is flat across each tile and shows as squares. Heights
+  are blurred less than before (one radius-2 pass) for firmer ridges.
+  Shading is lit from the north-west like the mountain marks (it was lit
+  from the south-east at first, which made the terrain read as sunken), and
+  gentle (`SHADE_K`, `SHADE_MAX` = ±18%). The paper
+  mottling fades out as the relief fades in: it's anchored to the map, so
+  zoomed in its blotches grew into dark shadows.
+
+- Territory over terrain: zoomed in, the territory layer is drawn with
+  `multiply` instead of laid over (`drawAtlasTerritory`), so nation colour
+  tints the relief and the terrain keeps its full contrast; laid over at 60%
+  it hid the terrain under owned land. Mid-blend both are drawn, crossfaded.
+  Over flat paper the two differ by ~10%, so the switch doesn't jump.
+
+## Zoom-resolution chunks
+
+Sharp relief and terrain marks share one cache (`drawChunks`): each square is
+painted once per resolution (the power of two nearest the screen's px per
+tile) and kept as an ImageBitmap. Painting is capped at ~4 ms a frame, with
+neighbouring resolutions or `reliefLayer` shown until a square is ready. The
+cache holds 4 screens of device pixels (16M minimum); each kind lowers its
+resolution until its on-screen squares fit 40% of that. A fixed-size cache
+on a 1920x1080 @2x screen evicted and repainted 5–7 visible squares every
+frame (low fps, flickering marks).
+
+Measured on the large map at a simulated 1920x1080 @2x: zooming into a fresh
+area fills in over ~30 frames, worst frame 12 ms; steady state, both kinds
+cost under 0.6 ms a frame; cache peaks around 21M px (~85 MB).
 
 ## Notes
 

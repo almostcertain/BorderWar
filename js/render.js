@@ -236,6 +236,8 @@ const Render = {
     // NEAR_TO. Nation colour keeps its strength; the relief shows through it.
     NEAR_FROM: 2.5,
     NEAR_TO: 5,
+    SHADE_K: 0.9,                    // relief shading: brightness change per unit of slope
+    SHADE_MAX: 0.18,                 // and its limit either way
     relief: [[200, 196, 146], [196, 172, 124], [176, 162, 140], [214, 206, 190], [150, 162, 106]]   // lowland, highland, mountain, peak, forest
   },
 
@@ -248,7 +250,8 @@ const Render = {
 
   disposeAtlasBases() {
     this.glyphs = null;
-    this.dropGlyphChunks();
+    this.reliefData = null;
+    this.dropChunks();
     if (this.groundLayer) { this.disposeLayer(this.groundLayer); this.groundLayer = null; }
     if (this.reliefLayer) { this.disposeLayer(this.reliefLayer); this.reliefLayer = null; }
   },
@@ -272,7 +275,7 @@ const Render = {
     const hb = new Float32Array(n);
     for (let i = 0; i < n; i++) hb[i] = own[i] === WATER ? -0.2 : tier[i] * 0.5;
     const tmp = new Float32Array(n);
-    for (let pass = 0; pass < 2; pass++) this.boxBlur(hb, tmp, w, h, 3);
+    this.boxBlur(hb, tmp, w, h, 2);
     // Cosmetic value noise (render only): roughness that grows with altitude.
     const hash = (x, y) => { let k = Math.imul(x, 374761393) + Math.imul(y, 668265263) | 0; k = Math.imul(k ^ (k >>> 13), 1274126177); return ((k ^ (k >>> 16)) >>> 0) / 4294967296; };
     const vn = (x, y) => {
@@ -288,25 +291,37 @@ const Render = {
         ht[i] = hb[i] + (vn(x / 9, y / 9) - 0.5) * 0.22 * (0.3 + e) + (vn(x / 3.5, y / 3.5) - 0.5) * 0.12 * e;
       }
     }
-    const R = this.ATLAS.relief, relief = new Uint32Array(n);
+    const R = this.ATLAS.relief, relief = new Uint32Array(n), shade = new Float32Array(n);
     const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const i = y * w + x;
-        if (own[i] === WATER) { relief[i] = ground[i]; continue; }
+        if (own[i] === WATER) { relief[i] = ground[i]; shade[i] = 1; continue; }
         const e = Math.max(0, Math.min(1, hb[i]));
         let c = e < 0.5 ? lerp(R[0], R[1], e * 2) : lerp(R[1], R[2], e * 2 - 1);
         if (e > 0.8) c = lerp(c, R[3], (e - 0.8) * 3);
         // Forest patches of highland read greener (see atlasForest).
         const fw = Math.max(0, 1 - Math.abs(e - 0.5) * 2.5);
         if (fw > 0) c = lerp(c, R[4], 0.5 * fw * this.atlasForest(vn, x, y));
-        // Lit from the north-west.
-        const up = x > 0 && y > 0 ? ht[i - w - 1] : ht[i], dn = x < w - 1 && y < h - 1 ? ht[i + w + 1] : ht[i];
-        const s = 1 + Math.max(-0.35, Math.min(0.35, (up - dn) * 1.6));
+        // Lit from the north-west, like the mountain marks: a slope rising to
+        // the south-east faces the light. The other sign reads as dents.
+        const nw = x > 0 && y > 0 ? ht[i - w - 1] : ht[i], se = x < w - 1 && y < h - 1 ? ht[i + w + 1] : ht[i];
+        const S = this.ATLAS.SHADE_MAX, s = shade[i] = 1 + Math.max(-S, Math.min(S, (se - nw) * this.ATLAS.SHADE_K));
         relief[i] = this.packed(Math.min(255, c[0] * s) | 0, Math.min(255, c[1] * s) | 0, Math.min(255, c[2] * s) | 0);
       }
     }
     this.reliefLayer = this.makeLayer(canvasOf(relief), true);
+    // Sea distance (land 0, open sea capped) and forest weight per tile, for
+    // the sharp relief's coasts, ripples and woods.
+    const near = this.seaDistance(30), sd = new Float32Array(n), forest = new Float32Array(n);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        sd[i] = own[i] !== WATER ? 0 : near[i] || 30;
+        if (tier[i] === HIGHLAND && own[i] !== WATER) forest[i] = this.atlasForest(vn, x, y);
+      }
+    }
+    this.reliefData = { hb, shade, forest, sd, vn };
     this.placeTerrainGlyphs(hash, vn);
   },
 
@@ -314,17 +329,12 @@ const Render = {
   // Mountains, hills and tree clumps on a jittered grid, fading in with the
   // relief. Far too many to stamp one by one each frame, so each
   // GLYPH_BUCKET square of map is painted once into a chunk at a
-  // power-of-two resolution near the current zoom, and the chunks are cached
-  // (as ImageBitmaps, for Firefox) up to GLYPH_CACHE_PX.
+  // power-of-two resolution near the current zoom (drawChunks).
   GLYPH_STEP: 3,             // tiles between grid points
   GLYPH_BUCKET: 64,          // tiles per chunk side
   GLYPH_PAD: 4,              // tiles a symbol may reach past its chunk
-  GLYPH_CACHE_PX: 16e6,      // device px of chunks kept, at least; more on big screens (drawTerrainGlyphs)
-  GLYPH_BAKE_MS: 3,          // chunk painting allowed per frame (one always goes)
   glyphs: null,
   glyphSprites: new Map(),
-  glyphChunks: new Map(),    // "bx,by,k" -> chunk, oldest use first
-  glyphCachePx: 0,
 
   // Highland is drawn as either hills or forest, in broad patches: 0 hills
   // to 1 forest. Looks only; both are the same terrain in play.
@@ -403,7 +413,8 @@ const Render = {
     return c;
   },
 
-  // Paints chunk (bx, by) at k device px per tile.
+  // Paints glyph chunk (bx, by) at k device px per tile, onto a canvas
+  // GLYPH_PAD tiles bigger on every side so marks can spill over the edge.
   bakeGlyphChunk(bx, by, k) {
     const B = this.GLYPH_BUCKET, P = this.GLYPH_PAD, size = (B + 2 * P) * k;
     const c = document.createElement('canvas');
@@ -414,77 +425,180 @@ const Render = {
       const sp = this.glyphSprite(cell[i + 2], Math.max(3, Math.round(cell[i + 3] * k)));
       g.drawImage(sp, Math.round((cell[i] - ox) * k - sp.width / 2), Math.round((cell[i + 1] - oy) * k - sp.height + 2));
     }
-    const chunk = { canvas: c, bmp: null, px: size * size, dead: false };
-    try {
-      createImageBitmap(c).then(bmp => {
-        if (chunk.dead) { bmp.close(); return; }
-        chunk.bmp = bmp;
-        chunk.canvas = null;
-      }, () => {});
-    } catch (e) { /* no createImageBitmap: keep stamping the canvas */ }
-    return chunk;
+    return c;
   },
 
-  dropGlyphChunks() {
-    for (const ch of this.glyphChunks.values()) { ch.dead = true; if (ch.bmp) ch.bmp.close(); }
-    this.glyphChunks.clear();
-    this.glyphCachePx = 0;
+  // --- Sharp relief ---
+  // reliefLayer has one pixel per tile, so zoomed in it smears. Up close the
+  // relief is repainted per RELIEF_CHUNK square at the zoom's resolution
+  // from the same fields, interpolated between tile centres: coasts, ripple
+  // lines and shading stay crisp, plus a fine grain the tiles can't hold.
+  // reliefLayer stays underneath until a square is painted.
+  RELIEF_CHUNK: 32,          // tiles per chunk side
+  RELIEF_MAX_K: 8,           // px per tile at most; beyond it the smooth shading upscales fine
+
+  paintReliefChunk(bx, by, k) {
+    const D = this.reliefData, w = GameMap.width, h = GameMap.height, A = this.ATLAS, R = A.relief;
+    const C = this.RELIEF_CHUNK, N = C * k;
+    const c = document.createElement('canvas');
+    c.width = c.height = N;
+    const g = c.getContext('2d'), img = g.createImageData(N, N), px = new Uint32Array(img.data.buffer);
+    const { hb, shade, forest, sd, vn } = D;
+    const ripW = 0.7 / k, coastW = 1.6 / k;
+    for (let py = 0; py < N; py++) {
+      let v = by * C + (py + 0.5) / k - 0.5;
+      const y0 = Math.max(0, Math.min(h - 2, Math.floor(v))), fy = Math.max(0, Math.min(1, v - y0));
+      v += 0.5;
+      for (let qx = 0; qx < N; qx++) {
+        let u = bx * C + (qx + 0.5) / k - 0.5;
+        const x0 = Math.max(0, Math.min(w - 2, Math.floor(u))), fx = Math.max(0, Math.min(1, u - x0));
+        u += 0.5;
+        const i = y0 * w + x0, j = i + w;
+        const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+        const s = sd[i] * w00 + sd[i + 1] * w10 + sd[j] * w01 + sd[j + 1] * w11;
+        let r, gr, b;
+        if (s > 0.5) {
+          // Sea: the inked shore, then ripple lines following it out.
+          r = A.water[0]; gr = A.water[1]; b = A.water[2];
+          let ink = 0;
+          if (s < 0.5 + coastW) ink = 0.85;
+          else for (let q = 0; q < A.RIPPLES.length; q++) if (Math.abs(s - A.RIPPLES[q]) < ripW) { ink = A.RIPPLE_INK[q]; break; }
+          if (ink) { r += (A.coast[0] - r) * ink; gr += (A.coast[1] - gr) * ink; b += (A.coast[2] - b) * ink; }
+        } else {
+          let e = hb[i] * w00 + hb[i + 1] * w10 + hb[j] * w01 + hb[j + 1] * w11;
+          e = e < 0 ? 0 : e > 1 ? 1 : e;
+          let t, a0, a1;
+          if (e < 0.5) { t = e * 2; a0 = R[0]; a1 = R[1]; } else { t = e * 2 - 1; a0 = R[1]; a1 = R[2]; }
+          r = a0[0] + (a1[0] - a0[0]) * t; gr = a0[1] + (a1[1] - a0[1]) * t; b = a0[2] + (a1[2] - a0[2]) * t;
+          if (e > 0.8) { const p = (e - 0.8) * 3; r += (R[3][0] - r) * p; gr += (R[3][1] - gr) * p; b += (R[3][2] - b) * p; }
+          const fw = 1 - Math.abs(e - 0.5) * 2.5;
+          if (fw > 0) {
+            const f = 0.5 * fw * (forest[i] * w00 + forest[i + 1] * w10 + forest[j] * w01 + forest[j + 1] * w11);
+            r += (R[4][0] - r) * f; gr += (R[4][1] - gr) * f; b += (R[4][2] - b) * f;
+          }
+          // Shading blended between tile centres (a slope taken from the
+          // blend itself would be flat across each tile and show as squares), plus grain.
+          const sh = shade[i] * w00 + shade[i + 1] * w10 + shade[j] * w01 + shade[j + 1] * w11;
+          const m = sh + (vn(u * 1.7 + 7, v * 1.7) - 0.5) * 0.1 * (0.3 + e);
+          r *= m; gr *= m; b *= m;
+        }
+        px[py * N + qx] = (255 << 24) | ((b > 255 ? 255 : b) << 16) | ((gr > 255 ? 255 : gr) << 8) | (r > 255 ? 255 : r);
+      }
+    }
+    g.putImageData(img, 0, 0);
+    return c;
+  },
+
+  // --- Zoom-resolution chunk cache ---
+  // Shared by sharp relief and terrain marks. Each chunk is painted once per
+  // (square, resolution) and kept, as an ImageBitmap for Firefox, until the
+  // cache passes CHUNK_CACHE_PX or CHUNK_CACHE_SCREENS screens of pixels.
+  CHUNK_CACHE_PX: 16e6,
+  CHUNK_CACHE_SCREENS: 4,
+  CHUNK_BAKE_MS: 4,          // painting allowed per frame across both kinds (one chunk always goes)
+  chunks: new Map(),         // key -> chunk, least recently drawn first
+  chunkPx: 0,
+  chunkUntil: 0,
+  chunkBaked: 0,
+
+  dropChunks() {
+    for (const ch of this.chunks.values()) { ch.dead = true; if (ch.bmp) ch.bmp.close(); }
+    this.chunks.clear();
+    this.chunkPx = 0;
+  },
+
+  chunkBudget() {
+    return Math.max(this.CHUNK_CACHE_PX, this.CHUNK_CACHE_SCREENS * this.canvas.width * this.canvas.height);
+  },
+
+  // Starts a frame's chunk painting budget.
+  beginChunkFrame() {
+    this.chunkUntil = performance.now() + this.CHUNK_BAKE_MS;
+    this.chunkBaked = 0;
+  },
+
+  // Draws the `kind` chunks covering the view: squares of B tiles drawn
+  // P tiles bigger on each side, painted by paint(bx, by, k) at k px per tile
+  // (the power of two nearest the screen's, at most maxK, lowered until the
+  // view's chunks fit their share of the cache: if they didn't, each frame
+  // would evict chunks it is about to draw and repaint them, which is slow
+  // and flickers). has(bx, by) skips empty squares.
+  drawChunks(ctx, kind, B, P, maxK, cols, rows, has, paint) {
+    const s = this.cam.scale * this.dpr, cw = this.canvas.width, ch = this.canvas.height, chunks = this.chunks;
+    const halfW = cw / 2 / s, halfH = ch / 2 / s;
+    const bx0 = Math.max(0, Math.floor((this.cam.x - halfW - P) / B)), bx1 = Math.min(cols - 1, Math.floor((this.cam.x + halfW + P) / B));
+    const by0 = Math.max(0, Math.floor((this.cam.y - halfH - P) / B)), by1 = Math.min(rows - 1, Math.floor((this.cam.y + halfH + P) / B));
+    const share = this.chunkBudget() * 0.4, onScreen = (bx1 - bx0 + 1) * (by1 - by0 + 1);
+    let k = 2;
+    while (k * 1.41 < s && k < maxK) k *= 2;
+    while (k > 2 && onScreen * ((B + 2 * P) * k) ** 2 > share) k /= 2;
+    const size = (B + 2 * P) * s;
+    for (let by = by0; by <= by1; by++) {
+      for (let bx = bx0; bx <= bx1; bx++) {
+        if (has && !has(bx, by)) continue;
+        const base = kind + ',' + bx + ',' + by + ',', key = base + k;
+        let chunk = chunks.get(key);
+        if (chunk) { chunks.delete(key); chunks.set(key, chunk); }
+        else if (this.chunkBaked === 0 || performance.now() < this.chunkUntil) {
+          const c = paint(bx, by, k);
+          chunk = { canvas: c, bmp: null, px: c.width * c.height, dead: false };
+          try {
+            createImageBitmap(c).then(bmp => {
+              if (chunk.dead) { bmp.close(); return; }
+              chunk.bmp = bmp;
+              chunk.canvas = null;
+            }, () => {});
+          } catch (e) { /* no createImageBitmap: keep stamping the canvas */ }
+          chunks.set(key, chunk);
+          this.chunkPx += chunk.px;
+          this.chunkBaked++;
+        } else {
+          // Not painted at this zoom yet: show it at a neighbouring one meanwhile.
+          chunk = chunks.get(base + (k * 2)) || chunks.get(base + (k / 2));
+          if (!chunk) continue;
+        }
+        const img = chunk.bmp || chunk.canvas;
+        if (!img) continue;
+        ctx.drawImage(img, ((bx * B - P) - this.cam.x) * s + cw / 2, ((by * B - P) - this.cam.y) * s + ch / 2, size, size);
+      }
+    }
+  },
+
+  // Forgets the least recently drawn chunks past the budget.
+  trimChunks() {
+    const budget = this.chunkBudget();
+    while (this.chunkPx > budget && this.chunks.size) {
+      const [key, old] = this.chunks.entries().next().value;
+      this.chunks.delete(key);
+      old.dead = true;
+      if (old.bmp) old.bmp.close();
+      this.chunkPx -= old.px;
+    }
+  },
+
+  // Sharp relief over reliefLayer; called inside the map transform.
+  drawSharpRelief(ctx) {
+    if (!this.reliefData) return;
+    const C = this.RELIEF_CHUNK, w = GameMap.width, h = GameMap.height;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    this.drawChunks(ctx, 'r', C, 0, this.RELIEF_MAX_K, Math.ceil(w / C), Math.ceil(h / C), null,
+      (bx, by, k) => this.paintReliefChunk(bx, by, k));
+    ctx.restore();
   },
 
   drawTerrainGlyphs(ctx) {
     const t = this.atlasNear(), G = this.glyphs;
     if (t <= 0.02 || !G) return;
-    const s = this.cam.scale * this.dpr, cw = this.canvas.width, ch = this.canvas.height;
-    const B = this.GLYPH_BUCKET, P = this.GLYPH_PAD, chunks = this.glyphChunks;
-    const halfW = cw / 2 / s, halfH = ch / 2 / s;
-    const bx0 = Math.max(0, Math.floor((this.cam.x - halfW - P) / B)), bx1 = Math.min(G.cols - 1, Math.floor((this.cam.x + halfW + P) / B));
-    const by0 = Math.max(0, Math.floor((this.cam.y - halfH - P) / B)), by1 = Math.min(G.rows - 1, Math.floor((this.cam.y + halfH + P) / B));
-    // Paint resolution: the power of two nearest the screen's px per tile,
-    // lowered until every chunk on screen fits the cache with room to spare.
-    // If they didn't fit, each frame would evict chunks it is about to draw
-    // and repaint them: slow, and they flicker.
-    const budget = Math.max(this.GLYPH_CACHE_PX, 3 * cw * ch);
-    const onScreen = (bx1 - bx0 + 1) * (by1 - by0 + 1);
-    let k = 2;
-    while (k * 1.41 < s && k < 16) k *= 2;
-    while (k > 2 && onScreen * ((B + 2 * P) * k) ** 2 > budget * 0.6) k /= 2;
-    const until = performance.now() + this.GLYPH_BAKE_MS;
-    let baked = 0;
     ctx.save();
     ctx.globalAlpha = t;
     ctx.imageSmoothingEnabled = true;
-    for (let by = by0; by <= by1; by++) {
-      for (let bx = bx0; bx <= bx1; bx++) {
-        if (!G.cells[by * G.cols + bx].length) continue;
-        const key = bx + ',' + by + ',' + k;
-        let chunk = chunks.get(key);
-        if (chunk) { chunks.delete(key); chunks.set(key, chunk); }
-        else if (baked === 0 || performance.now() < until) {
-          chunk = this.bakeGlyphChunk(bx, by, k);
-          chunks.set(key, chunk);
-          this.glyphCachePx += chunk.px;
-          baked++;
-        } else {
-          // Not painted at this zoom yet: show it at a neighbouring one meanwhile.
-          chunk = chunks.get(bx + ',' + by + ',' + (k * 2)) || chunks.get(bx + ',' + by + ',' + (k / 2));
-          if (!chunk) continue;
-        }
-        const img = chunk.bmp || chunk.canvas;
-        if (!img) continue;
-        const x = ((bx * B - P) - this.cam.x) * s + cw / 2, y = ((by * B - P) - this.cam.y) * s + ch / 2;
-        const size = (B + 2 * P) * s;
-        ctx.drawImage(img, x, y, size, size);
-      }
-    }
+    this.drawChunks(ctx, 'g', this.GLYPH_BUCKET, this.GLYPH_PAD, 16, G.cols, G.rows,
+      (bx, by) => G.cells[by * G.cols + bx].length > 0,
+      (bx, by, k) => this.bakeGlyphChunk(bx, by, k));
     ctx.restore();
-    // Forget the least recently drawn chunks past the cache budget.
-    while (this.glyphCachePx > budget && chunks.size) {
-      const [key, old] = chunks.entries().next().value;
-      chunks.delete(key);
-      old.dead = true;
-      if (old.bmp) old.bmp.close();
-      this.glyphCachePx -= old.px;
-    }
+    this.trimChunks();
   },
 
   // In-place separable box blur of radius r.
@@ -516,12 +630,33 @@ const Render = {
     this.tileLayer.snap = atlas;
   },
 
+  // Atlas territory: laid over the paper normally, but multiplied into the
+  // relief, so zoomed in the nation colour tints the terrain like stained
+  // glass and its shading and colours keep their full contrast. Over flat
+  // paper the two come out within about 10%, so the zoom doesn't jump.
+  drawAtlasTerritory(ctx) {
+    const t = this.atlasNear(), ox = -this.cam.x, oy = -this.cam.y;
+    if (t < 1) {
+      ctx.globalAlpha = 1 - t;
+      this.drawLayer(ctx, this.tileLayer, ox, oy);
+    }
+    if (t > 0) {
+      ctx.globalAlpha = t;
+      ctx.globalCompositeOperation = 'multiply';
+      this.drawLayer(ctx, this.tileLayer, ox, oy);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    ctx.globalAlpha = 1;
+  },
+
   // Atlas: paper fading to relief as the camera zooms in.
   drawAtlasBase(ctx) {
     const t = this.atlasNear(), ox = -this.cam.x, oy = -this.cam.y;
+    this.beginChunkFrame();
     if (t > 0) {
       ctx.imageSmoothingEnabled = true;
       this.drawLayer(ctx, this.reliefLayer, ox, oy);
+      this.drawSharpRelief(ctx);
       ctx.imageSmoothingEnabled = false;
     }
     if (t < 1) {
@@ -622,10 +757,17 @@ const Render = {
     if (mx1 <= mx0 || my1 <= my0) return;
     ctx.save();
     ctx.imageSmoothingEnabled = true;
-    const k = this.PAPER_MOTTLE_TILES * s;
-    ctx.setTransform(k, 0, 0, k, tx, ty);
-    ctx.fillStyle = T.mottlePat;
-    ctx.fillRect((mx0 - tx) / k, (my0 - ty) / k, (mx1 - mx0) / k, (my1 - my0) / k);
+    // The mottling is anchored to the map, so zoomed in its blotches grow
+    // into dark shadows; it fades out as the relief (with its own grain) fades in.
+    const mottle = 1 - this.atlasNear();
+    if (mottle > 0) {
+      const k = this.PAPER_MOTTLE_TILES * s;
+      ctx.setTransform(k, 0, 0, k, tx, ty);
+      ctx.globalAlpha = mottle;
+      ctx.fillStyle = T.mottlePat;
+      ctx.fillRect((mx0 - tx) / k, (my0 - ty) / k, (mx1 - mx0) / k, (my1 - my0) / k);
+      ctx.globalAlpha = 1;
+    }
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = T.grainPat;
     ctx.fillRect(mx0 / this.dpr, my0 / this.dpr, (mx1 - mx0) / this.dpr, (my1 - my0) / this.dpr);
@@ -1804,8 +1946,10 @@ const Render = {
     const s = this.cam.scale * this.dpr;
     ctx.imageSmoothingEnabled = false;
     ctx.setTransform(s, 0, 0, s, this.canvas.width / 2, this.canvas.height / 2);
-    if (this.mapStyle === 'atlas' && this.groundLayer) this.drawAtlasBase(ctx);
-    this.drawLayer(ctx, this.tileLayer, -this.cam.x, -this.cam.y);
+    if (this.mapStyle === 'atlas' && this.groundLayer) {
+      this.drawAtlasBase(ctx);
+      this.drawAtlasTerritory(ctx);
+    } else this.drawLayer(ctx, this.tileLayer, -this.cam.x, -this.cam.y);
     this.drawHoverHighlight(territoryChanged, ctx);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     const atlas = this.mapStyle === 'atlas';
