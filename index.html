@@ -34,6 +34,9 @@
   // browser re-fetch it and flash the whole UI unstyled on every refresh.)
   window.V = Date.now();
   document.write('<link rel="stylesheet" href="css/style.css?v=' + window.V + '">');
+  document.write('<link rel="stylesheet" href="css/atlas.css?v=' + window.V + '">');
+  // Atlas UI theme on before first paint, so it doesn't flash Classic (Options sets it after).
+  try { if ((JSON.parse(localStorage.getItem('borderwar_options') || '{}') || {}).mapStyle === 'atlas') document.documentElement.classList.add('atlas'); } catch (e) { /* ignore */ }
 </script>
 </head>
 <body>

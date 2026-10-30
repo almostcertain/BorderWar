@@ -25,6 +25,8 @@ const Options = (function() {
   function apply() {
     Render.setLowRes(values.lowGfx);
     Render.setMapStyle(values.mapStyle);
+    document.documentElement.classList.toggle('atlas', values.mapStyle === 'atlas');   // css/atlas.css
+    MenuBg.setStyle(values.mapStyle);
     MenuBg.setEnabled(!values.lowGfx);
     document.body.classList.toggle('noHint', values.hideHint);
     document.documentElement.style.setProperty('--ui-scale', values.uiScale);

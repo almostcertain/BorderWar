@@ -1,0 +1,253 @@
+/* Atlas UI theme (docs/atlas-map-style.md): parchment panels, ink text and
+   serif type to match the Atlas map style. Applies only while <html> has the
+   `atlas` class (Options → Map style); Classic is style.css alone. Overrides
+   colours, borders and type only, never layout. */
+
+html.atlas {
+  --a-paper: rgba(240, 230, 204, 0.96);
+  --a-paper-solid: #f0e6cc;
+  --a-paper-2: #e6d6b2;
+  --a-paper-3: #dac7a0;
+  --a-ink: #3a2616;
+  --a-ink-2: #6a4f35;
+  --a-line: rgba(74, 48, 28, 0.32);
+  --a-line-strong: rgba(74, 48, 28, 0.7);
+  --a-wash: rgba(74, 48, 28, 0.08);
+  --a-rubric: #9b3a22;
+  --a-rubric-2: #7e2d19;
+  --a-brass: #8a6418;
+  --a-green: #4f6e2c;
+  --a-sea: #3c6681;
+  --a-march: #b05f24;
+  --a-dim: rgba(40, 24, 10, 0.5);
+  --a-shadow: 0 2px 10px rgba(50, 30, 12, 0.35);
+  --a-serif: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  /* A ruled edge: the panel border plus a fine inner line, like a map's neatline. */
+  --a-frame: inset 0 0 0 3px var(--a-paper-solid), inset 0 0 0 4px var(--a-line);
+}
+
+html.atlas, html.atlas body {
+  background: #241b12;
+  color: var(--a-ink);
+  font-family: var(--a-serif);
+}
+html.atlas :is(button, input, select, textarea) { font-family: inherit; }
+
+/* --- Shared surfaces --------------------------------------------------------- */
+html.atlas :is(.lbRow, #hoverPanel, #tip, #specPanel, #diploBanner, #spawnBanner, #catchupBanner,
+               #replayBar, .rName, .optionsPanel, #endOverlay .panel, #tutorial) {
+  background: var(--a-paper);
+  color: var(--a-ink);
+  border: 1px solid var(--a-line-strong);
+}
+html.atlas :is(#hoverPanel, #tip, #specPanel, #diploBanner, .optionsPanel, #endOverlay .panel) {
+  box-shadow: var(--a-frame), var(--a-shadow);
+}
+html.atlas :is(.panel h1, .panel h2, .optionsPanel h2, #modeTitle, .menuCardTitle, .cfgHead) {
+  font-family: var(--a-serif);
+  font-variant: small-caps;
+  letter-spacing: 0.04em;
+  color: var(--a-ink);
+}
+
+/* Dimmed backdrops behind dialogs. */
+html.atlas :is(#gameMenu, #optionsOverlay, #accountOverlay, #manageOverlay, #installGuide, #newsOverlay, #achOverlay) {
+  background: var(--a-dim);
+}
+
+/* --- Leaderboard and top bar ------------------------------------------------- */
+html.atlas .lbRow { border-color: var(--a-line); }
+html.atlas :is(.lbTeamRow:hover, .lbRow.unmet:hover) { background: var(--a-paper-2); }
+html.atlas .lbRow.me { outline-color: var(--a-rubric); }
+html.atlas .lbGold { color: var(--a-brass); }
+html.atlas :is(#pauseBtn, #musicBtn, #menuBtn) {
+  background: var(--a-paper);
+  color: var(--a-ink);
+  border: 1px solid var(--a-line-strong);
+}
+html.atlas #menuBtn .ic { filter: brightness(0) opacity(0.75); }   /* menu.svg is white only */
+html.atlas #pauseBtn.paused { background: #d9a441; color: var(--a-ink); }
+html.atlas #traitorChip:not(:empty) { color: #fbeee0; background: rgba(155, 58, 34, 0.85); border-color: var(--a-rubric-2); }
+
+/* --- Bottom HUD ---------------------------------------------------------------- */
+html.atlas #hud {
+  background: linear-gradient(to top, rgba(240, 230, 204, 0.98), rgba(240, 230, 204, 0.92));
+  border: 1px solid var(--a-line-strong);
+  border-bottom: 0;
+  box-shadow: inset 0 3px 0 -1px var(--a-paper-solid), inset 0 4px 0 -1px var(--a-line), var(--a-shadow);
+}
+html.atlas #growthChip { background: rgba(79, 110, 44, 0.12); border-color: rgba(79, 110, 44, 0.45); color: var(--a-green); }
+html.atlas #troopGrowth.stalled { color: var(--a-march); }
+html.atlas #growthChip:has(#troopGrowth.stalled) { background: rgba(176, 95, 36, 0.12); border-color: rgba(176, 95, 36, 0.45); }
+html.atlas #goldChip { background: rgba(138, 100, 24, 0.12); border-color: rgba(138, 100, 24, 0.45); color: var(--a-brass); }
+html.atlas #popBar { background: var(--a-wash); box-shadow: inset 0 0 0 1px var(--a-line); }
+html.atlas #popBarFill { background-color: var(--a-sea); }
+html.atlas #popBarMarch { background: var(--a-march); }
+html.atlas #popBarPeak { background: rgba(58, 38, 22, 0.6); }
+html.atlas #popBarLabel { color: #fbf5e6; text-shadow: 0 1px 2px rgba(40, 20, 5, 0.85); }
+html.atlas .frontChip { background: var(--a-paper-2); border-color: var(--a-line); color: var(--a-ink); }
+html.atlas .frontChip.mine { border-color: var(--a-sea); }
+html.atlas .frontChip.theirs { border-color: var(--a-rubric); }
+html.atlas .frontClose { background: var(--a-rubric) content-box; color: #fbeee0; }
+html.atlas #ratio::-webkit-slider-runnable-track { background: var(--a-line); }
+html.atlas #ratio::-moz-range-track { background: var(--a-line); }
+html.atlas #ratio::-webkit-slider-thumb { background: var(--a-ink); border-color: var(--a-paper-solid); }
+html.atlas #ratio::-moz-range-thumb { background: var(--a-ink); border-color: var(--a-paper-solid); }
+html.atlas .buildBtn { background: var(--a-paper-2); border-color: var(--a-line); color: var(--a-ink); }
+html.atlas .bbKey { color: var(--a-ink-2); border-color: var(--a-line); }
+html.atlas .bbCost { color: var(--a-brass); }
+html.atlas .bbCount { background: var(--a-sea); border-color: var(--a-paper-solid); color: #fbf5e6; }
+html.atlas .buildBtn.poor .bbCost { color: var(--a-rubric); }
+html.atlas .buildBtn.armed { border-color: var(--a-rubric); background: var(--a-paper-3); }
+html.atlas #hint.warn { color: var(--a-rubric); }
+
+/* --- Hover panel, tooltip, city specialisation ------------------------------ */
+html.atlas #hpPopBar { background: var(--a-wash); }
+html.atlas #hpPopHome { background: var(--a-sea); }
+html.atlas #hpPopMarch { background: var(--a-march); }
+html.atlas #hpStatDivider { background: var(--a-line); }
+html.atlas #hpGoldValue { color: var(--a-brass); }
+html.atlas .tipKey { border-color: var(--a-line-strong); }
+html.atlas .specOpt { background: var(--a-paper-2); border-color: var(--a-line); color: var(--a-ink); }
+html.atlas button.specOpt:hover:not(:disabled) { background: rgba(138, 100, 24, 0.16); border-color: var(--a-brass); }
+
+/* --- Banners and alerts ------------------------------------------------------ */
+html.atlas #diploBanner button { background: var(--a-rubric); color: #fbeee0; }
+html.atlas #diploNo { background: var(--a-paper-3); color: var(--a-ink); }
+html.atlas #diploBar { background: var(--a-wash); }
+html.atlas #diploBarFill { background: var(--a-sea); }
+html.atlas #spawnBanner.warn { color: var(--a-rubric); }
+html.atlas #catchupBanner { color: var(--a-ink); }
+html.atlas #desyncBanner { background: rgba(126, 45, 25, 0.95); border-color: #e7b49a; color: #fbeee0; }
+html.atlas .nukeAlertRow { background: rgba(126, 45, 25, 0.95); border-color: #e7b49a; color: #fbeee0; }
+html.atlas .nukeAlertTime { color: #fff8ea; }
+html.atlas .donationAlertRow { background: rgba(66, 92, 36, 0.95); border-color: #c9d9a6; color: #f3f0dc; }
+html.atlas .achToastRow { background: var(--a-paper); border-color: var(--a-brass); color: var(--a-ink); }
+html.atlas :is(#drillBanner, #drillHud) { background: rgba(126, 45, 25, 0.95); border-color: #e7b49a; color: #fbeee0; box-shadow: var(--a-shadow); }
+html.atlas #drillHudTime { color: #fff8ea; }
+
+/* --- Right-click nation menu ------------------------------------------------- */
+html.atlas .rSlot { fill: rgba(240, 230, 204, 0.96); stroke: rgba(58, 38, 22, 0.85); }
+html.atlas :is(.rSlot.good:active, .rSlot.good:hover) { fill: rgba(214, 196, 150, 0.98); }
+html.atlas .rSlot.danger { fill: rgba(220, 170, 140, 0.96); }
+html.atlas :is(.rSlot.danger:active, .rSlot.danger:hover) { fill: rgba(205, 130, 100, 0.98); }
+html.atlas .rSlot.empty { fill: rgba(240, 230, 204, 0.55); }
+html.atlas .rSlot.disabled { fill: rgba(220, 205, 170, 0.75); }
+html.atlas .rCentre { stroke: rgba(58, 38, 22, 0.7); }
+html.atlas #radialMenu text { fill: var(--a-ink); font-family: var(--a-serif); }
+
+/* --- Replay bar --------------------------------------------------------------- */
+html.atlas #replayBar button { background: var(--a-paper-3); color: var(--a-ink); }
+html.atlas #replayPlay.paused { background: #d9a441; color: var(--a-ink); }
+html.atlas #replayBar select { background: var(--a-paper-2); border-color: var(--a-line); color: var(--a-ink); }
+
+/* --- Panels: inputs and buttons ---------------------------------------------- */
+html.atlas .panel :is(select, input[type="number"], input[type="password"], input[type="text"], input[type="email"], input:not([type])) {
+  background: var(--a-paper-2);
+  border: 1px solid var(--a-line-strong);
+  color: var(--a-ink);
+}
+html.atlas .panel button {
+  background: var(--a-rubric);
+  color: #fbeee0;
+  box-shadow: inset 0 0 0 1px rgba(255, 240, 220, 0.25);
+}
+html.atlas .panel button:active { background: var(--a-rubric-2); }
+html.atlas .linkBtn,
+html.atlas .panel button.linkBtn,
+html.atlas :is(#publicLobbyBrowser, #accountStrip, #accountLinks, #manageLinks, .mapOpts, #tutorial) .linkBtn,
+html.atlas .panel button#optCopyPerf { color: var(--a-rubric); background: none; box-shadow: none; }
+html.atlas :is(#newsBody a) { color: var(--a-rubric); }
+html.atlas .panel button.dangerBtn { background: #6e2414; }
+html.atlas .panel button.dangerBtn:active { background: #521a0e; }
+html.atlas #gameMenu .gmBtn { background: var(--a-paper-3); color: var(--a-ink); box-shadow: inset 0 0 0 1px var(--a-line); }
+html.atlas #gameMenu .gmBtn:hover { background: var(--a-paper-2); }
+html.atlas #gameMenu .gmDanger.armed { background: var(--a-rubric); color: #fbeee0; }
+html.atlas #gameMenu #gmResume { background: var(--a-rubric); color: #fbeee0; }
+html.atlas .checkboxLabel, html.atlas .optRow { color: var(--a-ink); }
+html.atlas :is(.optRow input, .checkboxLabel input, .optRow2 input[type="checkbox"]) { accent-color: var(--a-rubric); }
+html.atlas .optRow input[type="range"] { accent-color: var(--a-rubric); }
+
+/* --- End of match ------------------------------------------------------------ */
+html.atlas #endOverlay .panel :is(button#endMenuBtn, button#endMinBtn) { background: var(--a-paper-3); color: var(--a-ink); box-shadow: inset 0 0 0 1px var(--a-line); }
+html.atlas #endOverlay .panel button#endMenuBtn:active { background: var(--a-paper-2); }
+html.atlas #endOverlay[data-banner="banner_warlord"] .panel { background: linear-gradient(rgba(214, 160, 140, 0.97), var(--a-paper) 55%); border-color: var(--a-rubric); }
+html.atlas #endOverlay[data-banner="banner_iron"] .panel { background: linear-gradient(rgba(196, 196, 186, 0.97), var(--a-paper) 55%); border-color: #6e6a60; }
+html.atlas #endOverlay[data-banner="banner_last_standing"] .panel { background: linear-gradient(rgba(226, 196, 120, 0.97), var(--a-paper) 55%); border-color: var(--a-brass); }
+
+/* --- Main menu ---------------------------------------------------------------- */
+html.atlas #overlay { background: #3b2c1c; }
+html.atlas #overlay.menuBgOn { background: radial-gradient(ellipse at center, rgba(240, 230, 204, 0.55), rgba(60, 40, 20, 0.6)); }
+html.atlas .menuPanel {
+  background: var(--a-paper);
+  border: 1px solid var(--a-line-strong);
+  border-radius: 6px;
+  box-shadow: var(--a-frame), 0 10px 40px rgba(40, 24, 10, 0.45);
+  padding: 22px 22px 18px;
+}
+html.atlas .brand { font-variant: small-caps; letter-spacing: 0.06em; color: var(--a-ink); }
+html.atlas #menuPitch { font-style: italic; color: var(--a-ink-2); opacity: 1; }
+html.atlas #quickJoin { background: linear-gradient(180deg, rgba(155, 58, 34, 0.12), rgba(155, 58, 34, 0.03)); border-color: rgba(155, 58, 34, 0.45); }
+html.atlas .panel button.menuRow { background: rgba(255, 250, 236, 0.45); border-color: var(--a-line); color: var(--a-ink); box-shadow: none; }
+html.atlas .panel button.menuRow:hover { background: rgba(155, 58, 34, 0.08); border-color: var(--a-rubric); box-shadow: 0 0 10px rgba(155, 58, 34, 0.18); }
+html.atlas .panel button.menuRow:active { background: rgba(155, 58, 34, 0.16); }
+html.atlas :is(.panel button#modeBack, .panel #menuFoot button) { background: var(--a-paper-3); color: var(--a-ink); box-shadow: inset 0 0 0 1px var(--a-line); }
+html.atlas :is(.panel button#modeBack:hover, .panel #menuFoot button:hover) { background: var(--a-paper-2); }
+html.atlas .panel button#newsLink.unread { color: var(--a-brass); }
+html.atlas .panel button#newsLink.unread::after { background: var(--a-rubric); }
+html.atlas #optionsBtn { background: var(--a-paper); border: 1px solid var(--a-line-strong); opacity: 0.85; }
+html.atlas #optionsBtn:hover { opacity: 1; }
+html.atlas #installBtn { background: var(--a-paper-3); border-color: var(--a-line); color: var(--a-ink); }
+html.atlas #licenseFooter, html.atlas #licenseFooter a { color: rgba(240, 230, 204, 0.75); }
+html.atlas .orDivider { color: var(--a-ink-2); }
+html.atlas .orDivider::before, html.atlas .orDivider::after { background: var(--a-line); }
+
+/* Game setup screens. */
+html.atlas #modeSeg { background: var(--a-paper-2); border-color: var(--a-line); }
+html.atlas .panel #modeSeg button { background: transparent; color: var(--a-ink-2); box-shadow: none; }
+html.atlas .panel #modeSeg button.active { background: var(--a-rubric); color: #fbeee0; }
+html.atlas :is(.mapOpts, .mapGen, .cfgNums > label, .menuCard, .olCard) { background: rgba(255, 250, 236, 0.4); border-color: var(--a-line); }
+html.atlas .cfgHead { border-bottom-color: var(--a-line); }
+html.atlas .cfgHead::before { background: var(--a-rubric); }
+html.atlas .panel button.pickTile { background: rgba(255, 250, 236, 0.45); border-color: var(--a-line); color: var(--a-ink-2); box-shadow: none; }
+html.atlas .panel button.pickTile:hover { background: var(--a-paper-2); }
+html.atlas .panel button.pickTile.active { background: rgba(155, 58, 34, 0.12); border-color: var(--a-rubric); color: var(--a-ink); box-shadow: 0 0 10px rgba(155, 58, 34, 0.2); }
+html.atlas .mapPreview canvas { background: var(--a-paper-3); border-color: var(--a-line); }
+html.atlas .mapPreviewNote { background: rgba(240, 230, 204, 0.88); color: var(--a-ink); }
+html.atlas .mapPreviewBar input[type="number"] { background: var(--a-paper-2); color: var(--a-ink); border-color: var(--a-line-strong); }
+@media (max-width: 899px) {
+  html.atlas .settingsGrid > :is(#startBtn, #hostStartBtn) { box-shadow: 0 0 0 8px var(--a-paper-solid); }
+}
+
+/* Lobbies. */
+html.atlas #lobbyCode { background: var(--a-paper-2); border-color: var(--a-line-strong); color: var(--a-ink); }
+html.atlas :is(.lobbyRoster li, .lobbyStatus) { background: var(--a-wash); }
+html.atlas .lobbyStatus.ok::before { background: var(--a-green); }
+html.atlas #olBar { background: var(--a-wash); }
+html.atlas #olBarFill { background: var(--a-rubric); }
+html.atlas .panel button.olDot { background: var(--a-line); box-shadow: none; }
+html.atlas .panel button.olDot.on { background: var(--a-ink); }
+html.atlas #olBots { border-color: var(--a-line-strong); }
+html.atlas .panel button.lobbyLeave { background: var(--a-paper-3); color: var(--a-ink); border-color: var(--a-line); }
+html.atlas :is(#lobbyError, #accountError, #manageError) { color: var(--a-rubric); }
+html.atlas #publicLobbyList li:hover { background: var(--a-paper-2); }
+html.atlas #publicLobbyList .lobbyListEmpty:hover { background: var(--a-wash); }
+
+/* Achievements and cosmetics. */
+html.atlas .achRow { background: var(--a-wash); }
+html.atlas .achRow.earned { background: rgba(138, 100, 24, 0.12); }
+html.atlas .panel button.achReward { background: rgba(60, 102, 129, 0.15); border-color: rgba(60, 102, 129, 0.55); color: var(--a-ink); box-shadow: none; }
+html.atlas .panel button.achReward:hover { background: rgba(60, 102, 129, 0.25); }
+html.atlas .panel button.achReward.got { background: rgba(176, 95, 36, 0.15); border-color: rgba(176, 95, 36, 0.6); }
+html.atlas .achMedal { color: rgba(58, 38, 22, 0.35); }
+html.atlas :is(.achRow.earned .achMedal, .achToastRow .achMedal, #endEarned .achMedal) { color: var(--a-brass); }
+html.atlas .panel .loadoutRow button { background: var(--a-paper-3); color: var(--a-ink); box-shadow: none; }
+html.atlas .panel .loadoutRow button.active { background: rgba(138, 100, 24, 0.3); }
+html.atlas .packCard { background: rgba(60, 102, 129, 0.12); }
+html.atlas .packCard.owned { background: rgba(138, 100, 24, 0.12); outline-color: var(--a-brass); }
+
+/* Tutorial coach. */
+html.atlas #tutorial { border-color: var(--a-sea); }
+html.atlas #tutPaused { color: var(--a-rubric); }
+html.atlas #tutBtns button { background: var(--a-paper-3); border-color: var(--a-line); color: var(--a-ink); }
+html.atlas #tutBtns #tutKeep { background: var(--a-rubric); border-color: var(--a-rubric); color: #fbeee0; }

@@ -66,6 +66,26 @@ Each step is playable on its own. Switch styles in Options → Map style.
   tints the relief and the terrain keeps its full contrast; laid over at 60%
   it hid the terrain under owned land. Mid-blend both are drawn, crossfaded.
   Over flat paper the two differ by ~10%, so the switch doesn't jump.
+  A light wash of the nation colour stays under the tint zoomed in
+  (`NEAR_WASH`), and forest green is toned down (`FOREST_TINT`), so
+  ownership reads before terrain colour. Terrain marks are drawn under the
+  territory (end of `drawAtlasBase`), so they take the nation's tint and
+  borders run over mountains instead of being hidden by them.
+
+## Interface theme
+
+With Atlas on, the whole interface follows: menus, dialogs, the HUD and
+in-game panels turn to parchment with ink text, serif type and a deep red
+for main actions. It's all in `css/atlas.css`, scoped to `html.atlas`, and
+overrides colours, borders and type only, never layout, so Classic is
+`style.css` alone. Options toggles the class; a line in `index.html`'s head
+sets it before first paint so Atlas players don't see a Classic flash. The
+main-menu backdrop (`js/menubg.js`) has a matching palette (`setStyle`).
+
+Checked in the preview: main menu, game setup, in-game HUD and leaderboard,
+in-game menu, Options, end-of-match card. Covered by the stylesheet but not
+looked at: hover panel, tooltips, right-click menu, diplomacy banners,
+alerts, lobby screens, achievements, cosmetics, tutorial coach, replay bar.
 
 ## Zoom-resolution chunks
 

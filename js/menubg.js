@@ -10,8 +10,12 @@ const MenuBg = (function() {
   const TICK_MS = 50;
   const HOLD_TICKS = 240;          // linger on the finished map
   const FADE_MS = 1600;
-  const TERRAIN = [[78, 94, 72], [104, 96, 66], [122, 120, 114]];
-  const WATER_RGB = [18, 34, 60];
+  // Colours per map style (Options → Map style); Atlas matches Render.ATLAS.
+  const PALETTES = {
+    classic: { terrain: [[78, 94, 72], [104, 96, 66], [122, 120, 114]], water: [18, 34, 60], mix: 0.8 },
+    atlas: { terrain: [[228, 214, 176], [212, 192, 150], [190, 174, 146]], water: [176, 190, 180], mix: 0.6 }
+  };
+  let pal = PALETTES.classic;
   const NEIGHBORS = [1, -1, W, -W];
 
   const overlay = document.getElementById('overlay');
@@ -39,7 +43,7 @@ const MenuBg = (function() {
   }
 
   function paint(i, c, mix) {
-    const t = TERRAIN[map.terrain[i]];
+    const t = pal.terrain[map.terrain[i]];
     const d = img.data, p = i * 4;
     d[p] = t[0] + (c[0] - t[0]) * mix;
     d[p + 1] = t[1] + (c[1] - t[1]) * mix;
@@ -54,13 +58,13 @@ const MenuBg = (function() {
     owner = new Int16Array(W * H).fill(-1);
     frontier = [];
     for (let i = 0; i < W * H; i++) {
-      const p = i * 4, c = map.owner[i] === WATER ? WATER_RGB : TERRAIN[map.terrain[i]];
+      const p = i * 4, c = map.owner[i] === WATER ? pal.water : pal.terrain[map.terrain[i]];
       img.data[p] = c[0]; img.data[p + 1] = c[1]; img.data[p + 2] = c[2]; img.data[p + 3] = 255;
     }
     for (let n = 0, tries = 0; n < NATIONS && tries < 4000; tries++) {
       const i = Math.floor(rng() * W * H);
       if (map.owner[i] === WATER || owner[i] >= 0) continue;
-      owner[i] = n; frontier.push(i); paint(i, PLAYER_COLORS[n], 0.8);
+      owner[i] = n; frontier.push(i); paint(i, PLAYER_COLORS[n], pal.mix);
       n++;
     }
     phase = 'grow';
@@ -78,7 +82,7 @@ const MenuBg = (function() {
         if (d < 2 && Math.abs(j % W - x) !== 1) continue;
         if (owner[j] >= 0 || map.owner[j] === WATER) continue;
         open = true;
-        owner[j] = owner[i]; frontier.push(j); paint(j, PLAYER_COLORS[owner[i]], 0.8);
+        owner[j] = owner[i]; frontier.push(j); paint(j, PLAYER_COLORS[owner[i]], pal.mix);
         break;
       }
       if (!open) { frontier[fi] = frontier[frontier.length - 1]; frontier.pop(); }
@@ -103,7 +107,7 @@ const MenuBg = (function() {
     const y = -py * (0.5 + 0.5 * Math.cos(time / 43));
     vctx.imageSmoothingEnabled = true;
     vctx.imageSmoothingQuality = 'high';
-    vctx.fillStyle = 'rgb(18,34,60)';
+    vctx.fillStyle = 'rgb(' + pal.water.join(',') + ')';
     vctx.fillRect(0, 0, cw, ch);
     vctx.drawImage(off, x, y, W * s, H * s);
     let a = 1;
@@ -142,5 +146,17 @@ const MenuBg = (function() {
     view.style.display = enabled ? '' : 'none';
     overlay.classList.toggle('menuBgOn', enabled && !!map);
   }
-  return { setEnabled };
+  // Recolours the map on screen in place, claimed land included.
+  function setStyle(style) {
+    const next = PALETTES[style] || PALETTES.classic;
+    if (next === pal) return;
+    pal = next;
+    if (!map) return;
+    for (let i = 0; i < W * H; i++) {
+      if (owner[i] >= 0) { paint(i, PLAYER_COLORS[owner[i]], pal.mix); continue; }
+      const p = i * 4, c = map.owner[i] === WATER ? pal.water : pal.terrain[map.terrain[i]];
+      img.data[p] = c[0]; img.data[p + 1] = c[1]; img.data[p + 2] = c[2];
+    }
+  }
+  return { setEnabled, setStyle };
 })();

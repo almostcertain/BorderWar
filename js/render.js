@@ -236,7 +236,10 @@ const Render = {
     // NEAR_TO. Nation colour keeps its strength; the relief shows through it.
     NEAR_FROM: 2.5,
     NEAR_TO: 5,
-    SHADE_K: 0.9,                    // relief shading: brightness change per unit of slope
+    NEAR_WASH: 0.35,                 // share of the far look's colour wash kept zoomed in (drawAtlasTerritory)
+    FOREST_TINT: 0.3,                // how green forest highland is in the relief
+    NEAR_TINT: 0.75,                // strength of the zoomed-in tint (drawAtlasTerritory); lower is lighter
+    SHADE_K: 0.9,                   // relief shading: brightness change per unit of slope
     SHADE_MAX: 0.18,                 // and its limit either way
     relief: [[200, 196, 146], [196, 172, 124], [176, 162, 140], [214, 206, 190], [150, 162, 106]]   // lowland, highland, mountain, peak, forest
   },
@@ -302,7 +305,7 @@ const Render = {
         if (e > 0.8) c = lerp(c, R[3], (e - 0.8) * 3);
         // Forest patches of highland read greener (see atlasForest).
         const fw = Math.max(0, 1 - Math.abs(e - 0.5) * 2.5);
-        if (fw > 0) c = lerp(c, R[4], 0.5 * fw * this.atlasForest(vn, x, y));
+        if (fw > 0) c = lerp(c, R[4], this.ATLAS.FOREST_TINT * fw * this.atlasForest(vn, x, y));
         // Lit from the north-west, like the mountain marks: a slope rising to
         // the south-east faces the light. The other sign reads as dents.
         const nw = x > 0 && y > 0 ? ht[i - w - 1] : ht[i], se = x < w - 1 && y < h - 1 ? ht[i + w + 1] : ht[i];
@@ -473,7 +476,7 @@ const Render = {
           if (e > 0.8) { const p = (e - 0.8) * 3; r += (R[3][0] - r) * p; gr += (R[3][1] - gr) * p; b += (R[3][2] - b) * p; }
           const fw = 1 - Math.abs(e - 0.5) * 2.5;
           if (fw > 0) {
-            const f = 0.5 * fw * (forest[i] * w00 + forest[i + 1] * w10 + forest[j] * w01 + forest[j + 1] * w11);
+            const f = A.FOREST_TINT * fw * (forest[i] * w00 + forest[i + 1] * w10 + forest[j] * w01 + forest[j + 1] * w11);
             r += (R[4][0] - r) * f; gr += (R[4][1] - gr) * f; b += (R[4][2] - b) * f;
           }
           // Shading blended between tile centres (a slope taken from the
@@ -592,6 +595,7 @@ const Render = {
     const t = this.atlasNear(), G = this.glyphs;
     if (t <= 0.02 || !G) return;
     ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = t;
     ctx.imageSmoothingEnabled = true;
     this.drawChunks(ctx, 'g', this.GLYPH_BUCKET, this.GLYPH_PAD, 16, G.cols, G.rows,
@@ -636,12 +640,15 @@ const Render = {
   // paper the two come out within about 10%, so the zoom doesn't jump.
   drawAtlasTerritory(ctx) {
     const t = this.atlasNear(), ox = -this.cam.x, oy = -this.cam.y;
-    if (t < 1) {
-      ctx.globalAlpha = 1 - t;
+    // Zoomed in, a light wash of the nation colour stays under the tint, so
+    // ownership reads before the terrain's own colours.
+    const over = (1 - t) + t * this.ATLAS.NEAR_WASH;
+    if (over > 0) {
+      ctx.globalAlpha = over;
       this.drawLayer(ctx, this.tileLayer, ox, oy);
     }
     if (t > 0) {
-      ctx.globalAlpha = t;
+      ctx.globalAlpha = t * this.ATLAS.NEAR_TINT;
       ctx.globalCompositeOperation = 'multiply';
       this.drawLayer(ctx, this.tileLayer, ox, oy);
       ctx.globalCompositeOperation = 'source-over';
@@ -663,6 +670,12 @@ const Render = {
       ctx.globalAlpha = 1 - t;
       this.drawLayer(ctx, this.groundLayer, ox, oy);
       ctx.globalAlpha = 1;
+    }
+    // Terrain marks sit under the territory: the nation colour tints them
+    // and borders run over them, instead of mountains hiding the borders.
+    if (t > 0) {
+      this.drawTerrainGlyphs(ctx);
+      ctx.imageSmoothingEnabled = false;
     }
   },
 
@@ -1953,7 +1966,6 @@ const Render = {
     this.drawHoverHighlight(territoryChanged, ctx);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     const atlas = this.mapStyle === 'atlas';
-    if (atlas) this.drawTerrainGlyphs(ctx);
     if (atlas && !fog) this.drawPaper(ctx);
 
     this.drawRailroads();
