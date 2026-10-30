@@ -21,10 +21,16 @@ get a map. Auto lobbies send no options and get Random.
 
 ## Landforms
 
-Every landform is made of **plates**: seed points that each grow one landmass under a radial falloff. With more than
-one plate, every tile belongs to its nearest plate and a strait is sunk along the borders, so landmasses never fuse
-and crossing one takes a naval landing. A slow warp field bends each plate's outline into peninsulas and bays, and
-makes the straits meander.
+Every landform is made of **plates**: seed points that each grow one landmass. With more than one plate, every tile
+belongs to its nearest plate and a strait is sunk along the borders, so landmasses never fuse and crossing one takes a
+naval landing. A slow warp field bends each plate's outline into bays, and makes the straits meander.
+
+**Spines.** Each plate (except Inland Sea's ring) grows along a *spine*: a bent centre line running both ways from the
+plate's centre, with a width that tapers toward the tips, plus a few side branches (`growSpines`, tuned per landform in
+`SPINE`). Land falls off with distance from the spine in tiles, not as a share of local width, so thin arms survive as
+peninsulas and isthmuses instead of drowning. This replaces the old oval falloff, which made every landmass a blob.
+Plate distances are computed on the warp grid (`plateField`) and read back bilinearly; each grid cell keeps a short
+list of the plates that can be nearest there, so per-tile cost doesn't grow with plate count.
 
 | Landform | Plates | Land | Notes |
 |---|---|---|---|
@@ -41,13 +47,45 @@ map size. The lobby preview relies on this: it runs the real generator at 400Ã—2
 ## Pipeline
 
 1. `resolveGenOptions` fills defaults and resolves Random. `landformPlan` places the plates.
-2. Per tile: elevation noise, then the plate falloff at the warped point, strait slopes, inner sea or lakes, and an
-   ocean border. The roughness field (terrain tiers) is built alongside, unchanged.
+2. Per tile: elevation noise, then the spine falloff at the warped point, strait slopes, inner sea or lakes, an ocean
+   border, and tectonic lift and rifts. The roughness field (terrain tiers) is built alongside; belts are added to it
+   once the loop ends.
 3. Multi-plate maps: `balancePlates` shifts each plate's elevation so each covers a similar share of its own cell,
    then strait tiles are sunk out of reach.
 4. `findSeaLevel` searches for the sea level that hits the land target. Single-plate maps measure the largest
    landmass, multi-plate maps measure all land that survives pruning.
 5. Prune specks, carve rivers, classify terrain, then shore distances and water components as before.
+
+## Tectonics (mountain ranges)
+
+A second, independent set of 7–11 **tectonic plates** covers the map, each drifting a seed-chosen way (`tectonics`).
+Where two close in, a **mountain belt** rises along their border, offset onto one side like the Andes. Where they part,
+a **rift** sinks the land, which leaves gulfs, rift lakes and long inland seas. A slow noise varies each belt's width
+and strength along its length, so ranges have gaps (passes) and rifts come in pieces.
+
+Belts raise the roughness field, so the mountain and highland tiers gather along them. Inside a belt, ridged noise
+stretched along the border breaks the range into parallel ridges with valleys between, and a soft cap stops crossing
+belts merging into one solid block. Belts at sea lift the seabed a little, which can raise island arcs. Tier
+*shares* are unchanged (the Terrain knob still sets them); only *where* mountains go changes. Rivers drain off
+roughness, so they run down from the ranges. Belt and rift strength are smooth, so they're computed on the warp grid
+(`tectonicGrid`); only the ridge texture is per tile, and only inside belts. Constants are in `TECTONIC`.
+
+## Climate and biomes (looks only)
+
+`Render.computeClimate` (js/render.js) gives every land tile one of ten biomes: ice, tundra, taiga, cold steppe,
+forest, grassland, steppe, rainforest, savanna, desert. It is client-only and never touches the sim.
+
+- **Latitude.** Procedural maps take a latitude window from the seed (`GameMap.seed`): some are mostly tropical,
+  others reach a frozen north. Baked maps use rough real windows (`BAKED_LAT`).
+- **Temperature** falls with latitude and with height (highland, mountain).
+- **Rainfall.** Each row's prevailing wind (trade winds from the east, westerlies, polar easterlies) carries humidity
+  in from the sea. Land wrings it out slowly and ranges much faster, so the far side of a range is dry (rain
+  shadow). That's scaled by a latitude rain curve (`LAT_RAIN`): wet tropics, dry subtropics, wet mid-latitudes.
+
+Classic colours unclaimed ground by biome (`BIOME_CLASSIC`; mountains grey, snowy in cold biomes). Atlas washes the
+paper faintly and colours the zoomed-in relief by biome (`BIOME_ATLAS`): snowlines drop in cold climates, and wet
+biomes get woods on low ground as well as highland (`BIOME_TREES`, tree marks included). The lobby preview uses the
+Classic colours.
 
 ## Determinism
 

@@ -3141,10 +3141,11 @@ const UI = {
     off.width = w; off.height = h;
     const octx = off.getContext('2d');
     const img = octx.createImageData(w, h);
-    // render.js's unclaimed-ground tones: water, plains, highland, mountain.
-    const water = [18, 34, 60], ground = [[78, 94, 72], [104, 96, 66], [122, 120, 114]];
+    // render.js's unclaimed-ground tones (Classic, with biomes).
+    const water = [18, 34, 60], biome = Render.computeClimate(map, null).biome, tone = [];
+    for (let b = 0; b < Render.BIOME_CLASSIC.length; b++) for (let t = 0; t < 3; t++) tone.push(Render.classicGroundRGB(b, t));
     for (let i = 0; i < w * h; i++) {
-      const c = map.owner[i] === WATER ? water : ground[map.terrain[i]];
+      const c = map.owner[i] === WATER ? water : tone[biome[i] * 3 + map.terrain[i]];
       img.data[i * 4] = c[0]; img.data[i * 4 + 1] = c[1]; img.data[i * 4 + 2] = c[2]; img.data[i * 4 + 3] = 255;
     }
     octx.putImageData(img, 0, 0);

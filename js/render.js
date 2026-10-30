@@ -294,38 +294,44 @@ const Render = {
         ht[i] = hb[i] + (vn(x / 9, y / 9) - 0.5) * 0.22 * (0.3 + e) + (vn(x / 3.5, y / 3.5) - 0.5) * 0.12 * e;
       }
     }
-    const R = this.ATLAS.relief, relief = new Uint32Array(n), shade = new Float32Array(n);
-    const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    // Biome colour of low ground, snow reach and woods per tile, softened
+    // so biomes fade into each other.
+    const clim = this.climate(), BA = this.BIOME_ATLAS, R = this.ATLAS.relief;
+    const lr = new Float32Array(n), lg = new Float32Array(n), lb = new Float32Array(n), cold = new Float32Array(n);
+    const forest = new Float32Array(n);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const c = own[i] === WATER ? R[0] : BA[clim.biome[i]];
+        lr[i] = c[0]; lg[i] = c[1]; lb[i] = c[2];
+        cold[i] = own[i] === WATER ? 0 : clim.cold[i];
+        if (own[i] !== WATER) forest[i] = this.atlasWoods(vn, x, y, tier[i], clim.biome[i]);
+      }
+    }
+    for (const a of [lr, lg, lb, cold]) this.boxBlur(a, tmp, w, h, 2);
+    const low = new Uint8Array(n * 3);
+    for (let i = 0; i < n; i++) { low[i * 3] = lr[i]; low[i * 3 + 1] = lg[i]; low[i * 3 + 2] = lb[i]; }
+    const relief = new Uint32Array(n), shade = new Float32Array(n);
+    const col = [0, 0, 0];
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const i = y * w + x;
         if (own[i] === WATER) { relief[i] = ground[i]; shade[i] = 1; continue; }
         const e = Math.max(0, Math.min(1, hb[i]));
-        let c = e < 0.5 ? lerp(R[0], R[1], e * 2) : lerp(R[1], R[2], e * 2 - 1);
-        if (e > 0.8) c = lerp(c, R[3], (e - 0.8) * 3);
-        // Forest patches of highland read greener (see atlasForest).
-        const fw = Math.max(0, 1 - Math.abs(e - 0.5) * 2.5);
-        if (fw > 0) c = lerp(c, R[4], this.ATLAS.FOREST_TINT * fw * this.atlasForest(vn, x, y));
+        this.reliefColor(e, low[i * 3], low[i * 3 + 1], low[i * 3 + 2], cold[i], forest[i], col);
         // Lit from the north-west, like the mountain marks: a slope rising to
         // the south-east faces the light. The other sign reads as dents.
         const nw = x > 0 && y > 0 ? ht[i - w - 1] : ht[i], se = x < w - 1 && y < h - 1 ? ht[i + w + 1] : ht[i];
         const S = this.ATLAS.SHADE_MAX, s = shade[i] = 1 + Math.max(-S, Math.min(S, (se - nw) * this.ATLAS.SHADE_K));
-        relief[i] = this.packed(Math.min(255, c[0] * s) | 0, Math.min(255, c[1] * s) | 0, Math.min(255, c[2] * s) | 0);
+        relief[i] = this.packed(Math.min(255, col[0] * s) | 0, Math.min(255, col[1] * s) | 0, Math.min(255, col[2] * s) | 0);
       }
     }
     this.reliefLayer = this.makeLayer(canvasOf(relief), true);
-    // Sea distance (land 0, open sea capped) and forest weight per tile, for
-    // the sharp relief's coasts, ripples and woods.
-    const near = this.seaDistance(30), sd = new Float32Array(n), forest = new Float32Array(n);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = y * w + x;
-        sd[i] = own[i] !== WATER ? 0 : near[i] || 30;
-        if (tier[i] === HIGHLAND && own[i] !== WATER) forest[i] = this.atlasForest(vn, x, y);
-      }
-    }
-    this.reliefData = { hb, shade, forest, sd, vn };
-    this.placeTerrainGlyphs(hash, vn);
+    // Sea distance (land 0, open sea capped), for the sharp relief's coasts and ripples.
+    const near = this.seaDistance(30), sd = new Float32Array(n);
+    for (let i = 0; i < n; i++) sd[i] = own[i] !== WATER ? 0 : near[i] || 30;
+    this.reliefData = { hb, shade, forest, sd, vn, low, cold };
+    this.placeTerrainGlyphs(hash, forest);
   },
 
   // --- Atlas terrain symbols ---
@@ -339,14 +345,43 @@ const Render = {
   glyphs: null,
   glyphSprites: new Map(),
 
-  // Highland is drawn as either hills or forest, in broad patches: 0 hills
-  // to 1 forest. Looks only; both are the same terrain in play.
+  // Woods per tile, 0..1, in broad patches. Highland is drawn as either
+  // hills or forest; wet biomes also wood their low ground. Looks only.
   atlasForest(vn, x, y) {
     const v = vn(x / 34 + 50, y / 34 + 20), t = Math.min(1, Math.max(0, (v - 0.45) / 0.1));
     return t * t * (3 - 2 * t);
   },
+  atlasWoods(vn, x, y, tier, biome) {
+    const trees = this.BIOME_TREES[biome];
+    if (tier === 2 || !trees) return 0;
+    if (tier === 1) return this.atlasForest(vn, x, y) * Math.min(1, trees + 0.4);
+    const v = vn(x / 22 + 9, y / 22 + 70), t = Math.min(1, Math.max(0, (v - 0.4 + trees * 0.15) / 0.12));
+    return t * t * (3 - 2 * t) * trees;
+  },
 
-  placeTerrainGlyphs(hash, vn) {
+  // Relief colour at height e (0 low, 0.5 highland, 1 mountain) over low
+  // ground of colour (r, g, b): highland browns it, mountains grey it, and
+  // snow caps the peaks, coming further down where `cold`. Into out.
+  reliefColor(e, r, g, b, cold, wood, out) {
+    const R = this.ATLAS.relief;
+    if (e < 0.5) {
+      const t = e * 2, hr = r + (R[1][0] - r) * 0.6, hg = g + (R[1][1] - g) * 0.6, hbb = b + (R[1][2] - b) * 0.6;
+      r += (hr - r) * t; g += (hg - g) * t; b += (hbb - b) * t;
+    } else {
+      const t = e * 2 - 1, hr = r + (R[1][0] - r) * 0.6, hg = g + (R[1][1] - g) * 0.6, hbb = b + (R[1][2] - b) * 0.6;
+      r = hr + (R[2][0] - hr) * t; g = hg + (R[2][1] - hg) * t; b = hbb + (R[2][2] - hbb) * t;
+    }
+    const snowAt = 0.8 - cold * 0.3;
+    if (e > snowAt) {
+      const p = Math.min(1, (e - snowAt) * 3);
+      r += (R[3][0] - r) * p; g += (R[3][1] - g) * p; b += (R[3][2] - b) * p;
+    }
+    const f = this.ATLAS.FOREST_TINT * wood * (e > 0.75 ? Math.max(0, 1 - (e - 0.75) * 4) : 1);
+    if (f > 0) { r += (R[4][0] - r) * f; g += (R[4][1] - g) * f; b += (R[4][2] - b) * f; }
+    out[0] = r; out[1] = g; out[2] = b;
+  },
+
+  placeTerrainGlyphs(hash, forest) {
     const w = GameMap.width, h = GameMap.height, tier = GameMap.terrain, own = GameMap.owner;
     const G = this.GLYPH_STEP, B = this.GLYPH_BUCKET, cols = Math.ceil(w / B), rows = Math.ceil(h / B);
     const cells = Array.from({ length: cols * rows }, () => []);
@@ -364,10 +399,12 @@ const Render = {
         // coast or spill onto lower land.
         if (at(tx - 1, ty) < t || at(tx + 1, ty) < t || at(tx, ty - 1) < t) continue;
         const roll = hash(gx * 5, gy * 11);
+        const wood = forest[ty * w + tx];
         if (t === 2) put(x, y, 0, 3.6 + roll * 1.4);
-        else if (t === 1 && this.atlasForest(vn, x, y) > 0.5) {
+        else if (t === 1 && wood > 0.5) {
           if (roll < 0.85) { put(x - 0.8, y, 2, 2.1); put(x + 0.8, y + 0.7, 2, 2.1); }
         } else if (t === 1 && roll < 0.65) put(x, y, 1, 2.8);
+        else if (t === 0 && wood > 0.45 && roll < wood * 0.7) put(x, y, 2, 2);
       }
     }
     for (const c of cells) {
@@ -441,12 +478,12 @@ const Render = {
   RELIEF_MAX_K: 8,           // px per tile at most; beyond it the smooth shading upscales fine
 
   paintReliefChunk(bx, by, k) {
-    const D = this.reliefData, w = GameMap.width, h = GameMap.height, A = this.ATLAS, R = A.relief;
+    const D = this.reliefData, w = GameMap.width, h = GameMap.height, A = this.ATLAS;
     const C = this.RELIEF_CHUNK, N = C * k;
     const c = document.createElement('canvas');
     c.width = c.height = N;
     const g = c.getContext('2d'), img = g.createImageData(N, N), px = new Uint32Array(img.data.buffer);
-    const { hb, shade, forest, sd, vn } = D;
+    const { hb, shade, forest, sd, vn, low, cold } = D, col = [0, 0, 0];
     const ripW = 0.7 / k, coastW = 1.6 / k;
     for (let py = 0; py < N; py++) {
       let v = by * C + (py + 0.5) / k - 0.5;
@@ -470,15 +507,14 @@ const Render = {
         } else {
           let e = hb[i] * w00 + hb[i + 1] * w10 + hb[j] * w01 + hb[j + 1] * w11;
           e = e < 0 ? 0 : e > 1 ? 1 : e;
-          let t, a0, a1;
-          if (e < 0.5) { t = e * 2; a0 = R[0]; a1 = R[1]; } else { t = e * 2 - 1; a0 = R[1]; a1 = R[2]; }
-          r = a0[0] + (a1[0] - a0[0]) * t; gr = a0[1] + (a1[1] - a0[1]) * t; b = a0[2] + (a1[2] - a0[2]) * t;
-          if (e > 0.8) { const p = (e - 0.8) * 3; r += (R[3][0] - r) * p; gr += (R[3][1] - gr) * p; b += (R[3][2] - b) * p; }
-          const fw = 1 - Math.abs(e - 0.5) * 2.5;
-          if (fw > 0) {
-            const f = A.FOREST_TINT * fw * (forest[i] * w00 + forest[i + 1] * w10 + forest[j] * w01 + forest[j + 1] * w11);
-            r += (R[4][0] - r) * f; gr += (R[4][1] - gr) * f; b += (R[4][2] - b) * f;
-          }
+          const i3 = i * 3, j3 = j * 3;
+          this.reliefColor(e,
+            low[i3] * w00 + low[i3 + 3] * w10 + low[j3] * w01 + low[j3 + 3] * w11,
+            low[i3 + 1] * w00 + low[i3 + 4] * w10 + low[j3 + 1] * w01 + low[j3 + 4] * w11,
+            low[i3 + 2] * w00 + low[i3 + 5] * w10 + low[j3 + 2] * w01 + low[j3 + 5] * w11,
+            cold[i] * w00 + cold[i + 1] * w10 + cold[j] * w01 + cold[j + 1] * w11,
+            forest[i] * w00 + forest[i + 1] * w10 + forest[j] * w01 + forest[j + 1] * w11, col);
+          r = col[0]; gr = col[1]; b = col[2];
           // Shading blended between tile centres (a slope taken from the
           // blend itself would be flat across each tile and show as squares), plus grain.
           const sh = shade[i] * w00 + shade[i + 1] * w10 + shade[j] * w01 + shade[j + 1] * w11;
@@ -808,6 +844,115 @@ const Render = {
 
   mixRGB(a, b, t) { return this.packed(a[0] + (b[0] - a[0]) * t | 0, a[1] + (b[1] - a[1]) * t | 0, a[2] + (b[2] - a[2]) * t | 0); },
 
+  // --- Climate (looks only) ---
+  // Biomes from latitude, height and the rain prevailing winds carry inland:
+  // deserts in the subtropics and behind ranges, forest on wet windward
+  // ground, tundra and ice toward the poles. See docs/procedural-maps.md.
+  // Ice, tundra, taiga, cold steppe, forest, grassland, steppe, rainforest, savanna, desert.
+  BIOME_CLASSIC: [[150, 158, 164], [98, 104, 90], [54, 80, 62], [100, 100, 80], [62, 92, 60],
+    [86, 104, 70], [116, 110, 76], [44, 86, 52], [114, 112, 66], [148, 130, 90]],
+  BIOME_ATLAS: [[236, 238, 234], [204, 202, 174], [154, 168, 124], [206, 200, 162], [166, 180, 118],
+    [198, 200, 142], [216, 202, 152], [140, 168, 102], [210, 198, 130], [232, 212, 162]],
+  BIOME_TREES: [0, 0, 1, 0, 1, 0.25, 0, 1, 0.35, 0],
+  BIOME_COLD: [1, 1, 0.6, 0.5, 0, 0, 0, 0, 0, 0],   // how far snow comes down the mountains
+  // Rough [top, bottom] latitudes of the baked maps; procedural maps draw theirs from the seed.
+  BAKED_LAT: { world: [84, -75], africa: [38, -36], asia: [78, -12], europe: [72, 34], mena: [43, 10], northamerica: [83, 8] },
+  // Rainfall by |latitude|: wet tropics, dry subtropics, wet mid-latitudes, dry poles.
+  LAT_RAIN: [[0, 1], [12, 0.9], [22, 0.45], [30, 0.35], [42, 0.75], [55, 0.85], [70, 0.55], [90, 0.35]],
+
+  // {biome, cold} per tile for `map` (GameMap or a copy, as the lobby
+  // preview uses). `bakedId` picks a BAKED_LAT window.
+  computeClimate(map, bakedId) {
+    const w = map.width, h = map.height, n = w * h, own = map.owner, tier = map.terrain;
+    let top, bottom;
+    if (bakedId && this.BAKED_LAT[bakedId]) [top, bottom] = this.BAKED_LAT[bakedId];
+    else {
+      const r = k => map.seedHash(map.seed | 0, 5000 + k);
+      top = 25 + r(0) * 60;
+      bottom = Math.max(-85, top - 60 - r(1) * 70);
+    }
+    const latOf = y => top + (bottom - top) * (y + 0.5) / h;
+    const rainAt = lat => {
+      const a = Math.abs(lat), T = this.LAT_RAIN;
+      for (let k = 1; k < T.length; k++) {
+        if (a <= T[k][0]) return T[k - 1][1] + (T[k][1] - T[k - 1][1]) * (a - T[k - 1][0]) / (T[k][0] - T[k - 1][0]);
+      }
+      return T[T.length - 1][1];
+    };
+    const hash = (x, y) => { let k = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(map.seed | 0, 1442695041) | 0; k = Math.imul(k ^ (k >>> 13), 1274126177); return ((k ^ (k >>> 16)) >>> 0) / 4294967296; };
+    const vn = (x, y) => {
+      const xi = Math.floor(x), yi = Math.floor(y); let fx = x - xi, fy = y - yi;
+      fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+      const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+      return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+    };
+
+    // Humidity carried along each row by its latitude's prevailing wind
+    // (trades from the east, westerlies, polar easterlies). Land wrings it
+    // out, ranges much faster, which leaves a dry shadow behind them.
+    const wet = new Float32Array(n), temp = new Float32Array(n), tmp = new Float32Array(n);
+    const loss = [1.6 / w, 5 / w, 22 / w];
+    for (let y = 0; y < h; y++) {
+      const lat = latOf(y), a = Math.abs(lat), dir = a >= 30 && a < 60 ? 1 : -1, rain = rainAt(lat);
+      let m = 1;
+      for (let k = 0; k < w; k++) {
+        const x = dir > 0 ? k : w - 1 - k, i = y * w + x;
+        if (own[i] === WATER) { m = Math.min(1, m + 0.08); wet[i] = rain; continue; }
+        const t = tier[i];
+        wet[i] = Math.min(1.2, m * (t ? 1.2 : 1)) * rain;
+        m *= 1 - loss[t];
+      }
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        temp[i] = 1.05 - a / 80 - (own[i] === WATER ? 0 : tier[i] * 0.09);
+      }
+    }
+    const r = Math.max(2, Math.round(w / 120));
+    this.boxBlur(wet, tmp, w, h, r);
+    this.boxBlur(wet, tmp, w, h, r);
+    this.boxBlur(temp, tmp, w, h, Math.max(1, r >> 1));
+
+    const biome = new Uint8Array(n), cold = new Float32Array(n);
+    const f = 40 / w;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (own[i] === WATER) continue;
+        const t = temp[i] + (vn(x * f, y * f) - 0.5) * 0.1;
+        const M = wet[i] + (vn(x * f * 2 + 31, y * f * 2) - 0.5) * 0.16;
+        let b;
+        if (t < 0.1) b = 0;
+        else if (t < 0.24) b = 1;
+        else if (t < 0.42) b = M > 0.4 ? 2 : 3;
+        else if (t < 0.72) b = M > 0.55 ? 4 : M > 0.32 ? 5 : 6;
+        else b = M > 0.62 ? 7 : M > 0.32 ? 8 : 9;
+        biome[i] = b;
+        cold[i] = this.BIOME_COLD[b];
+      }
+    }
+    return { biome, cold };
+  },
+
+  // Cached per map: the climate only changes when the terrain does.
+  climate() {
+    if (!this._climate || this._climate.terrain !== GameMap.terrain) {
+      const baked = GameMap.layout === 'world' ? Game.sizeKey : null;
+      this._climate = Object.assign(this.computeClimate(GameMap, baked), { terrain: GameMap.terrain });
+    }
+    return this._climate;
+  },
+
+  // Unclaimed ground in Classic for biome `b` on terrain tier `t`: the
+  // biome's own colour on plains, half of it on highland, grey (or snow)
+  // on mountains.
+  classicGroundRGB(b, t) {
+    const c = this.BIOME_CLASSIC[b], hl = [104, 96, 66], mt = [122, 120, 114], snow = [176, 180, 186];
+    const mix = (p, q, k) => [p[0] + (q[0] - p[0]) * k | 0, p[1] + (q[1] - p[1]) * k | 0, p[2] + (q[2] - p[2]) * k | 0];
+    if (t === 0) return c;
+    if (t === 1) return mix(c, hl, 0.55);
+    return mix(mt, snow, this.BIOME_COLD[b]);
+  },
+
   // Terrain, fill and border colours for the current style and players.
   buildPalette() {
     const w = GameMap.width, h = GameMap.height, n = Game.players.length;
@@ -826,8 +971,16 @@ const Render = {
     // ripple lines that follow it out to sea.
     const sea = atlas ? this.seaDistance(A.RIPPLES[A.RIPPLES.length - 1]) : null;
     const ripple = atlas ? A.RIPPLES.map((d, k) => this.mixRGB(A.water, A.coast, A.RIPPLE_INK[k])) : null;
+    // Per biome and tier. Atlas paper takes only a faint wash of the biome.
+    const clim = this.climate(), biomeTone = [];
+    for (let b = 0; b < this.BIOME_CLASSIC.length; b++) {
+      for (let t = 0; t < 3; t++) {
+        biomeTone.push(atlas ? this.mixRGB(A.bare[t], this.BIOME_ATLAS[b], [0.3, 0.18, 0.08][t])
+          : this.packed(...this.classicGroundRGB(b, t)));
+      }
+    }
     for (let i = 0; i < w * h; i++) {
-      if (own[i] !== WATER) { ground[i] = bare[GameMap.terrain[i]]; continue; }
+      if (own[i] !== WATER) { ground[i] = biomeTone[clim.biome[i] * 3 + GameMap.terrain[i]]; continue; }
       let c = water;
       if (atlas) {
         const d = sea[i];

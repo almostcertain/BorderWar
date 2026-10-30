@@ -183,6 +183,235 @@ const GameMap = {
     });
   },
 
+  // Gives each plate a spine: a bent centre line with tapering width and a
+  // few side branches, so landmasses grow arms, peninsulas and necks rather
+  // than an oval. `segs` holds [ax, ay, bx, by, ra, rb] per segment. The
+  // 'inland' ring keeps its ellipse. Directions use the tan-half-angle trick
+  // (no trig; see rangeShape).
+  growSpines(seed, plates, landform) {
+    let n = 900;
+    const next = () => this.seedHash(seed, n++);
+    const unit = t => { const k = 1 + t * t; return [(1 - t * t) / k, 2 * t / k]; };
+    const rot = (d, c) => [d[0] * c[0] - d[1] * c[1], d[0] * c[1] + d[1] * c[0]];
+    const S = this.SPINE[landform] || this.SPINE.continent;
+    for (const p of plates) {
+      const segs = [], nodes = [];
+      // Main axis, within S.tilt of the plate's long side.
+      let dir = unit((next() - 0.5) * 2 * S.tilt);
+      if (p.ry > p.rx) dir = [-dir[1], dir[0]];
+      const reach = 1 / Math.sqrt(dir[0] * dir[0] / (p.rx * p.rx) + dir[1] * dir[1] / (p.ry * p.ry));
+      const body = Math.min(p.rx, p.ry) * (S.body + next() * 0.2);
+      // Walks `steps` segments from (x, y), bending as it goes; width runs
+      // from r0 down by `taper` at the tip.
+      const walk = (x, y, d, len, steps, r0, taper, record) => {
+        let r = r0, turn = 0;
+        for (let k = 1; k <= steps; k++) {
+          turn = turn * 0.5 + (next() - 0.5) * S.bend;
+          d = rot(d, unit(turn));
+          const f = k / steps;
+          const nr = r0 * Math.max(0.08, 1 - taper * f * Math.sqrt(f)) * (0.8 + next() * 0.4);
+          const nx = x + d[0] * len / steps, ny = y + d[1] * len / steps;
+          segs.push(x, y, nx, ny, r, nr);
+          if (record) nodes.push(nx, ny, d[0], d[1], nr);
+          x = nx; y = ny; r = nr;
+        }
+      };
+      for (const side of [1, -1]) {
+        walk(p.x, p.y, [dir[0] * side, dir[1] * side], reach * (S.len + next() * 0.45),
+          S.steps, body, 0.45 + next() * 0.5, true);
+      }
+      const branches = Math.floor(next() * (S.branches + 1));
+      for (let b = 0; b < branches && nodes.length; b++) {
+        const m = Math.floor(next() * nodes.length / 5) * 5;
+        const flip = next() < 0.5 ? 1 : -1;
+        const d = rot([-nodes[m + 3] * flip, nodes[m + 2] * flip], unit((next() - 0.5) * 0.7));
+        walk(nodes[m], nodes[m + 1], d, reach * (0.3 + next() * 0.35), 3,
+          nodes[m + 4] * (0.55 + next() * 0.3), 0.7, false);
+      }
+      p.segs = segs;
+      p.body = body;
+    }
+  },
+
+  // Per-landform spine character: axis tilt off the long side (tan of half
+  // the angle), body width as a share of the plate's short radius, arm
+  // length as a share of its reach, segments per arm, bend per segment and
+  // most side branches.
+  SPINE: {
+    continent:   { tilt: 0.25, body: 0.3,  len: 0.6, steps: 4, bend: 0.5, branches: 4, fall: [0.9, 1.6] },
+    twin:        { tilt: 0.5,  body: 0.3,  len: 0.55, steps: 4, bend: 0.5, branches: 3, fall: [0.9, 1.6] },
+    continents:  { tilt: 0.6,  body: 0.45, len: 0.6, steps: 3, bend: 0.4, branches: 2, fall: [0.9, 1.1] },
+    archipelago: { tilt: 1,    body: 0.45, len: 0.6, steps: 2, bend: 0.6, branches: 1, fall: [0.9, 1.1] },
+    pangaea:     { tilt: 0.15, body: 0.5,  len: 0.6, steps: 4, bend: 0.4, branches: 4, fall: [0.9, 1.2] }
+  },
+
+  // Each plate's distance field on the warp grid's nodes, at the warped
+  // point: `S` is signed distance to the plate's edge in tiles, `D` the same
+  // over the plate's body width plus 1 (so 1 at the edge, like an ellipse's
+  // normalised radius), which keeps thin arms from drowning. generate() reads them back
+  // bilinearly. `cand` lists, per grid cell, the plates that can be nearest
+  // or second nearest anywhere in the cell: an interpolated value stays
+  // within its corners, so a plate whose lowest corner is above the second
+  // lowest highest-corner can't qualify. Up to CAND per cell, 255 = unused.
+  plateField(plates, warp) {
+    const { stride: s, gw, grid } = warp, gh = grid.length / (gw * 2);
+    const P = plates.length, nodes = gw * gh;
+    const D = new Float32Array(nodes * P), S = new Float32Array(nodes * P);
+    for (let o = 0; o < nodes; o++) {
+      const px = (o % gw) * s + grid[o * 2], py = ((o / gw) | 0) * s + grid[o * 2 + 1];
+      for (let k = 0; k < P; k++) {
+        const p = plates[k], g = p.segs;
+        let bd = Infinity, bs = Infinity;
+        if (!g) {
+          const nx = (px - p.x) / p.rx, ny = (py - p.y) / p.ry;
+          bd = Math.sqrt(nx * nx + ny * ny);
+          bs = (bd - 1) * Math.sqrt(p.rx * p.ry);
+        } else {
+          for (let q = 0; q < g.length; q += 6) {
+            const ax = g[q], ay = g[q + 1], dx = g[q + 2] - ax, dy = g[q + 3] - ay;
+            const ll = dx * dx + dy * dy;
+            let t = ll > 0 ? ((px - ax) * dx + (py - ay) * dy) / ll : 0;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            const ex = px - ax - dx * t, ey = py - ay - dy * t;
+            const dist = Math.sqrt(ex * ex + ey * ey), r = g[q + 4] + (g[q + 5] - g[q + 4]) * t;
+            if (dist - r < bs) bs = dist - r;
+          }
+          bd = 1 + bs / p.body;
+        }
+        D[o * P + k] = bd;
+        S[o * P + k] = bs;
+      }
+    }
+    const CAND = 6, cw = gw - 1, cells = cw * (gh - 1);
+    const cand = new Uint8Array(cells * CAND).fill(255);
+    const lo = new Float64Array(P), order = [];
+    for (let c = 0; c < cells; c++) {
+      const o00 = ((c / cw) | 0) * gw + c % cw, os = [o00, o00 + 1, o00 + gw, o00 + gw + 1];
+      let hi1 = Infinity, hi2 = Infinity;
+      for (let k = 0; k < P; k++) {
+        let mn = Infinity, mx = -Infinity;
+        for (const o of os) { const v = S[o * P + k]; if (v < mn) mn = v; if (v > mx) mx = v; }
+        lo[k] = mn;
+        if (mx < hi1) { hi2 = hi1; hi1 = mx; } else if (mx < hi2) hi2 = mx;
+      }
+      const cut = P > 1 ? hi2 : hi1;
+      order.length = 0;
+      for (let k = 0; k < P; k++) if (lo[k] <= cut) order.push(k);
+      order.sort((a, b) => lo[a] - lo[b] || a - b);
+      for (let q = 0; q < order.length && q < CAND; q++) cand[c * CAND + q] = order[q];
+    }
+    return { P, D, S, cand, CAND, cw };
+  },
+
+  // Tectonic plates, separate from the landform plates: seed points that
+  // each drift a seed-chosen way. Where two close in, a mountain belt rises
+  // along their border (offset onto the overriding plate, like the Andes);
+  // where they part, a rift sinks. `conv` is the closing speed per pair,
+  // `inv2d` turns a squared-distance difference into tiles from their border.
+  TECTONIC: {
+    belt: 0.035,      // belt half-width, share of map width
+    rise: 1.8,        // belt's push on roughness, times this seed's roughness spread
+    lift: 0.12,       // belt's push on elevation (island arcs at sea)
+    rift: 0.7,        // rift's sink on elevation
+    riftWidth: 0.4    // rift half-width, share of the belt's
+  },
+  tectonics(seed, width, height) {
+    let n = 1300;
+    const next = () => this.seedHash(seed, n++);
+    const K = 7 + Math.floor(next() * 5);
+    const pts = [];
+    for (let k = 0; k < K; k++) {
+      let bx = 0, by = 0, best = -1;
+      for (let tries = k === 0 ? 1 : 10; tries > 0; tries--) {
+        const px = width * (0.05 + next() * 0.9), py = height * (0.05 + next() * 0.9);
+        let dmin = Infinity;
+        for (const q of pts) { const dx = px - q.x, dy = py - q.y; dmin = Math.min(dmin, dx * dx + dy * dy); }
+        if (dmin > best) { best = dmin; bx = px; by = py; }
+      }
+      const t = next() * 2 - 1, kk = 1 + t * t, flip = next() < 0.5 ? -1 : 1, speed = 0.3 + next() * 0.7;
+      pts.push({ x: bx, y: by, vx: flip * speed * (1 - t * t) / kk, vy: flip * speed * 2 * t / kk });
+    }
+    const conv = new Float64Array(K * K), inv2d = new Float64Array(K * K), over = new Uint8Array(K * K);
+    for (let a = 0; a < K; a++) {
+      for (let b = a + 1; b < K; b++) {
+        const dx = pts[b].x - pts[a].x, dy = pts[b].y - pts[a].y, dist = Math.sqrt(dx * dx + dy * dy);
+        const c = ((pts[a].vx - pts[b].vx) * dx + (pts[a].vy - pts[b].vy) * dy) / dist;
+        conv[a * K + b] = conv[b * K + a] = c;
+        inv2d[a * K + b] = inv2d[b * K + a] = 1 / (2 * dist);
+        const o = next() < 0.5 ? 1 : 0;
+        over[a * K + b] = o; over[b * K + a] = 1 - o;
+      }
+    }
+    const belt = width * this.TECTONIC.belt;
+    return { K, pts, conv, inv2d, over, belt, ridgeAlong: 0.5 / belt, ridgeAcross: 1.6 / belt };
+  },
+
+  // Belt uplift (0..~1.5) and rift depth at warped point (px, py), written
+  // to out[0] and out[1]. `m` (0..1, slow noise) varies belt width and
+  // strength along a border, so ranges thin out, break at passes and rifts
+  // come in pieces. Inside a belt, out[2] is ridge texture (0..1): ridged
+  // noise stretched along the border, so ranges run parallel to it.
+  tectonicAt(T, px, py, m, seed, out, ridge) {
+    const { K, pts, conv, inv2d, over } = T;
+    let a = 0, da = Infinity;
+    for (let k = 0; k < K; k++) {
+      const dx = px - pts[k].x, dy = py - pts[k].y, d = dx * dx + dy * dy;
+      if (d < da) { da = d; a = k; }
+    }
+    const W = T.belt * (0.6 + m * 0.8), shift = W * 0.35, RW = W * this.TECTONIC.riftWidth;
+    let up = 0, rift = 0, pair = -1, across = 0;
+    for (let k = 0; k < K; k++) {
+      if (k === a) continue;
+      const dx = px - pts[k].x, dy = py - pts[k].y;
+      const gap = (dx * dx + dy * dy - da) * inv2d[a * K + k];
+      if (gap > W * 1.4) continue;
+      const c = conv[a * K + k];
+      if (c > 0) {
+        // Peak sits `shift` onto the overriding plate's side.
+        const off = Math.abs(over[a * K + k] ? gap - shift : gap + shift);
+        let f = 1 - off / W;
+        if (f <= 0) continue;
+        f = f * f * Math.min(1, 0.45 + c);
+        if (f > up) { up = f; pair = k; across = a < k ? gap : -gap; }
+      } else {
+        let f = 1 - gap / RW;
+        if (f <= 0) continue;
+        f = f * f * Math.min(1, 0.45 - c);
+        if (f > rift) rift = f;
+      }
+    }
+    // Fractal noise bunches near 0.5; stretch it so strength really varies.
+    const mm = Math.max(0, Math.min(1, (m - 0.5) * 2.5 + 0.5));
+    out[0] = up * (0.25 + mm);
+    out[1] = rift * (m > 0.35 ? Math.min(1, (m - 0.35) * 4) : 0);
+    out[2] = 0;
+    if (ridge && pair >= 0) {
+      // Along-border coordinate, oriented by the lower plate index so both
+      // sides agree.
+      const lo = a < pair ? a : pair, hi = a < pair ? pair : a;
+      const tx = pts[lo].y - pts[hi].y, ty = pts[hi].x - pts[lo].x;
+      const along = (px * tx + py * ty) * inv2d[a * K + pair] * 2;
+      const r = Noise.fractal(along * T.ridgeAlong, across * T.ridgeAcross, seed + 1800 + lo * 31 + hi, 2);
+      const q = Math.max(0, 1 - Math.abs(r - 0.5) * 5);
+      out[2] = q * q;
+    }
+  },
+
+  // Belt strength, rift depth and the `m` noise on the warp grid's nodes,
+  // at the warped point; all three are smooth, so generate() reads them back
+  // bilinearly and only works per tile inside belts (for ridge texture).
+  tectonicGrid(T, warp, seed, width) {
+    const { stride: s, gw, grid } = warp, nodes = grid.length / 2, mS = 3 / width;
+    const g = new Float32Array(nodes * 3), out = [0, 0, 0];
+    for (let o = 0; o < nodes; o++) {
+      const x = (o % gw) * s, y = ((o / gw) | 0) * s;
+      const m = Noise.fractal(x * mS, y * mS, seed + 1700, 2);
+      this.tectonicAt(T, x + grid[o * 2], y + grid[o * 2 + 1], m, seed, out, false);
+      g[o * 3] = out[0]; g[o * 3 + 1] = out[1]; g[o * 3 + 2] = m;
+    }
+    return g;
+  },
+
   // A slowly varying 2D offset, sampled on a coarse grid (read back with
   // bilinear interpolation, like rangeLowFreq) and applied to the point each
   // plate's falloff is measured from. It bends continent outlines into
@@ -211,6 +440,7 @@ const GameMap = {
     this._region = new Int32Array(size);
     this._queue = new Int32Array(size);
 
+    this.seed = seed;   // read by render.js's climate (looks only)
     const opts = this.genOptions = this.resolveGenOptions(seed, genOptions);
     this.layout = opts.landform;
     const plan = this.landformPlan(seed, opts.landform, width, height);
@@ -228,14 +458,12 @@ const GameMap = {
     const cx = width / 2, cy = height / 2;
     const plates = plan.plates, P = plates.length;
     const warp = this.outlineWarp(width, height, seed, coast.warp);
-    // Distance between each pair of plates, for the strait test below.
-    const pairDist = new Float64Array(P * P);
-    for (let a = 0; a < P; a++) {
-      for (let b = 0; b < P; b++) {
-        const dx = plates[a].x - plates[b].x, dy = plates[a].y - plates[b].y;
-        pairDist[a * P + b] = Math.sqrt(dx * dx + dy * dy);
-      }
+    if (!plan.innerSea) {
+      this.growSpines(seed, plates, opts.landform);
+      [plan.falloffStart, plan.falloffStrength] = this.SPINE[opts.landform].fall;
     }
+    const field = this.plateField(plates, warp);
+    const { D: fD, S: fS, cand, CAND, cw } = field;
     // Which plate each tile belongs to; P marks the strait between plates.
     const plateOf = P > 1 ? new Uint8Array(size) : null;
     const lakeScale = scale * 2.6, inner = plan.innerSea;
@@ -247,6 +475,9 @@ const GameMap = {
     this.roughness = new Float32Array(size);
     const shape = this.rangeShape(seed);
     const low = this.rangeLowFreq(width, height, seed, scale * 1.6, shape);
+    const tect = this.tectonics(seed, width, height), TC = this.TECTONIC;
+    const belt = new Float32Array(size), tOut = [0, 0, 0];
+    const tg = this.tectonicGrid(tect, warp, seed, width);
     const { stride: ws, gw: wgw, grid: wg } = warp;
 
     for (let y = 0; y < height; y++) {
@@ -263,21 +494,23 @@ const GameMap = {
         const px = x + wg[o00] * w00 + wg[o10] * w10 + wg[o01] * w01 + wg[o11] * w11;
         const py = y + wg[o00 + 1] * w00 + wg[o10 + 1] * w10 + wg[o01 + 1] * w01 + wg[o11 + 1] * w11;
 
-        // Nearest and second-nearest plate.
-        let a = 0, b = -1, da = Infinity, db = Infinity;
-        for (let k = 0; k < P; k++) {
-          const dx = px - plates[k].x, dy = py - plates[k].y, d = dx * dx + dy * dy;
-          if (d < da) { db = da; b = a; da = d; a = k; } else if (d < db) { db = d; b = k; }
+        // Nearest and second-nearest plate by signed edge distance, read
+        // bilinearly off the plate field.
+        let a = 0, sa = Infinity, sb = Infinity;
+        const c0 = (gy * cw + gx) * CAND;
+        for (let q = 0; q < CAND; q++) {
+          const k = cand[c0 + q];
+          if (k === 255) break;
+          const v = fS[o00 / 2 * P + k] * w00 + fS[o10 / 2 * P + k] * w10 + fS[o01 / 2 * P + k] * w01 + fS[o11 / 2 * P + k] * w11;
+          if (v < sa) { sb = sa; sa = v; a = k; } else if (v < sb) sb = v;
         }
-        const pl = plates[a];
-        const nx = (px - pl.x) / pl.rx, ny = (py - pl.y) / pl.ry;
-        const d = Math.sqrt(nx * nx + ny * ny);
+        const d = fD[o00 / 2 * P + a] * w00 + fD[o10 / 2 * P + a] * w10 + fD[o01 / 2 * P + a] * w01 + fD[o11 / 2 * P + a] * w11;
         e -= Math.max(0, d - plan.falloffStart) * plan.falloffStrength;
 
         if (plateOf) {
-          // Distance from the warped point to the border with the next plate
-          // (the perpendicular bisector between the two plate centres).
-          const gap = (db - da) / (2 * pairDist[a * P + b]);
+          // Distance to the border with the next plate, where the two
+          // signed edge distances meet.
+          const gap = (sb - sa) / 2;
           plateOf[i] = gap < plan.strait ? P : a;
           // Slope the land down into the strait, so the noise draws a real
           // coast there instead of the strait's hard edge clipping one.
@@ -290,6 +523,7 @@ const GameMap = {
           // Central sea: sink everything inside its radius, and cut the channel
           // out to the ocean along the chosen direction.
           e -= Math.max(0, inner.radius - d) * 3;
+          const nx = (px - plates[0].x) / plates[0].rx, ny = (py - plates[0].y) / plates[0].ry;
           const along = nx * inner.dx + ny * inner.dy;
           if (along > 0) {
             const across = Math.abs(ny * inner.dx - nx * inner.dy);
@@ -308,9 +542,28 @@ const GameMap = {
         const ex = (x - cx) / cx, ey = (y - cy) / cy, ex2 = ex * ex, ey2 = ey * ey;
         e -= Math.max(0, Math.sqrt(Math.sqrt(ex2 * ex2 + ey2 * ey2)) - plan.edgeStart) * 8;
 
+        const t00 = o00 / 2 * 3, t10 = o10 / 2 * 3, t01 = o01 / 2 * 3, t11 = o11 / 2 * 3;
+        const up = tg[t00] * w00 + tg[t10] * w10 + tg[t01] * w01 + tg[t11] * w11;
+        const rift = tg[t00 + 1] * w00 + tg[t10 + 1] * w10 + tg[t01 + 1] * w01 + tg[t11 + 1] * w11;
+        if (up > 0.005) {
+          const m = tg[t00 + 2] * w00 + tg[t10 + 2] * w10 + tg[t01 + 2] * w01 + tg[t11 + 2] * w11;
+          this.tectonicAt(tect, px, py, m, seed, tOut, true);
+          // Soft cap, and deep valleys between ridges, so where belts meet
+          // they don't merge into one solid block of mountain.
+          belt[i] = up / (0.4 + up) * (0.1 + 0.9 * tOut[2]);
+        }
+        e += up * TC.lift - rift * TC.rift;
+
         this.elevation[i] = e;
         this.roughness[i] = this.rangeRoughness(x * scale * 1.6, y * scale * 1.6, seed, shape, low, x, y);
       }
+    }
+    // Belts raise roughness, so mountain and highland tiers gather along them.
+    {
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < size; i++) { const r = this.roughness[i]; if (r < lo) lo = r; if (r > hi) hi = r; }
+      const k = (hi - lo) * TC.rise;
+      for (let i = 0; i < size; i++) this.roughness[i] += belt[i] * k;
     }
 
     // Raise or lower the sea until the land is the size we want.
@@ -463,6 +716,7 @@ const GameMap = {
     this._region = new Int32Array(size);
     this._queue = new Int32Array(size);
     this.genOptions = null;
+    this.seed = 0;
     this.layout = 'world';
     this.highlandShare = this.HIGHLAND_SHARE;
     this.mountainShare = this.MOUNTAIN_SHARE;
