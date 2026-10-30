@@ -227,7 +227,37 @@ const Render = {
     bare: [[228, 214, 176], [212, 192, 150], [190, 174, 146]],
     ink: [60, 40, 28],
     sepia: [150, 110, 70],
-    bg: '#241b12'
+    bg: '#241b12',
+    fog: [226, 211, 172],            // unexplored land is blank parchment
+    RIPPLES: [3, 6, 10],             // tiles out from the shore
+    RIPPLE_INK: [0.2, 0.13, 0.07],
+    BAND: 0.35                       // the band inside a border, from fill toward border tone
+  },
+
+  // Distance in tiles (4-way steps) from each sea tile to land, up to `max`;
+  // 0 for land and for sea further out.
+  seaDistance(max) {
+    const w = GameMap.width, h = GameMap.height, own = GameMap.owner, n = w * h;
+    const d = new Uint8Array(n), q = new Int32Array(n);
+    let head = 0, tail = 0;
+    for (let i = 0; i < n; i++) {
+      if (own[i] === WATER) continue;
+      const x = i % w;
+      if (x > 0 && own[i - 1] === WATER && !d[i - 1]) { d[i - 1] = 1; q[tail++] = i - 1; }
+      if (x < w - 1 && own[i + 1] === WATER && !d[i + 1]) { d[i + 1] = 1; q[tail++] = i + 1; }
+      if (i >= w && own[i - w] === WATER && !d[i - w]) { d[i - w] = 1; q[tail++] = i - w; }
+      if (i < n - w && own[i + w] === WATER && !d[i + w]) { d[i + w] = 1; q[tail++] = i + w; }
+    }
+    while (head < tail) {
+      const i = q[head++], k = d[i] + 1;
+      if (k > max) continue;
+      const x = i % w;
+      if (x > 0 && own[i - 1] === WATER && !d[i - 1]) { d[i - 1] = k; q[tail++] = i - 1; }
+      if (x < w - 1 && own[i + 1] === WATER && !d[i + 1]) { d[i + 1] = k; q[tail++] = i + 1; }
+      if (i >= w && own[i - w] === WATER && !d[i - w]) { d[i - w] = k; q[tail++] = i - w; }
+      if (i < n - w && own[i + w] === WATER && !d[i + w]) { d[i + w] = k; q[tail++] = i + w; }
+    }
+    return d;
   },
 
   setMapStyle(style) {
@@ -237,8 +267,81 @@ const Render = {
     if (!this.tileCanvas) return;
     this.buildPalette();
     this.applyPatterns();
+    this.fogSource = null;   // repaint the fog layer in the new style's colour (updateFog)
     if (this.shownOwner) this.repaintAll();
   },
+
+  // --- Atlas paper finish ---
+  // Two tiling textures: broad mottling anchored to the map (it pans and
+  // zooms with it) and fine fibre grain fixed to the screen, plus a vignette
+  // darkening the sheet toward its edges. Cosmetic, so Math.random is fine.
+  PAPER_MOTTLE_TILES: 10,            // map tiles per mottle texel
+  paperTex: null,
+
+  makePaperTextures() {
+    const tex = (size, fill) => {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const g = c.getContext('2d'), img = g.createImageData(size, size);
+      fill(new Uint32Array(img.data.buffer), size);
+      g.putImageData(img, 0, 0);
+      return c;
+    };
+    // Tileable value noise: a random lattice that wraps, sampled smoothly.
+    const P = 16, lat = new Float32Array(P * P);
+    for (let k = 0; k < lat.length; k++) lat[k] = Math.random();
+    const mottle = tex(128, (px, n) => {
+      for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) {
+          const u = x / n * P, v = y / n * P, i = u | 0, j = v | 0;
+          let fx = u - i, fy = v - j;
+          fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+          const a = lat[j * P + i], b = lat[j * P + (i + 1) % P], c = lat[((j + 1) % P) * P + i], d = lat[((j + 1) % P) * P + (i + 1) % P];
+          const t = a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+          px[y * n + x] = this.packed(96, 64, 32, (t * t * 34) | 0);
+        }
+      }
+    });
+    const grain = tex(256, (px, n) => {
+      for (let k = 0; k < n * n; k++) {
+        const r = Math.random();
+        px[k] = r < 0.5 ? this.packed(80, 52, 28, (r * 26) | 0) : this.packed(255, 248, 230, ((r - 0.5) * 22) | 0);
+      }
+    });
+    this.paperTex = { mottle, grain, mottlePat: null, grainPat: null };
+  },
+
+  // Over the territory and fog, under markers and lettering.
+  drawPaper(ctx) {
+    if (!this.paperTex) this.makePaperTextures();
+    const T = this.paperTex, s = this.cam.scale * this.dpr, cw = this.canvas.width, ch = this.canvas.height;
+    if (!T.mottlePat) { T.mottlePat = ctx.createPattern(T.mottle, 'repeat'); T.grainPat = ctx.createPattern(T.grain, 'repeat'); }
+    const tx = cw / 2 - this.cam.x * s, ty = ch / 2 - this.cam.y * s;
+    // The map sheet's rectangle on screen, clipped to the canvas.
+    const mx0 = Math.max(0, tx), my0 = Math.max(0, ty);
+    const mx1 = Math.min(cw, tx + GameMap.width * s), my1 = Math.min(ch, ty + GameMap.height * s);
+    if (mx1 <= mx0 || my1 <= my0) return;
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    const k = this.PAPER_MOTTLE_TILES * s;
+    ctx.setTransform(k, 0, 0, k, tx, ty);
+    ctx.fillStyle = T.mottlePat;
+    ctx.fillRect((mx0 - tx) / k, (my0 - ty) / k, (mx1 - mx0) / k, (my1 - my0) / k);
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.fillStyle = T.grainPat;
+    ctx.fillRect(mx0 / this.dpr, my0 / this.dpr, (mx1 - mx0) / this.dpr, (my1 - my0) / this.dpr);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const cx = tx + GameMap.width * s / 2, cy = ty + GameMap.height * s / 2;
+    const r = Math.hypot(GameMap.width, GameMap.height) * s / 2;
+    const vg = ctx.createRadialGradient(cx, cy, r * 0.55, cx, cy, r);
+    vg.addColorStop(0, 'rgba(90,55,20,0)');
+    vg.addColorStop(1, 'rgba(90,55,20,0.28)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(mx0, my0, mx1 - mx0, my1 - my0);
+    ctx.restore();
+  },
+
+  fogColor() { return this.mapStyle === 'atlas' ? this.ATLAS.fog : this.FOG_COLOR; },
 
   // A nation colour pulled toward grey and sepia, so washes sit on paper.
   atlasTone(rgb) {
@@ -265,15 +368,19 @@ const Render = {
     this.altFill = null;   // derived from bareTone
     this.terrain = new Uint32Array(w * h);
     const own = GameMap.owner;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = y * w + x;
-        if (own[i] !== WATER) { this.terrain[i] = bare[GameMap.terrain[i]]; continue; }
-        const shore = atlas && (
-          (x > 0 && own[i - 1] !== WATER) || (x < w - 1 && own[i + 1] !== WATER) ||
-          (y > 0 && own[i - w] !== WATER) || (y < h - 1 && own[i + w] !== WATER));
-        this.terrain[i] = shore ? coast : water;
+    // Atlas: tiles of sea by distance from land, for the inked shore and the
+    // ripple lines that follow it out to sea.
+    const sea = atlas ? this.seaDistance(A.RIPPLES[A.RIPPLES.length - 1]) : null;
+    const ripple = atlas ? A.RIPPLES.map((d, k) => this.mixRGB(A.water, A.coast, A.RIPPLE_INK[k])) : null;
+    for (let i = 0; i < w * h; i++) {
+      if (own[i] !== WATER) { this.terrain[i] = bare[GameMap.terrain[i]]; continue; }
+      let c = water;
+      if (atlas) {
+        const d = sea[i];
+        if (d === 1) c = coast;
+        else { const k = A.RIPPLES.indexOf(d); if (k >= 0) c = ripple[k]; }
       }
+      this.terrain[i] = c;
     }
 
     // Owned tiles keep the nation's colour but darken over rough ground, so
@@ -281,6 +388,7 @@ const Render = {
     // of having terrain, since that is when it decides where fronts stall.
     const SHADE = [1, 0.84, 0.7];
     this.fillColor = [];
+    this.bandColor = [];
     this.borderColor = new Uint32Array(n);
     for (let p = 0; p < n; p++) {
       const [r, g, b] = Game.players[p].color;
@@ -288,7 +396,13 @@ const Render = {
       if (atlas) {
         const tone = this.atlasTone([r, g, b]);
         for (let t = 0; t < 3; t++) this.fillColor[p][t] = this.mixRGB(A.bare[t], tone, 0.6);
-        this.borderColor[p] = this.mixRGB(tone.map(c => c * 0.67), A.ink, 0.18);
+        const border = tone.map(c => c * 0.67);
+        this.borderColor[p] = this.mixRGB(border, A.ink, 0.18);
+        this.bandColor[p] = new Uint32Array(3);
+        for (let t = 0; t < 3; t++) {
+          const fill = A.bare[t].map((c, k) => c + (tone[k] - c) * 0.6);
+          this.bandColor[p][t] = this.mixRGB(fill, border, A.BAND);
+        }
         continue;
       }
       for (let t = 0; t < 3; t++) {
@@ -631,6 +745,13 @@ const Render = {
         (y < h - 1 && owner[i + w] !== o);
       if (edge) {
         color = this.borderColor[o];
+      } else if (this.mapStyle === 'atlas' && (
+        (x > 1 && owner[i - 2] !== o) || (x < w - 2 && owner[i + 2] !== o) ||
+        (y > 1 && owner[i - 2 * w] !== o) || (y < h - 2 && owner[i + 2 * w] !== o) ||
+        (x > 0 && y > 0 && owner[i - w - 1] !== o) || (x < w - 1 && y > 0 && owner[i - w + 1] !== o) ||
+        (x > 0 && y < h - 1 && owner[i + w - 1] !== o) || (x < w - 1 && y < h - 1 && owner[i + w + 1] !== o))) {
+        // Atlas: a second, softer band just inside the border, like watercolour pooling at an edge.
+        color = this.bandColor[o][GameMap.terrain[i]];
       } else {
         const rows = this.patRows[o];
         color = (rows && (rows[y & 15] >> (x & 15)) & 1 ? this.patFill[o] : this.fillColor[o])[GameMap.terrain[i]];
@@ -781,7 +902,17 @@ const Render = {
     if (x < w - 1) { this.paintTile(i + 1, x + 1, y, w, h, shown, px); this.markLayerTile(layer, x + 1, y); }
     if (y > 0) { this.paintTile(i - w, x, y - 1, w, h, shown, px); this.markLayerTile(layer, x, y - 1); }
     if (y < h - 1) { this.paintTile(i + w, x, y + 1, w, h, shown, px); this.markLayerTile(layer, x, y + 1); }
+    // Atlas's inner band reaches two tiles in, so the next ring depends on this tile too.
+    if (this.mapStyle !== 'atlas') return;
+    const ring = this.RING2;
+    for (let k = 0; k < ring.length; k += 2) {
+      const nx = x + ring[k], ny = y + ring[k + 1];
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      this.paintTile(ny * w + nx, nx, ny, w, h, shown, px);
+      this.markLayerTile(layer, nx, ny);
+    }
   },
+  RING2: [-2, 0, 2, 0, 0, -2, 0, 2, -1, -1, 1, -1, -1, 1, 1, 1],
 
   // --- Paced territory reveal ------------------------------------------------
   // A whole turn's conquests land in one tick (100ms), so painting them on
@@ -1013,7 +1144,7 @@ const Render = {
       this.fogH = ch;
       this.makeFogChunks();
     }
-    const c = this.FOG_COLOR;
+    const c = this.fogColor();
     this.fogSeen.fill(0);
     this.fogCorners.fill(1);
     this.fogFadeIdx.length = 0;
@@ -1126,7 +1257,7 @@ const Render = {
   // the grid's edge runs on through the FOG_PAD border.
   fogPaint(i0, j0, i1, j1) {
     const cw = this.fogW, ch = this.fogH, S = this.FOG_SUB, P = this.FOG_PAD, stride = cw * S + 1 + 2 * P;
-    const corners = this.fogCorners, cs = cw + 1, px = this.fogPixels, c = this.FOG_COLOR;
+    const corners = this.fogCorners, cs = cw + 1, px = this.fogPixels, c = this.fogColor();
     const lo = this.FOG_EDGE_LO, hi = this.FOG_EDGE_HI, rgb = this.packed(c[0], c[1], c[2], 0);
     const pxMin = i0 > 1 ? (i0 - 1) * S : -P, pxMax = i1 + 1 < cw ? (i1 + 1) * S : cw * S + P;
     const pyMin = j0 > 1 ? (j0 - 1) * S : -P, pyMax = j1 + 1 < ch ? (j1 + 1) * S : ch * S + P;
@@ -1360,6 +1491,8 @@ const Render = {
     this.drawLayer(ctx, this.tileLayer, -this.cam.x, -this.cam.y);
     this.drawHoverHighlight(territoryChanged, ctx);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const atlas = this.mapStyle === 'atlas';
+    if (atlas && !fog) this.drawPaper(ctx);
 
     this.drawRailroads();
     this.drawPOIs();
@@ -1394,6 +1527,7 @@ const Render = {
       //   - the viewer's own missiles in flight (the blast stays under);
       //   - the placement ghost, which must stay visible when aimed into the black.
       this.drawFog();
+      if (atlas) this.drawPaper(ctx);
       if (!this.altView) {
         this.drawLabels();
         this.drawDiploBadges();

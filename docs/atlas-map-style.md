@@ -24,10 +24,20 @@ Each step is playable on its own. Switch styles in Options → Map style.
 | 6 | **Ornaments.** Compass rose and rhumb lines at sea, a cartouche with map name and turn, scale bar, ships drawn as galleons. | Fun or noise? Candidates for cosmetic unlocks. |
 | 7 | **Performance pass.** Large map (2000x1000) and Firefox; decide whether Atlas becomes the default. | Frame rate and memory against Classic. |
 
+## Status
+
+- Step 1 done. Step 2 done: on the large map Atlas draws no slower than
+  Classic (bench draw 3.8 ms vs 4.1 ms per frame); `drawPaper` is ~0.01 ms of
+  CPU, but its GPU fill isn't measured, so check real fps on a weak machine.
+
 ## Notes
 
 - Step 1 only swaps the colours `paintTile` uses (`Render.buildPalette`), so it
   costs nothing per frame.
+- Step 2: coast ripples are baked into the sea colours (`seaDistance`). The
+  inner border band is a second ring in `paintTile`, so in Atlas `showTile`
+  repaints two rings around a changed tile instead of one. Grain, mottling
+  and vignette are pattern fills in `drawPaper`. Fog uses `fogColor()`.
 - Steps 2 and 4 add static layers baked once per map. Land and water never
   change mid-match, so only the territory wash is repainted as borders move.
 - For the blend (step 4) the territory layer becomes translucent over a static
