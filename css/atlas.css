@@ -186,7 +186,9 @@ html.atlas .menuPanel {
   padding: 22px 22px 18px;
 }
 html.atlas .brand { font-variant: small-caps; letter-spacing: 0.06em; color: var(--a-ink); }
-html.atlas #menuPitch { font-style: italic; color: var(--a-ink-2); opacity: 1; }
+html.atlas #menuPitch { font-style: italic; color: var(--a-ink-2); opacity: 1; font-weight: 600; }
+html.atlas :is(.menuRowText small, #quickJoin .lobbyLabel, #quickJoinInfo, .menuCardNote) { color: var(--a-ink); opacity: 0.9; font-weight: 600; }
+html.atlas #buildInfo { color: var(--a-ink-2); opacity: 0.85; font-weight: 600; }
 html.atlas #quickJoin { background: linear-gradient(180deg, rgba(155, 58, 34, 0.12), rgba(155, 58, 34, 0.03)); border-color: rgba(155, 58, 34, 0.45); }
 html.atlas .panel button.menuRow { background: rgba(255, 250, 236, 0.45); border-color: var(--a-line); color: var(--a-ink); box-shadow: none; }
 html.atlas .panel button.menuRow:hover { background: rgba(155, 58, 34, 0.08); border-color: var(--a-rubric); box-shadow: 0 0 10px rgba(155, 58, 34, 0.18); }
