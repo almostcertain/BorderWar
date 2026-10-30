@@ -255,6 +255,8 @@ const Render = {
   disposeAtlasBases() {
     this.glyphs = null;
     this.farShown = null;
+    if (this.farBase) for (const c of this.farBase.chunks.values()) { c.dead = true; if (c.bmp) c.bmp.close(); }
+    this.farBase = null;
     this.reliefData = null;
     this.dropChunks();
     if (this.groundLayer) { this.disposeLayer(this.groundLayer); this.groundLayer = null; }
@@ -570,13 +572,13 @@ const Render = {
   // view's chunks fit their share of the cache: if they didn't, each frame
   // would evict chunks it is about to draw and repaint them, which is slow
   // and flickers). has(bx, by) skips empty squares.
-  drawChunks(ctx, kind, B, P, maxK, cols, rows, has, paint, minK = 2) {
+  drawChunks(ctx, kind, B, P, maxK, cols, rows, has, paint) {
     const s = this.cam.scale * this.dpr, cw = this.canvas.width, ch = this.canvas.height, chunks = this.chunks;
     const [bx0, bx1, by0, by1] = this.chunkRange(B, P, cols, rows);
     const share = this.chunkBudget() * 0.4, onScreen = (bx1 - bx0 + 1) * (by1 - by0 + 1);
-    let k = minK;
+    let k = 2;
     while (k * 1.41 < s && k < maxK) k *= 2;
-    while (k > minK && onScreen * ((B + 2 * P) * k) ** 2 > share) k /= 2;
+    while (k > 2 && onScreen * ((B + 2 * P) * k) ** 2 > share) k /= 2;
     const size = (B + 2 * P) * s;
     for (let by = by0; by <= by1; by++) {
       for (let bx = bx0; bx <= bx1; bx++) {
@@ -604,7 +606,15 @@ const Render = {
   // Paints and caches chunk `key`, or null once the frame's painting budget is spent.
   makeChunk(key, paint) {
     if (this.chunkBaked > 0 && performance.now() >= this.chunkUntil) return null;
-    const c = paint();
+    const chunk = this.chunkOf(paint());
+    this.chunks.set(key, chunk);
+    this.chunkPx += chunk.px;
+    this.chunkBaked++;
+    return chunk;
+  },
+
+  // A painted canvas as a chunk, swapped for an ImageBitmap once ready (Firefox).
+  chunkOf(c) {
     const chunk = { canvas: c, bmp: null, px: c.width * c.height, dead: false };
     try {
       createImageBitmap(c).then(bmp => {
@@ -613,9 +623,6 @@ const Render = {
         chunk.canvas = null;
       }, () => {});
     } catch (e) { /* no createImageBitmap: keep stamping the canvas */ }
-    this.chunks.set(key, chunk);
-    this.chunkPx += chunk.px;
-    this.chunkBaked++;
     return chunk;
   },
 
@@ -678,20 +685,71 @@ const Render = {
     // Each level has its own cells, so no other level can stand in for a
     // missing square. Keep showing the last level until the new one's view is
     // all painted, else the symbols blink out while zooming.
+    if (!this.farBase || this.farBase.L.dpr !== this.dpr) this.bakeFarBase();
+    // Own painting budget: sharp relief can spend the shared one every frame
+    // while zooming, which left these unpainted for up to a second.
+    this.chunkUntil = performance.now() + this.FAR_BAKE_MS;
+    this.chunkBaked = 0;
     const want = this.farLevel(k), shown = this.farShown;
-    let L = want, has = null;
-    if (shown && shown.k !== want.k && shown.dpr === want.dpr && !this.farReady(want)) {
-      L = shown;
-      has = (bx, by) => this.chunks.has(L.kind + ',' + bx + ',' + by + ',' + L.k);
-    } else this.farShown = want;
+    let L = want;
+    if (shown && shown.k !== want.k && shown.dpr === want.dpr && !this.farReady(want)) L = shown;
+    else this.farShown = want;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = (1 - t) * this.FAR_ALPHA;
     ctx.imageSmoothingEnabled = true;
-    this.drawChunks(ctx, L.kind, L.B, L.P, L.k, L.cols, L.rows, has,
-      (bx, by) => this.bakeFarChunk(bx, by, L.k, L.B, L.P, L.step), L.k);
+    const holes = this.drawFarLevel(ctx, L, L === want ? (bx, by) => this.bakeFarChunk(bx, by, L.k, L.B, L.P, L.step) : null);
+    // Squares still unpainted (first zoom-out, panning) show the base set,
+    // unless it would be scaled so far its symbols look wrong.
+    const ratio = s / this.farBase.L.k;
+    if (holes.length && ratio > 0.35 && ratio < 3) {
+      ctx.beginPath();
+      for (const r of holes) ctx.rect(r[0], r[1], r[2], r[3]);
+      ctx.clip();
+      const B = this.farBase;
+      this.drawFarLevel(ctx, B.L, null, B.chunks);
+    }
     ctx.restore();
     this.trimChunks();
+  },
+
+  // Draws level L's squares in view, from `from` (default the shared cache),
+  // painting missing ones with paint(bx, by) while the budget lasts. Returns
+  // the screen rects of the squares it couldn't draw.
+  drawFarLevel(ctx, L, paint, from) {
+    const s = this.cam.scale * this.dpr, cw = this.canvas.width, ch = this.canvas.height;
+    const [bx0, bx1, by0, by1] = this.chunkRange(L.B, L.P, L.cols, L.rows);
+    const holes = [];
+    for (let by = by0; by <= by1; by++) {
+      for (let bx = bx0; bx <= bx1; bx++) {
+        const key = L.kind + ',' + bx + ',' + by + ',' + L.k;
+        let chunk = (from || this.chunks).get(key);
+        if (chunk && !from) { this.chunks.delete(key); this.chunks.set(key, chunk); }
+        if (!chunk && paint) chunk = this.makeChunk(key, () => paint(bx, by));
+        const img = chunk && (chunk.bmp || chunk.canvas);
+        if (img) ctx.drawImage(img, ((bx * L.B - L.P) - this.cam.x) * s + cw / 2, ((by * L.B - L.P) - this.cam.y) * s + ch / 2, (L.B + 2 * L.P) * s, (L.B + 2 * L.P) * s);
+        // A square's own cells reach B tiles; its padding belongs to neighbours.
+        else holes.push([(bx * L.B - this.cam.x) * s + cw / 2, (by * L.B - this.cam.y) * s + ch / 2, L.B * s, L.B * s]);
+      }
+    }
+    return holes;
+  },
+
+  // The fallback set: one coarse level for the whole map, kept outside the
+  // cache so it's never evicted. The map at most FAR_BASE_PX device px
+  // (about 1.5x that with chunk padding).
+  FAR_BASE_PX: 2e6,
+  FAR_BAKE_MS: 2,
+  farBase: null,
+  bakeFarBase() {
+    const w = GameMap.width, h = GameMap.height;
+    let k = 1;
+    while (k > 0.125 && w * h * k * k > this.FAR_BASE_PX) k /= 2;
+    const L = this.farLevel(k), chunks = new Map();
+    for (let by = 0; by < L.rows; by++) {
+      for (let bx = 0; bx < L.cols; bx++) chunks.set(L.kind + ',' + bx + ',' + by + ',' + k, this.chunkOf(this.bakeFarChunk(bx, by, k, L.B, L.P, L.step)));
+    }
+    this.farBase = { L, chunks };
   },
 
   farLevel(k) {

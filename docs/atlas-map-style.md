@@ -88,8 +88,14 @@ Each step is playable on its own. Switch styles in Options → Map style.
   range, and each tree of a pair is sized on its own. Each zoom level has its
   own cells, so a neighbouring level can't stand in for a missing square the
   way relief chunks do: the last fully drawn level stays up until the new
-  level's view is all painted (`farReady`). Before that, fast zooming blanked
-  the symbols for up to a second.
+  level's view is all painted (`farReady`). Squares with nothing painted yet
+  (first zoom-out, panning somewhere new) are filled from a fallback set:
+  one coarse level for the whole map (`farBase`, ~1 px per tile, capped at
+  `FAR_BASE_PX`), baked once on the first far frame (~20 ms, medium map) and
+  kept outside the cache. It's skipped when it would be scaled more than 3x
+  either way. Far symbols also get their own painting budget per frame
+  (`FAR_BAKE_MS`): sharp relief could spend the shared one every frame while
+  zooming, which blanked the symbols for up to a second.
   Picked from four mockups (colour zones, pattern fill, symbols, hybrid).
 
 ## Interface theme
