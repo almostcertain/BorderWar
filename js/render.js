@@ -171,10 +171,29 @@ const Render = {
   },
 
   resize() {
-    const dpr = this.lowRes ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = this.lowRes || this.autoLowRes ? 1 : Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = Math.floor(window.innerWidth * dpr);
     this.canvas.height = Math.floor(window.innerHeight * dpr);
     this.dpr = dpr;
+  },
+
+  // Automatic Low graphics. Firefox sometimes rasterises the main canvas on
+  // the CPU, where a HiDPI frame takes 40+ ms. Once most of a window of
+  // frames is slow, drop to one pixel per CSS pixel for the rest of the page.
+  autoLowRes: false,
+  SLOW_DRAW_MS: 28,
+  SLOW_WINDOW: 90,
+  slowDraws: 0,
+  drawsSeen: 0,
+  noteDrawTime(ms) {
+    if (this.autoLowRes || this.lowRes || this.dpr <= 1) return;
+    if (ms > this.SLOW_DRAW_MS) this.slowDraws++;
+    if (++this.drawsSeen < this.SLOW_WINDOW) return;
+    if (this.slowDraws > this.SLOW_WINDOW * 0.7) {
+      this.autoLowRes = true;
+      this.resize();
+    }
+    this.slowDraws = this.drawsSeen = 0;
   },
 
   onMapReady() {
@@ -578,10 +597,7 @@ const Render = {
   drawChunks(ctx, kind, B, P, maxK, cols, rows, has, paint) {
     const s = this.cam.scale * this.dpr, cw = this.canvas.width, ch = this.canvas.height, chunks = this.chunks;
     const [bx0, bx1, by0, by1] = this.chunkRange(B, P, cols, rows);
-    const share = this.chunkBudget() * 0.4, onScreen = (bx1 - bx0 + 1) * (by1 - by0 + 1);
-    let k = 2;
-    while (k * 1.41 < s && k < maxK) k *= 2;
-    while (k > 2 && onScreen * ((B + 2 * P) * k) ** 2 > share) k /= 2;
+    const k = this.chunkLevel(B, P, maxK, (bx1 - bx0 + 1) * (by1 - by0 + 1));
     const size = (B + 2 * P) * s;
     for (let by = by0; by <= by1; by++) {
       for (let bx = bx0; bx <= bx1; bx++) {
@@ -594,9 +610,40 @@ const Render = {
         if (!chunk) continue;
         const img = chunk.bmp || chunk.canvas;
         if (!img) continue;
-        ctx.drawImage(img, ((bx * B - P) - this.cam.x) * s + cw / 2, ((by * B - P) - this.cam.y) * s + ch / 2, size, size);
+        const dx = ((bx * B - P) - this.cam.x) * s + cw / 2, dy = ((by * B - P) - this.cam.y) * s + ch / 2;
+        // Unpadded squares tile the view: whole-pixel edges leave no
+        // antialiased seam for the layer underneath to hide.
+        if (P === 0) {
+          const x0 = Math.round(dx), y0 = Math.round(dy);
+          ctx.drawImage(img, x0, y0, Math.round(dx + size) - x0, Math.round(dy + size) - y0);
+        } else ctx.drawImage(img, dx, dy, size, size);
       }
     }
+  },
+
+  // The painted resolution (px per tile) drawChunks uses: the power of two
+  // nearest the screen's, at most maxK, lowered until the `onScreen` chunks fit
+  // their share of the cache.
+  chunkLevel(B, P, maxK, onScreen) {
+    const s = this.cam.scale * this.dpr, share = this.chunkBudget() * 0.4;
+    let k = 2;
+    while (k * 1.41 < s && k < maxK) k *= 2;
+    while (k > 2 && onScreen * ((B + 2 * P) * k) ** 2 > share) k /= 2;
+    return k;
+  },
+
+  // True when drawChunks would find every unpadded square in view already
+  // painted (at this level or a neighbour), so whatever is under them is hidden.
+  chunksCover(kind, B, maxK, cols, rows) {
+    const [bx0, bx1, by0, by1] = this.chunkRange(B, 0, cols, rows);
+    const k = this.chunkLevel(B, 0, maxK, (bx1 - bx0 + 1) * (by1 - by0 + 1));
+    for (let by = by0; by <= by1; by++) {
+      for (let bx = bx0; bx <= bx1; bx++) {
+        const base = kind + ',' + bx + ',' + by + ',';
+        if (!this.chunks.has(base + k) && !this.chunks.has(base + k * 2) && !this.chunks.has(base + k / 2)) return false;
+      }
+    }
+    return true;
   },
 
   // The squares of B tiles (plus P either side) the view covers: [bx0, bx1, by0, by1].
@@ -685,7 +732,7 @@ const Render = {
 
   drawFarGlyphs(ctx) {
     const t = this.atlasNear(), G = this.glyphs;
-    if (t >= 0.98 || !G) return;
+    if (t >= 0.95 || !G) return;
     // Baked near the screen's scale; the cell size follows, so symbols keep
     // their screen size and spacing at every zoom.
     const s = this.cam.scale * this.dpr;
@@ -890,11 +937,16 @@ const Render = {
     this.beginChunkFrame();
     if (t > 0) {
       ctx.imageSmoothingEnabled = true;
-      this.drawLayer(ctx, this.reliefLayer, ox, oy);
+      const C = this.RELIEF_CHUNK;
+      // Software canvases pay for every full-screen pass: skip the stand-in
+      // once the sharp squares cover the view.
+      if (!this.reliefData || !this.chunksCover('r', C, this.RELIEF_MAX_K, Math.ceil(GameMap.width / C), Math.ceil(GameMap.height / C))) {
+        this.drawLayer(ctx, this.reliefLayer, ox, oy);
+      }
       this.drawSharpRelief(ctx);
       ctx.imageSmoothingEnabled = false;
     }
-    if (t < 1) {
+    if (t < 0.99) {
       ctx.globalAlpha = 1 - t;
       this.drawLayer(ctx, this.groundLayer, ox, oy);
       ctx.globalAlpha = 1;

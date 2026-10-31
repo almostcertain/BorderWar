@@ -640,6 +640,7 @@
     const drawStart = performance.now();
     Render.draw();
     const drawEnd = performance.now();
+    Render.noteDrawTime(drawEnd - drawStart);
     UI.update();
     Tutorial.frame();
     UI.updateReplayBar();
