@@ -646,6 +646,11 @@ const Render = {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = true;
+    // The last chunks reach past the map; clip off the stretched edge row.
+    const s = this.cam.scale * this.dpr, tx = this.canvas.width / 2 - this.cam.x * s, ty = this.canvas.height / 2 - this.cam.y * s;
+    ctx.beginPath();
+    ctx.rect(tx, ty, w * s, h * s);
+    ctx.clip();
     this.drawChunks(ctx, 'r', C, 0, this.RELIEF_MAX_K, Math.ceil(w / C), Math.ceil(h / C), null,
       (bx, by, k) => this.paintReliefChunk(bx, by, k));
     ctx.restore();
