@@ -2366,6 +2366,26 @@ const Render = {
     this.drawSelectionBox();
   },
 
+  // A structure's range ring. Atlas territory is the owner's own colour, so a
+  // ring in that colour vanishes: it gets a paper halo under dark ink instead.
+  strokeRangeRing(ctx, px, py, rr, c, fillA, strokeA, dashed) {
+    const d = this.dpr, ink = this.ATLAS.ink, atlas = this.mapStyle === 'atlas';
+    ctx.beginPath();
+    ctx.arc(px, py, rr, 0, Math.PI * 2);
+    ctx.fillStyle = atlas ? `rgba(255, 246, 222, ${fillA * 2})` : `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${fillA})`;
+    ctx.fill();
+    if (atlas) {
+      ctx.lineWidth = 4.5 * d;
+      ctx.strokeStyle = 'rgba(250, 240, 214, 0.65)';
+      ctx.stroke();
+    }
+    ctx.lineWidth = atlas ? 2 * d : Math.max(1, d * 1.5);
+    ctx.strokeStyle = atlas ? `rgba(${ink[0]}, ${ink[1]}, ${ink[2]}, 0.9)` : `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${strokeA})`;
+    if (dashed) ctx.setLineDash([4 * d, 4 * d]);
+    ctx.stroke();
+    if (dashed) ctx.setLineDash([]);
+  },
+
   // Static rail lines, drawn under the structure discs. Each railroad's
   // `waypoints` is its two station tiles plus at most one elbow
   // (Game.orthogonalPath), so each draws as one or two straight segments.
@@ -2375,8 +2395,10 @@ const Render = {
     const cw = this.canvas.width, ch = this.canvas.height, w = GameMap.width;
 
     const fog = this.fogged;
-    ctx.strokeStyle = 'rgba(210, 190, 150, 0.55)';
-    ctx.lineWidth = Math.max(1, this.dpr * 1.1);
+    // Atlas: a map railway, ink line with paper dashes over it, so it reads on any nation colour.
+    const atlas = this.mapStyle === 'atlas', ink = this.ATLAS.ink;
+    ctx.strokeStyle = atlas ? `rgba(${ink[0]}, ${ink[1]}, ${ink[2]}, 0.9)` : 'rgba(210, 190, 150, 0.55)';
+    ctx.lineWidth = atlas ? Math.max(2.5, this.dpr * 3) : Math.max(1, this.dpr * 1.1);
     ctx.beginPath();
     for (const r of Game.railroads) {
       if (fog) {
@@ -2395,6 +2417,13 @@ const Render = {
       }
     }
     ctx.stroke();
+    if (atlas) {
+      ctx.strokeStyle = 'rgba(250, 240, 214, 0.95)';
+      ctx.lineWidth = Math.max(1.2, this.dpr * 1.4);
+      ctx.setLineDash([5 * this.dpr, 5 * this.dpr]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
   },
 
   // Structures are an overlay, not baked into the tile blit (one pixel per
@@ -2844,15 +2873,7 @@ const Render = {
       if (px + rr < 0 || py + rr < 0 || px - rr > cw || py - rr > ch) continue;   // wholly off-screen
       const owner = GameMap.owner[b.tile];
       const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
-      ctx.beginPath();
-      ctx.arc(px, py, rr, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.07)`;
-      ctx.fill();
-      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
-      ctx.strokeStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.35)`;
-      ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      this.strokeRangeRing(ctx, px, py, rr, c, 0.07, 0.35, true);
     }
 
     // SAM Launchers: per-building radius (Game.dynamicSamRange) and a solid
@@ -2866,13 +2887,7 @@ const Render = {
       if (px + rr < 0 || py + rr < 0 || px - rr > cw || py - rr > ch) continue;   // wholly off-screen
       const owner = GameMap.owner[b.tile];
       const c = owner >= 0 ? Game.players[owner].color : [200, 200, 200];
-      ctx.beginPath();
-      ctx.arc(px, py, rr, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.05)`;
-      ctx.fill();
-      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
-      ctx.strokeStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.3)`;
-      ctx.stroke();
+      this.strokeRangeRing(ctx, px, py, rr, c, 0.05, 0.3, false);
     }
 
     if (!iconsShown) this.drawStructureDots();   // above the rings, below SAM icons
