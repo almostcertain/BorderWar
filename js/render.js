@@ -347,6 +347,7 @@ const Render = {
   GLYPH_BUCKET: 64,          // tiles per chunk side
   GLYPH_PAD: 4,              // tiles a symbol may reach past its chunk
   GLYPH_ALPHA: 0.7,          // strength of the zoomed-in marks
+  GLYPH_MIN_PX: [18, 13, 9], // CSS px floor per kind (mountain, hills, tree) so marks stay legible at mid zoom
   glyphs: null,
   glyphSprites: new Map(),
 
@@ -473,7 +474,8 @@ const Render = {
     const g = c.getContext('2d'), cell = this.glyphs.cells[by * this.glyphs.cols + bx];
     const ox = bx * B - P, oy = by * B - P;
     for (let i = 0; i < cell.length; i += 4) {
-      const sp = this.glyphSprite(cell[i + 2], Math.max(3, Math.round(cell[i + 3] * k)));
+      const kind = cell[i + 2];
+      const sp = this.glyphSprite(kind, Math.max(Math.round(cell[i + 3] * k), Math.round(this.GLYPH_MIN_PX[kind] * this.dpr)));
       g.drawImage(sp, Math.round((cell[i] - ox) * k - sp.width / 2), Math.round((cell[i + 1] - oy) * k - sp.height + 2));
     }
     return c;
@@ -677,6 +679,7 @@ const Render = {
   // are looks only. Drawn over the territory, fading out as the marks fade in.
   FAR_STEP: 11,              // CSS px between symbols
   FAR_ALPHA: 0.65,
+  FAR_SIZE: 1.4,             // symbol size over the cell step; symbols overlap a little, like range marks
   FAR_MOUNTAIN: 0.2,         // share of a cell that must be mountain to mark it
   FAR_HIGHLAND: 0.45,        // and highland (hills or wooded)
 
@@ -812,7 +815,7 @@ const Render = {
     const order = [];
     for (let m = 0; m < marks.length; m += 5) order.push(m);
     order.sort((a, b) => marks[a + 1] - marks[b + 1]);
-    const unit = this.FAR_STEP * this.dpr;
+    const unit = this.FAR_STEP * this.FAR_SIZE * this.dpr;
     for (const m of order) {
       const kind = marks[m + 2], x = (marks[m] - ox) * k, y = (marks[m + 1] - oy) * k, r = marks[m + 4];
       const px = Math.max(5, Math.round(unit * [0.95, 0.8, 0.62][kind] * marks[m + 3]));
