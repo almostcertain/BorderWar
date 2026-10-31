@@ -109,7 +109,14 @@ html.atlas .bbCost { color: #6b4a0c; font-size: 11px; font-weight: 700; }
 html.atlas .bbCount { background: var(--a-sea); border-color: var(--a-paper-solid); color: #fbf5e6; }
 html.atlas .buildBtn.poor { opacity: 0.8; }
 html.atlas .buildBtn.locked { opacity: 0.6; }
-html.atlas .buildBtn.poor .bbCost { color: var(--a-rubric-2); }
+/* Inverted red chip rather than red text: dark red vs brown ink is too close
+   a hue/lightness to tell apart at 11px. */
+html.atlas .buildBtn.poor .bbCost {
+  color: #fff3e6;
+  background: #b3261e;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
 html.atlas .buildBtn.armed { border-color: var(--a-rubric); background: #cdb078; box-shadow: 0 0 0 1px var(--a-rubric), 0 1px 3px rgba(50, 30, 12, 0.3); }
 html.atlas #hint { color: var(--a-ink); font-size: 12px; opacity: 0.8; }
 html.atlas #hint.warn { color: var(--a-rubric); opacity: 1; font-weight: 700; }

@@ -1105,7 +1105,7 @@ button.specOpt:disabled { opacity: 0.45; cursor: default; }
 /* Unaffordable is dimmed, never disabled — a button you cannot press is also a
    button that cannot tell you what it would have cost. */
 .buildBtn.poor { opacity: 0.6; }
-.buildBtn.poor .bbCost { color: #ff8a8a; }
+.buildBtn.poor .bbCost { color: #fff3e6; background: #c0392b; padding: 1px 4px; border-radius: 3px; }
 
 /* Nuke buttons before a Missile Silo is owned: dimmed like .poor (same
    press-but-explain philosophy — the hint line spells out "Build a Missile
