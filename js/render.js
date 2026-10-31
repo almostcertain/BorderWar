@@ -231,7 +231,7 @@ const Render = {
     RIPPLES: [3, 6, 10],             // tiles out from the shore
     RIPPLE_INK: [0.2, 0.13, 0.07],
     BAND: 0.35,                      // the band inside a border, from fill toward border tone
-    FILL: 0.6,                       // nation colour's share of an owned tile, over the paper
+    FILL: 0.78,                     // nation colour's share of an owned tile, over the paper
     TRIBE_LIGHT: 0.3,                // tribe colours lifted this far toward white
     // Zoom blend, in CSS px per tile: paper below NEAR_FROM, relief above
     // NEAR_TO. Nation colour keeps its strength; the relief shows through it.
@@ -239,7 +239,7 @@ const Render = {
     NEAR_TO: 5,
     NEAR_WASH: 0.35,                 // share of the far look's colour wash kept zoomed in (drawAtlasTerritory)
     FOREST_TINT: 0.3,                // how green forest highland is in the relief
-    NEAR_TINT: 0.75,                // strength of the zoomed-in tint (drawAtlasTerritory); lower is lighter
+    NEAR_TINT: 0.85,               // strength of the zoomed-in tint (drawAtlasTerritory); lower is lighter
     SHADE_K: 0.9,                   // relief shading: brightness change per unit of slope
     SHADE_MAX: 0.18,                 // and its limit either way
     relief: [[203, 198, 130], [204, 171, 107], [180, 161, 132], [217, 206, 184], [149, 165, 90]]   // lowland, highland, mountain, peak, forest
@@ -346,6 +346,7 @@ const Render = {
   GLYPH_STEP: 3,             // tiles between grid points
   GLYPH_BUCKET: 64,          // tiles per chunk side
   GLYPH_PAD: 4,              // tiles a symbol may reach past its chunk
+  GLYPH_ALPHA: 0.7,          // strength of the zoomed-in marks
   glyphs: null,
   glyphSprites: new Map(),
 
@@ -655,7 +656,7 @@ const Render = {
     if (t <= 0.02 || !G) return;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = t;
+    ctx.globalAlpha = t * this.GLYPH_ALPHA;
     ctx.imageSmoothingEnabled = true;
     this.drawChunks(ctx, 'g', this.GLYPH_BUCKET, this.GLYPH_PAD, 16, G.cols, G.rows,
       (bx, by) => G.cells[by * G.cols + bx].length > 0,
@@ -670,7 +671,7 @@ const Render = {
   // at that terrain's centre in the cell. Only sim tiers count: lowland woods
   // are looks only. Drawn over the territory, fading out as the marks fade in.
   FAR_STEP: 11,              // CSS px between symbols
-  FAR_ALPHA: 0.9,
+  FAR_ALPHA: 0.65,
   FAR_MOUNTAIN: 0.2,         // share of a cell that must be mountain to mark it
   FAR_HIGHLAND: 0.45,        // and highland (hills or wooded)
 
