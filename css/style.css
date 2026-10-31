@@ -494,16 +494,17 @@ body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pau
   body.replaying #hud { bottom: calc(env(safe-area-inset-bottom) + 84px); }
 }
 
+#replayMode .lobbyLabel { font-size: 14px; opacity: 0.85; }
 #replayList { max-height: 260px; }
-#replayList li { display: flex; align-items: center; gap: 8px; }
-#replayList li.lobbyListEmpty { opacity: 0.6; font-size: 13px; }
+#replayList li { display: flex; align-items: center; gap: 8px; font-size: 16px; }
+#replayList li.lobbyListEmpty { opacity: 0.75; font-size: 15px; }
 #replayList .replayInfo { flex: 1; min-width: 0; cursor: pointer; }
-#replayList .replayInfo small { display: block; opacity: 0.6; font-size: 11px; }
+#replayList .replayInfo small { display: block; opacity: 0.75; font-size: 13px; }
 #replayList .replayInfo:hover { text-decoration: underline; }
 
 .panel #replayList button {
-  padding: 4px 8px;
-  font-size: 12px;
+  padding: 6px 10px;
+  font-size: 14px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.12);
 }
@@ -1782,12 +1783,12 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
   background: rgba(4, 8, 16, 0.6);
 }
 #newsOverlay .optionsPanel { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 420px; max-height: 100%; }
-#newsDate { text-align: center; font-size: 12px; opacity: 0.6; }
-#newsBody { flex: 1 1 auto; min-height: 0; overflow-y: auto; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+#newsDate { text-align: center; font-size: 14px; opacity: 0.75; }
+#newsBody { flex: 1 1 auto; min-height: 0; overflow-y: auto; font-size: 16px; line-height: 1.55; overflow-wrap: anywhere; }
 #newsBody > * { margin: 0 0 10px; }
 #newsBody > :last-child { margin-bottom: 0; }
-#newsBody h3 { font-size: 16px; }
-#newsBody h4 { font-size: 14px; }
+#newsBody h3 { font-size: 19px; }
+#newsBody h4 { font-size: 17px; }
 #newsBody ul { padding-left: 20px; }
 #newsBody a { color: #a9cdff; }
 
@@ -1803,33 +1804,34 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
   background: rgba(4, 8, 16, 0.6);
 }
 #achOverlay .optionsPanel { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 420px; max-height: 100%; }
-#achCount { text-align: center; font-size: 13px; opacity: 0.7; }
-#achGuestNote { text-align: center; font-size: 12px; opacity: 0.7; }
+#achCount { text-align: center; font-size: 15px; opacity: 0.8; }
+#achGuestNote { text-align: center; font-size: 14px; opacity: 0.8; }
 #achList { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
-.achGroup { margin-top: 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; }
-.achRow { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); opacity: 0.6; }
+.achGroup { margin-top: 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.8; }
+.achRow { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); opacity: 0.75; }
 .achRow.earned { opacity: 1; background: rgba(255, 200, 80, 0.1); }
-.panel button.achReward { flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 8px; margin-left: auto; font-size: 12px; text-align: left; background: rgba(61, 125, 255, 0.25); border: 1px solid rgba(61, 125, 255, 0.6); }
+.panel button.achReward { flex: none; display: flex; align-items: center; gap: 6px; padding: 5px 10px; margin-left: auto; font-size: 14px; text-align: left; background: rgba(61, 125, 255, 0.25); border: 1px solid rgba(61, 125, 255, 0.6); }
 .panel button.achReward:hover { background: rgba(61, 125, 255, 0.4); }
 .panel button.achReward.got { background: rgba(255, 159, 67, 0.2); border-color: rgba(255, 159, 67, 0.7); }
 .achReward span { display: flex; flex-direction: column; }
-.achReward small { font-size: 10px; opacity: 0.75; }
-.achMedal { flex: none; font-size: 20px; line-height: 1; color: rgba(255, 255, 255, 0.4); }
+.achReward small { font-size: 12px; opacity: 0.85; }
+.achMedal { flex: none; font-size: 24px; line-height: 1; color: rgba(255, 255, 255, 0.4); }
 .achRow.earned .achMedal, .achToastRow .achMedal, #endEarned .achMedal { color: #ffc850; }
-.achText { display: flex; flex-direction: column; min-width: 0; font-size: 14px; }
-.achText small { font-size: 11px; opacity: 0.7; }
+.achText { display: flex; flex-direction: column; min-width: 0; font-size: 16px; }
+.achText small { font-size: 13px; opacity: 0.8; }
 
 #achLoadout { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 .achGroup span { margin-left: 6px; font-weight: 400; letter-spacing: 0; text-transform: none; }
 .loadoutRow { display: flex; flex-wrap: wrap; gap: 6px; }
-.panel .loadoutRow button { padding: 6px 10px; font-size: 13px; font-weight: 400; background: rgba(255, 255, 255, 0.08); }
+.panel .loadoutRow button { padding: 7px 12px; font-size: 15px; font-weight: 400; background: rgba(255, 255, 255, 0.08); }
 .panel .loadoutRow button.active { background: rgba(255, 200, 80, 0.3); outline: 1px solid rgba(255, 200, 80, 0.8); }
-.panel .loadoutRow button:disabled { opacity: 0.35; cursor: default; }
+.panel .loadoutRow button:disabled { opacity: 0.6; cursor: default; }
 .loadoutPic { height: 16px; width: 24px; margin-right: 6px; vertical-align: -3px; border-radius: 2px; }
 .flagImg { height: 0.75em; width: 1.125em; margin-right: 0.4em; vertical-align: -0.04em; border-radius: 1px; outline: 1px solid rgba(0, 0, 0, 0.5); }
 .packCard { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 8px; background: rgba(61, 125, 255, 0.16); outline: 1px solid rgba(61, 125, 255, 0.5); }
 .packCard.owned { background: rgba(255, 200, 80, 0.12); outline-color: rgba(255, 200, 80, 0.6); }
-.packCard small { opacity: 0.8; }
+.packCard { font-size: 15px; }
+.packCard small { font-size: 13px; opacity: 0.85; }
 .packCard .packStatus { font-style: italic; }
 .achSection { display: flex; flex-direction: column; gap: 6px; }
 /* Desktop: a wide panel with the groups in columns instead of one long list. */

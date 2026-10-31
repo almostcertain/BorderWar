@@ -158,6 +158,7 @@ html.atlas #radialMenu text { fill: var(--a-ink); font-family: var(--a-serif); }
 
 /* --- Replay bar --------------------------------------------------------------- */
 html.atlas #replayBar button { background: var(--a-paper-3); color: var(--a-ink); }
+html.atlas .panel #replayList button { background: var(--a-paper-3); color: var(--a-ink); box-shadow: none; }
 html.atlas #replayPlay.paused { background: #d9a441; color: var(--a-ink); }
 html.atlas #replayBar select { background: var(--a-paper-2); border-color: var(--a-line); color: var(--a-ink); }
 
