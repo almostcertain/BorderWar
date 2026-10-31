@@ -1905,17 +1905,18 @@ body:has(#overlay.hidden) #optionsBtn { display: none; }
   text-align: left;
 }
 .optionsPanel h2 { margin: 0 0 4px; text-align: center; }
-.optRow { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
-.optRow input[type="checkbox"] { flex: none; margin: 0; }
+.panel .optRow { display: flex; align-items: center; gap: 10px; font-size: 16px; cursor: pointer; }
+.optRow input[type="checkbox"] { flex: none; margin: 0; width: 18px; height: 18px; }
 .optRow select, .optRow input[type="range"] { margin-left: auto; }
+.optRow select { font-size: 15px; }
 .optRow input[type="range"] { width: 140px; }
-.optRow small { display: block; font-size: 11px; opacity: 0.6; }
+.optRow small { display: block; font-size: 13px; opacity: 0.75; }
 .panel button#optCopyPerf {
   background: transparent;
   padding: 0;
   margin: 0;
   border-radius: 0;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 400;
   color: #6b9bff;
 }
