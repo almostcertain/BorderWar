@@ -2791,17 +2791,7 @@ const Render = {
       const c = owner >= 0 ? Game.players[owner].color : [170, 176, 186];
       if (q.kind === 'pass' && owner >= 0) {
         const rr = Game.POI_FORT_RANGE * s;
-        if (px + rr > 0 && py + rr > 0 && px - rr < cw && py - rr < ch) {
-          ctx.beginPath();
-          ctx.arc(px, py, rr, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.06)`;
-          ctx.fill();
-          ctx.lineWidth = Math.max(1, this.dpr * 1.5);
-          ctx.strokeStyle = `rgba(${c[0]}, ${c[1]}, ${c[2]}, 0.35)`;
-          ctx.setLineDash([2 * this.dpr, 3 * this.dpr]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
+        if (px + rr > 0 && py + rr > 0 && px - rr < cw && py - rr < ch) this.strokeRangeRing(ctx, px, py, rr, c, 0.06, 0.35, true);
       }
       if (px < -r * 3 || py < -r * 3 || px > cw + r * 3 || py > ch + r * 3) continue;
       ctx.beginPath();
