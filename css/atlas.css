@@ -190,7 +190,7 @@ html.atlas #endOverlay[data-banner="banner_last_standing"] .panel { background: 
 
 /* --- Main menu ---------------------------------------------------------------- */
 html.atlas #overlay { background: #3b2c1c; }
-html.atlas #overlay.menuBgOn { background: radial-gradient(ellipse at center, rgba(240, 230, 204, 0.55), rgba(60, 40, 20, 0.6)); }
+html.atlas #overlay.menuBgOn { background: radial-gradient(ellipse at center, rgba(240, 230, 204, 0.3), rgba(60, 40, 20, 0.28)); }
 html.atlas .menuPanel {
   background: var(--a-paper);
   border: 1px solid var(--a-line-strong);
