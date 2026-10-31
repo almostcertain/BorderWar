@@ -3194,16 +3194,7 @@ const Render = {
     // Fort placement: show the protection radius, read live from
     // Game.fortRange().
     if (UI.placing === 'fort' && !(hoverB && hoverB.type === 'fort')) {
-      const cx = px + s / 2, cy = py + s / 2;
-      ctx.beginPath();
-      ctx.arc(cx, cy, Game.fortRange() * s, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(130, 215, 255, 0.09)';
-      ctx.fill();
-      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
-      ctx.strokeStyle = 'rgba(130, 215, 255, 0.55)';
-      ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      this.strokeRangeRing(ctx, px + s / 2, py + s / 2, Game.fortRange() * s, [130, 215, 255], 0.09, 0.55, true);
     }
 
     // The Drill: the starting circle it would open with (r0, the radius that
@@ -3225,14 +3216,7 @@ const Render = {
     // SAM Launcher placement: the range of a fresh level-1 SAM. Skipped when
     // hovering an existing SAM, whose ring drawStructures already draws.
     if (UI.placing === 'sam' && !(hoverB && hoverB.type === 'sam')) {
-      const cx = px + s / 2, cy = py + s / 2;
-      ctx.beginPath();
-      ctx.arc(cx, cy, Game.samRange(1) * s, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(139, 224, 139, 0.09)';
-      ctx.fill();
-      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
-      ctx.strokeStyle = 'rgba(139, 224, 139, 0.55)';
-      ctx.stroke();
+      this.strokeRangeRing(ctx, px + s / 2, py + s / 2, Game.samRange(1) * s, [139, 224, 139], 0.09, 0.55, false);
     }
 
     // Radio Tower placement (fog matches): the disc it would uncover once
