@@ -2389,6 +2389,60 @@ const Render = {
     if (dashed) ctx.setLineDash([]);
   },
 
+  // Strokes the current path. Atlas nation colours swallow a red or orange
+  // line, so there it gets a paper halo and (when given) a deeper ink tone.
+  nukeStroke(ctx, lw, style, atlasStyle) {
+    const atlas = this.mapStyle === 'atlas';
+    if (atlas) {
+      const dash = ctx.getLineDash();
+      ctx.setLineDash([]);
+      ctx.lineWidth = lw + 3 * this.dpr;
+      ctx.strokeStyle = 'rgba(250, 240, 214, 0.75)';
+      ctx.stroke();
+      ctx.setLineDash(dash);
+    }
+    ctx.lineWidth = atlas ? lw * 1.3 : lw;
+    ctx.strokeStyle = atlas && atlasStyle ? atlasStyle : style;
+    ctx.stroke();
+  },
+
+  // Blast-radius ghost for a nuke being aimed: outer ring dashed, inner solid.
+  drawNukeGhost(cx, cy, s, outer, inner) {
+    const ctx = this.ctx, d = this.dpr, atlas = this.mapStyle === 'atlas';
+    ctx.beginPath();
+    ctx.arc(cx, cy, outer * s, 0, Math.PI * 2);
+    ctx.fillStyle = atlas ? 'rgba(255, 246, 222, 0.14)' : 'rgba(255, 120, 90, 0.06)';
+    ctx.fill();
+    ctx.setLineDash([4 * d, 4 * d]);
+    this.nukeStroke(ctx, Math.max(1, d * 1.2), 'rgba(255, 120, 90, 0.45)', 'rgba(150, 30, 15, 0.9)');
+    ctx.setLineDash([]);
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, inner * s, 0, Math.PI * 2);
+    ctx.fillStyle = atlas ? 'rgba(200, 40, 20, 0.3)' : 'rgba(255, 70, 40, 0.14)';
+    ctx.fill();
+    this.nukeStroke(ctx, Math.max(1, d * 1.5), 'rgba(255, 90, 60, 0.8)', 'rgba(170, 20, 10, 1)');
+  },
+
+  // The launch trajectory: the same parabola drawNukes traces for a nuke in flight.
+  drawNukeArcPreview(from, to, s, cw, ch) {
+    const ctx = this.ctx, d = this.dpr;
+    const dist = Math.hypot(to.x - from.x, to.y - from.y);
+    const arcHeight = Math.min(dist * 0.35, 40);
+    const steps = Math.max(2, Math.ceil(dist));
+    ctx.beginPath();
+    for (let i = 0; i <= steps; i++) {
+      const u = i / steps;
+      const ua = Math.sin(Math.PI * u);
+      const ux = (from.x + (to.x - from.x) * u + 0.5 - this.cam.x) * s + cw / 2;
+      const uy = (from.y + (to.y - from.y) * u - ua * arcHeight + 0.5 - this.cam.y) * s + ch / 2;
+      if (i === 0) ctx.moveTo(ux, uy); else ctx.lineTo(ux, uy);
+    }
+    ctx.setLineDash([6 * d, 5 * d]);
+    this.nukeStroke(ctx, Math.max(1, d * 1.2), 'rgba(255, 160, 90, 0.8)', 'rgba(150, 30, 15, 1)');
+    ctx.setLineDash([]);
+  },
+
   // Static rail lines, drawn under the structure discs. Each railroad's
   // `waypoints` is its two station tiles plus at most one elbow
   // (Game.orthogonalPath), so each draws as one or two straight segments.
@@ -3186,108 +3240,35 @@ const Render = {
     // hovered tile (Game.NUKE_MAGNITUDES), plus the trajectory from the Silo
     // that would launch it, once resolveNukeLaunch confirms one.
     if (isNuke) {
+      const cx = px + s / 2, cy = py + s / 2;
       // MIRV has no NUKE_MAGNITUDES entry (the mothership splits into
       // scattered warheads), so its ghost is one dashed ring at MIRV_RANGE.
-      const cx = px + s / 2, cy = py + s / 2;
       if (UI.placing === 'mirv') {
         ctx.beginPath();
         ctx.arc(cx, cy, Game.MIRV_RANGE * s, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(255, 120, 90, 0.04)';
         ctx.fill();
-        ctx.lineWidth = Math.max(1, this.dpr * 1.2);
-        ctx.strokeStyle = 'rgba(255, 120, 90, 0.5)';
         ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
-        ctx.stroke();
+        this.nukeStroke(ctx, Math.max(1, this.dpr * 1.2), 'rgba(255, 120, 90, 0.5)', 'rgba(150, 30, 15, 0.9)');
         ctx.setLineDash([]);
       } else {
         const mag = Game.NUKE_MAGNITUDES[UI.placing];
-        ctx.beginPath();
-        ctx.arc(cx, cy, mag.outer * s, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255, 120, 90, 0.06)';
-        ctx.fill();
-        ctx.lineWidth = Math.max(1, this.dpr * 1.2);
-        ctx.strokeStyle = 'rgba(255, 120, 90, 0.45)';
-        ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        ctx.beginPath();
-        ctx.arc(cx, cy, mag.inner * s, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255, 70, 40, 0.14)';
-        ctx.fill();
-        ctx.lineWidth = Math.max(1, this.dpr * 1.5);
-        ctx.strokeStyle = 'rgba(255, 90, 60, 0.8)';
-        ctx.stroke();
+        this.drawNukeGhost(cx, cy, s, mag.outer, mag.inner);
       }
-
       if (nukePreview.ok) {
-        // Same parabola drawNukes traces for a nuke in flight, so the preview
-        // line IS the trajectory.
         const from = { x: nukePreview.silo.tile % w, y: (nukePreview.silo.tile / w) | 0 };
-        const to = { x: tile % w, y: (tile / w) | 0 };
-        const dist = Math.hypot(to.x - from.x, to.y - from.y);
-        const arcHeight = Math.min(dist * 0.35, 40);
-        const steps = Math.max(2, Math.ceil(dist));
-        ctx.setLineDash([6 * this.dpr, 5 * this.dpr]);
-        ctx.lineWidth = Math.max(1, this.dpr * 1.2);
-        ctx.strokeStyle = 'rgba(255, 160, 90, 0.8)';
-        ctx.beginPath();
-        for (let i = 0; i <= steps; i++) {
-          const u = i / steps;
-          const ua = Math.sin(Math.PI * u);
-          const ux = (from.x + (to.x - from.x) * u + 0.5 - this.cam.x) * s + cw / 2;
-          const uy = (from.y + (to.y - from.y) * u - ua * arcHeight + 0.5 - this.cam.y) * s + ch / 2;
-          if (i === 0) ctx.moveTo(ux, uy); else ctx.lineTo(ux, uy);
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
+        this.drawNukeArcPreview(from, { x: tile % w, y: (tile / w) | 0 }, s, cw, ch);
       }
     }
 
-    // Debug nuke: the same blast-radius ghost, keyed off UI.debugNukeType.
-    // After the first click (UI.debugNukeSrc >= 0) it also traces the arc
-    // from that source tile and pins a marker on it.
+    // Debug nuke: the same ghost off UI.debugNukeType; after the first click
+    // (UI.debugNukeSrc >= 0) it also traces the arc from that source tile.
     if (isDebugNuke) {
       const mag = Game.NUKE_MAGNITUDES[UI.debugNukeType];
-      const cx = px + s / 2, cy = py + s / 2;
-      ctx.beginPath();
-      ctx.arc(cx, cy, mag.outer * s, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255, 120, 90, 0.06)';
-      ctx.fill();
-      ctx.lineWidth = Math.max(1, this.dpr * 1.2);
-      ctx.strokeStyle = 'rgba(255, 120, 90, 0.45)';
-      ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      ctx.beginPath();
-      ctx.arc(cx, cy, mag.inner * s, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255, 70, 40, 0.14)';
-      ctx.fill();
-      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
-      ctx.strokeStyle = 'rgba(255, 90, 60, 0.8)';
-      ctx.stroke();
-
+      this.drawNukeGhost(px + s / 2, py + s / 2, s, mag.outer, mag.inner);
       if (UI.debugNukeSrc >= 0) {
         const from = { x: UI.debugNukeSrc % w, y: (UI.debugNukeSrc / w) | 0 };
-        const to = { x: tile % w, y: (tile / w) | 0 };
-        const dist = Math.hypot(to.x - from.x, to.y - from.y);
-        const arcHeight = Math.min(dist * 0.35, 40);
-        const steps = Math.max(2, Math.ceil(dist));
-        ctx.setLineDash([6 * this.dpr, 5 * this.dpr]);
-        ctx.lineWidth = Math.max(1, this.dpr * 1.2);
-        ctx.strokeStyle = 'rgba(255, 160, 90, 0.8)';
-        ctx.beginPath();
-        for (let i = 0; i <= steps; i++) {
-          const u = i / steps;
-          const ua = Math.sin(Math.PI * u);
-          const ux = (from.x + (to.x - from.x) * u + 0.5 - this.cam.x) * s + cw / 2;
-          const uy = (from.y + (to.y - from.y) * u - ua * arcHeight + 0.5 - this.cam.y) * s + ch / 2;
-          if (i === 0) ctx.moveTo(ux, uy); else ctx.lineTo(ux, uy);
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
-
+        this.drawNukeArcPreview(from, { x: tile % w, y: (tile / w) | 0 }, s, cw, ch);
         const srcx = (from.x + 0.5 - this.cam.x) * s + cw / 2;
         const srcy = (from.y + 0.5 - this.cam.y) * s + ch / 2;
         ctx.beginPath();
@@ -4261,9 +4242,14 @@ const Render = {
         const ux = p.x + 0.5, uy = p.y + 0.5;
         if (i === 0) ctx.moveTo(ux, uy); else ctx.lineTo(ux, uy);
       }
-      ctx.lineWidth = Math.max(1, this.dpr) / s;
+      if (this.mapStyle === 'atlas') {
+        ctx.lineWidth = Math.max(2.5, this.dpr * 3) / s;
+        ctx.strokeStyle = 'rgba(250, 240, 214, 0.7)';
+        ctx.stroke();
+      }
+      ctx.lineWidth = Math.max(1, this.dpr * (this.mapStyle === 'atlas' ? 1.6 : 1)) / s;
       ctx.strokeStyle = colour;
-      ctx.globalAlpha = 0.45;
+      ctx.globalAlpha = this.mapStyle === 'atlas' ? 0.85 : 0.45;
       ctx.stroke();
       ctx.globalAlpha = 1;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -4271,6 +4257,12 @@ const Render = {
       // Warhead: a filled disc at the tip, flashing toward white on a
       // wall-clock pulse so it reads against its owner colour.
       const flash = 0.5 + 0.5 * Math.sin(performance.now() / 90);
+      if (this.mapStyle === 'atlas') {
+        ctx.beginPath();
+        ctx.arc(px, py, radius + 2 * this.dpr, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(250, 240, 214, 0.9)';
+        ctx.fill();
+      }
       ctx.beginPath();
       ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.fillStyle = colour;
@@ -4297,13 +4289,11 @@ const Render = {
     const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 180);
 
     ctx.save();
-    ctx.lineWidth = 2 * this.dpr;
-    ctx.strokeStyle = line;
     ctx.globalAlpha = 0.35 + 0.45 * pulse;
     ctx.setLineDash([8 * this.dpr, 6 * this.dpr]);
     ctx.beginPath();
     ctx.arc(cx, cy, outer, 0, Math.PI * 2);
-    ctx.stroke();
+    this.nukeStroke(ctx, 2 * this.dpr, line);
     ctx.setLineDash([]);
     ctx.globalAlpha = 0.12 + 0.1 * pulse;
     ctx.fillStyle = fill;
@@ -4311,7 +4301,7 @@ const Render = {
     ctx.arc(cx, cy, inner, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 0.9;
-    ctx.stroke();
+    this.nukeStroke(ctx, 2 * this.dpr, line);
     ctx.restore();
   },
 
@@ -4337,9 +4327,7 @@ const Render = {
       const ringR = (b.inner + (b.outer - b.inner) * t) * s;
       ctx.beginPath();
       ctx.arc(px, py, ringR, 0, Math.PI * 2);
-      ctx.lineWidth = Math.max(1.5, s * 0.06 * alpha);
-      ctx.strokeStyle = `rgba(255, 150, 60, ${0.7 * alpha})`;
-      ctx.stroke();
+      this.nukeStroke(ctx, Math.max(1.5, s * 0.06 * alpha), `rgba(255, 150, 60, ${0.7 * alpha})`, `rgba(170, 30, 10, ${0.9 * alpha})`);
 
       if (t < 0.35) {
         const flashAlpha = (1 - t / 0.35) * 0.6;
