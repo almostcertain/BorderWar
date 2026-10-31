@@ -2441,9 +2441,9 @@ const Render = {
     if (dashed) ctx.setLineDash([]);
   },
 
-  // Strokes the current path. Atlas nation colours swallow a red or orange
+  // Strokes the current path. Atlas nation colours swallow a pale or bright
   // line, so there it gets a paper halo and (when given) a deeper ink tone.
-  nukeStroke(ctx, lw, style, atlasStyle) {
+  haloStroke(ctx, lw, style, atlasStyle) {
     const atlas = this.mapStyle === 'atlas';
     if (atlas) {
       const dash = ctx.getLineDash();
@@ -2466,14 +2466,14 @@ const Render = {
     ctx.fillStyle = atlas ? 'rgba(255, 246, 222, 0.14)' : 'rgba(255, 120, 90, 0.06)';
     ctx.fill();
     ctx.setLineDash([4 * d, 4 * d]);
-    this.nukeStroke(ctx, Math.max(1, d * 1.2), 'rgba(255, 120, 90, 0.45)', 'rgba(150, 30, 15, 0.9)');
+    this.haloStroke(ctx, Math.max(1, d * 1.2), 'rgba(255, 120, 90, 0.45)', 'rgba(150, 30, 15, 0.9)');
     ctx.setLineDash([]);
 
     ctx.beginPath();
     ctx.arc(cx, cy, inner * s, 0, Math.PI * 2);
     ctx.fillStyle = atlas ? 'rgba(200, 40, 20, 0.3)' : 'rgba(255, 70, 40, 0.14)';
     ctx.fill();
-    this.nukeStroke(ctx, Math.max(1, d * 1.5), 'rgba(255, 90, 60, 0.8)', 'rgba(170, 20, 10, 1)');
+    this.haloStroke(ctx, Math.max(1, d * 1.5), 'rgba(255, 90, 60, 0.8)', 'rgba(170, 20, 10, 1)');
   },
 
   // The launch trajectory: the same parabola drawNukes traces for a nuke in flight.
@@ -2491,7 +2491,7 @@ const Render = {
       if (i === 0) ctx.moveTo(ux, uy); else ctx.lineTo(ux, uy);
     }
     ctx.setLineDash([6 * d, 5 * d]);
-    this.nukeStroke(ctx, Math.max(1, d * 1.2), 'rgba(255, 160, 90, 0.8)', 'rgba(150, 30, 15, 1)');
+    this.haloStroke(ctx, Math.max(1, d * 1.2), 'rgba(255, 160, 90, 0.8)', 'rgba(150, 30, 15, 1)');
     ctx.setLineDash([]);
   },
 
@@ -3204,12 +3204,10 @@ const Render = {
       const cx = px + s / 2, cy = py + s / 2;
       ctx.beginPath();
       ctx.arc(cx, cy, r0 * s, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255, 106, 77, 0.05)';
+      ctx.fillStyle = this.mapStyle === 'atlas' ? 'rgba(255, 246, 222, 0.14)' : 'rgba(255, 106, 77, 0.05)';
       ctx.fill();
-      ctx.lineWidth = Math.max(1.5, this.dpr * 2);
-      ctx.strokeStyle = 'rgba(255, 106, 77, 0.8)';
       ctx.setLineDash([8 * this.dpr, 6 * this.dpr]);
-      ctx.stroke();
+      this.haloStroke(ctx, Math.max(1.5, this.dpr * 2), 'rgba(255, 106, 77, 0.8)', 'rgba(150, 30, 15, 0.95)');
       ctx.setLineDash([]);
     }
 
@@ -3230,12 +3228,10 @@ const Render = {
       const cy = ((((y / C) | 0) + 0.5) * C - this.cam.y) * s + ch / 2;
       ctx.beginPath();
       ctx.arc(cx, cy, (Game.VISION_SIGHT_RADIO + 0.5) * C * s, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(111, 211, 224, 0.07)';
+      ctx.fillStyle = this.mapStyle === 'atlas' ? 'rgba(255, 246, 222, 0.14)' : 'rgba(111, 211, 224, 0.07)';
       ctx.fill();
-      ctx.lineWidth = Math.max(1, this.dpr * 1.5);
-      ctx.strokeStyle = 'rgba(111, 211, 224, 0.6)';
       ctx.setLineDash([6 * this.dpr, 5 * this.dpr]);
-      ctx.stroke();
+      this.haloStroke(ctx, Math.max(1, this.dpr * 1.5), 'rgba(111, 211, 224, 0.6)', 'rgba(60, 40, 28, 0.9)');
       ctx.setLineDash([]);
     }
 
@@ -3285,7 +3281,7 @@ const Render = {
         ctx.fillStyle = 'rgba(255, 120, 90, 0.04)';
         ctx.fill();
         ctx.setLineDash([4 * this.dpr, 4 * this.dpr]);
-        this.nukeStroke(ctx, Math.max(1, this.dpr * 1.2), 'rgba(255, 120, 90, 0.5)', 'rgba(150, 30, 15, 0.9)');
+        this.haloStroke(ctx, Math.max(1, this.dpr * 1.2), 'rgba(255, 120, 90, 0.5)', 'rgba(150, 30, 15, 0.9)');
         ctx.setLineDash([]);
       } else {
         const mag = Game.NUKE_MAGNITUDES[UI.placing];
@@ -4329,7 +4325,7 @@ const Render = {
     ctx.setLineDash([8 * this.dpr, 6 * this.dpr]);
     ctx.beginPath();
     ctx.arc(cx, cy, outer, 0, Math.PI * 2);
-    this.nukeStroke(ctx, 2 * this.dpr, line);
+    this.haloStroke(ctx, 2 * this.dpr, line);
     ctx.setLineDash([]);
     ctx.globalAlpha = 0.12 + 0.1 * pulse;
     ctx.fillStyle = fill;
@@ -4337,7 +4333,7 @@ const Render = {
     ctx.arc(cx, cy, inner, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 0.9;
-    this.nukeStroke(ctx, 2 * this.dpr, line);
+    this.haloStroke(ctx, 2 * this.dpr, line);
     ctx.restore();
   },
 
@@ -4363,7 +4359,7 @@ const Render = {
       const ringR = (b.inner + (b.outer - b.inner) * t) * s;
       ctx.beginPath();
       ctx.arc(px, py, ringR, 0, Math.PI * 2);
-      this.nukeStroke(ctx, Math.max(1.5, s * 0.06 * alpha), `rgba(255, 150, 60, ${0.7 * alpha})`, `rgba(170, 30, 10, ${0.9 * alpha})`);
+      this.haloStroke(ctx, Math.max(1.5, s * 0.06 * alpha), `rgba(255, 150, 60, ${0.7 * alpha})`, `rgba(170, 30, 10, ${0.9 * alpha})`);
 
       if (t < 0.35) {
         const flashAlpha = (1 - t / 0.35) * 0.6;
