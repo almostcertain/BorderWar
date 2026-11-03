@@ -173,10 +173,13 @@ measured" question above.
   pixels changed get a new bitmap. Off-screen chunks are skipped. The hover
   overlay now clears, blits and draws only its bounding box. Label sprites
   are stamped from an `ImageBitmap` snapshot taken after each redraw.
-- **Still open (sim):** first-time trade-route searches (`portRoute` →
-  `seaPath`) cause 25–33 ms turns. They made up about half of all turns over
-  20 ms, and they are the visible hitches. Fixing them is a sim change (see
-  the resumable-search and coarse-grid options above).
+- **Fixed later (sim, 2026-11-03):** first-time trade-route searches
+  (`portRoute` → `seaPath`) caused 25–33 ms turns, about half of all turns
+  over 20 ms. They now run as resumable searches (`stepTradeRouteSearch`,
+  trade.js), at most `TRADE_ROUTE_SLICE` (30k) tiles per tick in their own
+  arena. A Port whose roll wins while its route is still being searched holds
+  the ship (`tradeWaitFor`) and sends it when the route lands. See the
+  results below.
 - **Second Firefox profile, after the fix:** ~64 fps, up from ~30. Labels
   dropped from 2.4 ms to 0.16 ms per frame. The tile layer was still copying
   ~2.3 ms per frame, because changed tiles were grouped into one bounding box,
@@ -184,3 +187,24 @@ measured" question above.
   re-uploads every chunk. Changes are now tracked per 128×128 chunk
   (`markLayerTile` / `flushLayerPuts`), so only chunks that actually contain
   changed tiles are blitted and re-uploaded.
+
+## Resumable trade-route searches (2026-11-03)
+
+`sim-profile.js 6000 world 12345 82 400`, before vs after (sim changed, so
+indicative; harness times run about 6x a browser's per tile):
+
+| | before | after |
+|---|---|---|
+| max tick | 177.5 ms | 83.2 ms |
+| p99 | 110.0 ms | 51.0 ms |
+| ticks >50 ms | 295 | 72 |
+| ticks >100 ms | 65 | 0 |
+| p50 | 12.4 ms | 16.1 ms |
+| `updatePortTrade` per tick | 5.5 ms | 8.4 ms |
+
+Trade search per tick, first 3,000 ticks: max 212k tiles before, 33k after.
+Total trade search work roughly doubled (14M to 25M tiles), because the old
+per-tick budget silently dropped many route requests and the queue now
+finishes them all. Trade ships spawned: 791 before, 750 after. A 15k slice
+let the queue back up, and dropping the roll instead of holding it cut ships
+to about 550.

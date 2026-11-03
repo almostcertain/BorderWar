@@ -8,8 +8,8 @@ Object.assign(Game, {
   // Port. A ship sails the seaPath route to its destination and pays BOTH
   // ports' owners on arrival (see stepTradeShips).
   //
-  //  - Reachability is checked with a real seaPath call at spawn time
-  //    (updatePortTrade), once per successful spawn roll.
+  //  - A ship needs a cached route (portRoute). A pair's first roll only
+  //    queues its search, which runs over a few ticks.
   //  - A captured trade ship is redirected to its new owner's nearest
   //    tradeable Port (see warshipChaseTradeShip, nearestOwnedPortRoute).
   //    One Port capturing the other mid-crossing cancels the trip.
@@ -130,7 +130,8 @@ Object.assign(Game, {
   // Rolls every built Port for a fresh trade ship. On a hit, picks a
   // weighted destination (tradingPorts) and commits only once a real sea
   // route to it exists. A few attempts guard against one unlucky pick
-  // wasting a successful roll.
+  // wasting a successful roll. A hit whose picks all wait on a route search
+  // is kept (b.tradeWaitFor) and sails once that route is found.
   updatePortTrade() {
     for (const b of this.buildings.values()) {
       if (b.type !== 'port' || !b.built) continue;
@@ -141,20 +142,114 @@ Object.assign(Game, {
       const p = this.players[owner];
       if (!p || !p.alive) continue;
 
+      if (b.tradeWaitFor >= 0) { this.resolveTradeWait(b, owner); continue; }
+
       if (!this.shouldSpawnTradeShip(b)) continue;
 
       const candidates = this.tradingPorts(b);
       if (candidates.length === 0) continue;
 
+      let waitFor = -1;
       for (let attempt = 0; attempt < 3; attempt++) {
         const dest = candidates[Math.floor(this.rng() * candidates.length)];
         const path = this.portRoute(b.tile, dest.tile);
         if (path) {
           this.tradeShips.push({ owner, srcPort: b.tile, dstPort: dest.tile, path, pos: 0 });
+          waitFor = -1;
           break;
         }
+        if (waitFor < 0 && this.tradeRouteSearching(this.portRouteKey(b.tile, dest.tile))) waitFor = dest.tile;
       }
+      if (waitFor >= 0) { b.tradeWaitFor = waitFor; b.tradeWaitUntil = this.elapsed + this.TRADE_WAIT_MAX; }
     }
+    this.stepTradeRouteSearch();
+  },
+
+  // Seconds a Port holds a won roll for its route search before dropping it.
+  TRADE_WAIT_MAX: 30,
+
+  // Sends the held ship once its route is cached; drops it if the route
+  // failed, the wait ran out, or the destination stopped being a partner.
+  resolveTradeWait(b, owner) {
+    const dst = b.tradeWaitFor;
+    const cached = this._portRoutes.get(this.portRouteKey(b.tile, dst));
+    if (cached === undefined && this.elapsed < b.tradeWaitUntil
+      && this.tradeRouteSearching(this.portRouteKey(b.tile, dst))) return;
+    b.tradeWaitFor = -1;
+    if (!cached || !this.tradingPorts(b).some(d => d.tile === dst)) return;
+    const path = this.portRoute(b.tile, dst);
+    if (path) this.tradeShips.push({ owner, srcPort: b.tile, dstPort: dst, path, pos: 0 });
+  },
+
+  tradeRouteSearching(key) {
+    const job = this._tradeRouteJob;
+    return this._tradeRouteQueued.has(key) || (job !== null && job.key === key);
+  },
+
+  portRouteKey(fromTile, toTile) {
+    return Math.min(fromTile, toTile) * GameMap.owner.length + Math.max(fromTile, toTile);
+  },
+
+  // An uncached port pair is searched in slices of this many tiles per tick
+  // instead of in one go: a long route (up to SEA_PATH_GUARD) was a 25-33ms
+  // tick on large maps. See docs/perf-frame-rate-profile.md.
+  TRADE_ROUTE_SLICE: 30000,
+  // Pairs waiting for a search; more are dropped and asked for again later.
+  TRADE_ROUTE_QUEUE_MAX: 64,
+
+  // Queues the pair for stepTradeRouteSearch (FIFO, one search at a time).
+  queueTradeRoute(key, fromTile, toTile) {
+    if (this._tradeRouteQueued.has(key) || this._tradeRouteQueue.length >= this.TRADE_ROUTE_QUEUE_MAX) return;
+    this._tradeRouteQueued.add(key);
+    this._tradeRouteQueue.push({ key, fromTile, toTile });
+  },
+
+  // Advances queued route searches by up to TRADE_ROUTE_SLICE tiles in total,
+  // caching each finished one. Counts toward this tick's sea budget but is not
+  // gated by it, so trade routes can't be starved by other searches.
+  stepTradeRouteSearch() {
+    let left = this.TRADE_ROUTE_SLICE;
+    while (left > 0) {
+      let job = this._tradeRouteJob;
+      if (!job) {
+        const next = this._tradeRouteQueue.shift();
+        if (!next) return;
+        this._tradeRouteQueued.delete(next.key);
+        if (this._portRoutes.has(next.key)) continue;
+        const st = this.seaSearchPrepare([next.fromTile], next.toTile);
+        if (!st) { this.cachePortRoute(next.key, false); continue; }
+        this.seaSearchInit(st, this.tradeRouteArena(GameMap.owner.length), Infinity);
+        this._seaPathNodesThisTick += this.SEA_PATH_SEARCH_COST;
+        job = this._tradeRouteJob = { key: next.key, st };
+      }
+      const used = this.seaSearchRun(job.st, left);
+      left -= used;
+      this._seaPathNodesThisTick += used;
+      if (!job.st.done) return;
+      this.cachePortRoute(job.key, this.seaSearchPath(job.st) || false);
+      this._tradeRouteJob = null;
+    }
+  },
+
+  // The arena trade route searches run in, kept apart from seaPath's because
+  // a search here spans ticks. No `steps`: these searches are never capped.
+  _tradeRouteArena: null,
+  tradeRouteArena(size) {
+    let a = this._tradeRouteArena;
+    if (!a || a.size !== size) {
+      const cap = this.SEA_PATH_GUARD * 4;
+      a = this._tradeRouteArena = {
+        size,
+        hasG: new Uint8Array(size),
+        closed: new Uint8Array(size),
+        gVal: new Int32Array(size),
+        from: new Int32Array(size),
+        steps: null,
+        heapId: new Int32Array(cap),
+        heapPri: new Int32Array(cap)
+      };
+    }
+    return a;
   },
 
   // How many port PAIRS portRoute keeps (one entry per pair, either
@@ -167,13 +262,11 @@ Object.assign(Game, {
   // seaPath([fromTile], toTile) for two Port tiles, cached for the match:
   // the search only reads water tiles and shoreDist, which never change.
   // Each pair is stored once, in the direction first searched; a B->A route
-  // reversed and ended on B's tile answers A->B. Genuine failures are
-  // cached as `false`; a null from an exhausted SEA_PATH_NODE_BUDGET_PER_TICK
-  // is not, so the pair is tried again later. Only written inside tick()
-  // (see its _inTick comment).
+  // reversed and ended on B's tile answers A->B. Failures are cached as
+  // `false`. Inside tick() a miss returns null and queues the pair for
+  // stepTradeRouteSearch; the cache is only written there (see _inTick).
   portRoute(fromTile, toTile) {
-    const size = GameMap.owner.length;
-    const key = Math.min(fromTile, toTile) * size + Math.max(fromTile, toTile);
+    const key = this.portRouteKey(fromTile, toTile);
     let cached = this._portRoutes.get(key);
     if (cached === false) return null;
     // Battle Royale (game/drill.js): a route found before the circle passed
@@ -187,11 +280,8 @@ Object.assign(Game, {
       return path;
     }
 
-    const before = this._seaPathSearchesThisTick;
-    const path = this.seaPath([fromTile], toTile);
-    const refused = !path && this._seaPathSearchesThisTick === before && this.seaPathBudgetSpent();
-    if (!refused) this.cachePortRoute(key, path || false);
-    return path;
+    if (this._inTick) { this.queueTradeRoute(key, fromTile, toTile); return null; }
+    return this.seaPath([fromTile], toTile);
   },
 
   cachePortRoute(key, path) {
