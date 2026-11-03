@@ -76,7 +76,31 @@ Object.assign(Game, {
   // from its start, and shrinks the node guard (SEA_PATH_NODES_PER_STEP), so
   // a target only reachable the long way round fails fast.
   seaPath(sourceTiles, targetTile, maxSteps = Infinity) {
-    const owner = GameMap.owner, shoreDist = GameMap.shoreDist, w = GameMap.width;
+    const st = this.seaSearchPrepare(sourceTiles, targetTile);
+    if (!st) return null;
+
+    // Past the fast reject, this is a real weighted A* over potentially
+    // thousands of water tiles — budget how much of that runs per tick (see
+    // SEA_PATH_NODE_BUDGET_PER_TICK) rather than let however many callers
+    // happen to land on the same tick all pay the full cost at once.
+    // Only inside tick() — see its _inTick comment.
+    if (this._inTick) {
+      if (this.seaPathBudgetSpent()) return null;
+      this._seaPathSearchesThisTick++;
+      this._seaPathNodesThisTick += this.SEA_PATH_SEARCH_COST;
+    }
+
+    this.seaSearchInit(st, this.seaArena(GameMap.owner.length), maxSteps);
+    const used = this.seaSearchRun(st, st.guardLeft);
+    if (this._inTick) this._seaPathNodesThisTick += used;
+    return this.seaSearchPath(st);
+  },
+
+  // seaPath in resumable parts: prepare (target/start tiles and the fast
+  // reject; null when no route can exist), init (resets `arena`), run (any
+  // number of slices), path. A search owns its arena until its path is read.
+  seaSearchPrepare(sourceTiles, targetTile) {
+    const owner = GameMap.owner;
     // Battle Royale's dead zone (game/drill.js) is impassable: no route
     // starts, ends or runs through a dead water tile.
     const dead = this.drillDead;
@@ -103,17 +127,13 @@ Object.assign(Game, {
     for (const t of targetWater) targetComponents.add(wc[t]);
     if (!starts.some(s => targetComponents.has(wc[s]))) return null;
 
-    // Past the fast reject, this is a real weighted A* over potentially
-    // thousands of water tiles — budget how much of that runs per tick (see
-    // SEA_PATH_NODE_BUDGET_PER_TICK) rather than let however many callers
-    // happen to land on the same tick all pay the full cost at once.
-    // Only inside tick() — see its _inTick comment.
-    if (this._inTick) {
-      if (this.seaPathBudgetSpent()) return null;
-      this._seaPathSearchesThisTick++;
-      this._seaPathNodesThisTick += this.SEA_PATH_SEARCH_COST;
-    }
+    return { targetTile, targetWater, starts, arena: null, maxSteps: Infinity,
+      goalX: 0, goalY: 0, dxGoal: 0, dyGoal: 0, crossNorm: 1,
+      heapLen: 0, guardLeft: 0, found: -1, done: false };
+  },
 
+  seaSearchInit(st, arena, maxSteps) {
+    const w = GameMap.width, targetTile = st.targetTile, starts = st.starts;
     const goalX = targetTile % w, goalY = (targetTile / w) | 0;
 
     // Cross-product tie-breaker needs one reference line — the start closest
@@ -125,26 +145,58 @@ Object.assign(Game, {
       const d = Math.abs(sx - goalX) + Math.abs(sy - goalY);
       if (d < bestD) { bestD = d; s0 = s; }
     }
-    const dxGoal = goalX - (s0 % w), dyGoal = goalY - ((s0 / w) | 0);
-    const crossNorm = Math.max(1, Math.abs(dxGoal) + Math.abs(dyGoal));
-    const COST_SCALE = this.SEA_COST_SCALE, BASE_COST = COST_SCALE, weight = this.SEA_HEURISTIC_WEIGHT;
-    const crossTieBreaker = (nx, ny) => {
-      const dxN = nx - goalX, dyN = ny - goalY;
-      const cross = Math.abs(dxGoal * dyN - dyGoal * dxN);
-      return Math.floor((cross * (COST_SCALE - 1)) / crossNorm / crossNorm);
-    };
+    st.goalX = goalX; st.goalY = goalY;
+    st.dxGoal = goalX - (s0 % w); st.dyGoal = goalY - ((s0 / w) | 0);
+    st.crossNorm = Math.max(1, Math.abs(st.dxGoal) + Math.abs(st.dyGoal));
+    st.arena = arena; st.maxSteps = maxSteps;
+    st.found = -1; st.done = false;
 
-    // Search state lives in a reusable arena, not per-call Map/Set/array
-    // (a major source of garbage). Costs stay well inside Int32:
-    // SEA_PATH_GUARD (200k) tiles at BASE_COST 100 plus at most a 1000 shore
-    // penalty each is ~2.2e8.
-    const arena = this.seaArena(owner.length);
+    // Costs stay well inside Int32: SEA_PATH_GUARD (200k) tiles at BASE_COST
+    // 100 plus at most a 1000 shore penalty each is ~2.2e8. Only the flags
+    // need resetting; gVal/from are never read unless their tile's flag says
+    // this search wrote them. `steps` is optional: only step-capped searches
+    // read it.
+    const hasG = arena.hasG, gVal = arena.gVal, from = arena.from, steps = arena.steps;
+    hasG.fill(0); arena.closed.fill(0);
+    st.heapLen = 0;
+    const BASE_COST = this.SEA_COST_SCALE, weight = this.SEA_HEURISTIC_WEIGHT;
+    for (const s of starts) {
+      if (hasG[s]) continue;
+      hasG[s] = 1; gVal[s] = 0; from[s] = -1;
+      if (steps) steps[s] = 0;
+      const sx = s % w, sy = (s / w) | 0;
+      this.seaHeapPush(st, s, weight * BASE_COST * (Math.abs(sx - goalX) + Math.abs(sy - goalY)));
+    }
+    st.guardLeft = Math.min(this.SEA_PATH_GUARD, maxSteps * this.SEA_PATH_NODES_PER_STEP);
+  },
+
+  seaHeapPush(st, id, pri) {
+    const heapId = st.arena.heapId, heapPri = st.arena.heapPri;
+    let i = st.heapLen++;
+    heapId[i] = id; heapPri[i] = pri;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (heapPri[p] <= heapPri[i]) break;
+      const tid = heapId[p]; heapId[p] = heapId[i]; heapId[i] = tid;
+      const tpr = heapPri[p]; heapPri[p] = heapPri[i]; heapPri[i] = tpr;
+      i = p;
+    }
+  },
+
+  // Explores at most `pops` more tiles of search `st`; returns how many it
+  // explored. Sets st.done once it found the target, ran dry or hit its guard.
+  seaSearchRun(st, pops) {
+    if (st.done) return 0;
+    const owner = GameMap.owner, shoreDist = GameMap.shoreDist, w = GameMap.width;
+    const dead = this.drillDead;
+    const arena = st.arena;
     const hasG = arena.hasG, gVal = arena.gVal, from = arena.from, closed = arena.closed, steps = arena.steps;
     const heapId = arena.heapId, heapPri = arena.heapPri;
-    // Only the flags need resetting; gVal/from are never read unless their
-    // tile's flag says this search wrote them.
-    hasG.fill(0); closed.fill(0);
-    let heapLen = 0;
+    const targetWater = st.targetWater, maxSteps = st.maxSteps;
+    const goalX = st.goalX, goalY = st.goalY, dxGoal = st.dxGoal, dyGoal = st.dyGoal, crossNorm = st.crossNorm;
+    const COST_SCALE = this.SEA_COST_SCALE, BASE_COST = COST_SCALE, weight = this.SEA_HEURISTIC_WEIGHT;
+    const nb = new Int32Array(4);
+    let heapLen = st.heapLen;
 
     const heapPush = (id, pri) => {
       let i = heapLen++;
@@ -177,24 +229,17 @@ Object.assign(Game, {
       return top;
     };
 
-    for (const s of starts) {
-      if (hasG[s]) continue;
-      hasG[s] = 1; gVal[s] = 0; from[s] = -1; steps[s] = 0;
-      const sx = s % w, sy = (s / w) | 0;
-      const h = weight * BASE_COST * (Math.abs(sx - goalX) + Math.abs(sy - goalY));
-      heapPush(s, h);
-    }
-
-    let found = -1, guard = Math.min(this.SEA_PATH_GUARD, maxSteps * this.SEA_PATH_NODES_PER_STEP);
-    const guardStart = guard;
-    while (heapLen > 0 && guard-- > 0) {
+    const slice = Math.min(pops, st.guardLeft);
+    let used = 0, found = -1;
+    while (heapLen > 0 && used < slice) {
+      used++;
       const current = heapPop();
       if (closed[current]) continue;
       closed[current] = 1;
       if (targetWater.has(current)) { found = current; break; }
 
       const currentG = gVal[current];
-      const nextSteps = steps[current] + 1;
+      const nextSteps = steps ? steps[current] + 1 : 0;
       if (nextSteps > maxSteps) continue;
       const n = GameMap.neighbors(current, nb);
       for (let k = 0; k < n; k++) {
@@ -202,21 +247,30 @@ Object.assign(Game, {
         if (owner[j] !== WATER || closed[j] || dead[j]) continue;
         const tentativeG = currentG + BASE_COST + this.shoreCostPenalty(shoreDist[j]);
         if (!hasG[j] || tentativeG < gVal[j]) {
-          hasG[j] = 1; gVal[j] = tentativeG; from[j] = current; steps[j] = nextSteps;
-          const jx = j % w, jy = (j / w) | 0;
-          const h = weight * BASE_COST * (Math.abs(jx - goalX) + Math.abs(jy - goalY));
-          heapPush(j, tentativeG + h + crossTieBreaker(jx, jy));
+          hasG[j] = 1; gVal[j] = tentativeG; from[j] = current;
+          if (steps) steps[j] = nextSteps;
+          const dxN = (j % w) - goalX, dyN = ((j / w) | 0) - goalY;
+          heapPush(j, tentativeG + weight * BASE_COST * (Math.abs(dxN) + Math.abs(dyN))
+            + Math.floor((Math.abs(dxGoal * dyN - dyGoal * dxN) * (COST_SCALE - 1)) / crossNorm / crossNorm));
         }
       }
     }
-    if (this._inTick) this._seaPathNodesThisTick += guardStart - Math.max(0, guard);
-    if (found < 0) return null;
+    st.heapLen = heapLen;
+    st.guardLeft -= used;
+    if (found >= 0) { st.found = found; st.done = true; }
+    else if (heapLen === 0 || st.guardLeft <= 0) st.done = true;
+    return used;
+  },
 
+  // The smoothed route a finished search found, or null.
+  seaSearchPath(st) {
+    if (st.found < 0) return null;
+    const from = st.arena.from;
     const waterPath = [];
-    let cur = found;
+    let cur = st.found;
     while (cur !== -1) { waterPath.push(cur); cur = from[cur]; }
     waterPath.reverse();
-    waterPath.push(targetTile);
+    waterPath.push(st.targetTile);
     return this.smoothSeaPath(waterPath);
   },
 
