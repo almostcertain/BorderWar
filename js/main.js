@@ -347,14 +347,6 @@
     joinLobby(inviteMatch[1].toUpperCase());
   }
 
-  // Admin page's Watch button (server/admin.html).
-  const watchTicket = /[?&]watch=([0-9a-f]{32})/.exec(location.search);
-  const watchGame = /[?&]game=([A-Za-z0-9_-]{1,64})/.exec(location.search);
-  if (watchTicket && watchGame) {
-    history.replaceState(null, '', location.pathname);
-    Watch.start(watchGame[1], watchTicket[1]);
-  }
-
   // The link is up. Nothing has arrived on it yet — `start` is the next thing
   // to be delivered — so this is where the things that must be empty *before*
   // the first turn lands get emptied. LocalServer.start announces the
@@ -783,6 +775,14 @@
   }
   setInterval(sendPresence, PRESENCE_MS);
   document.addEventListener('visibilitychange', sendPresence);
+
+  // Last, so everything Watch.start reaches (Watch.host above) exists.
+  const watchTicket = /[?&]watch=([0-9a-f]{32})/.exec(location.search);
+  const watchGame = /[?&]game=([A-Za-z0-9_-]{1,64})/.exec(location.search);
+  if (watchTicket && watchGame) {
+    history.replaceState(null, '', location.pathname);
+    Watch.start(watchGame[1], watchTicket[1]);
+  }
 
   requestAnimationFrame(loop);
 })();
