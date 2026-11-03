@@ -36,7 +36,18 @@ const Watch = {
     this._savedMaxReconnects = Transport.MAX_RECONNECT_ATTEMPTS;
     Transport.MAX_RECONNECT_ATTEMPTS = 0;
     document.body.classList.add('replaying', 'watching');
-    this.host.connect(gameID, ticket);
+    this._connect();
+  },
+
+  // The server refuses a join with no build id, and index.html fetches it
+  // after scripts run, so a watch link opened cold has to wait for it.
+  _connect(waited) {
+    if (!this.active) return;
+    if (typeof window.BUILD_ID !== 'string' && (waited || 0) < 5000) {
+      this._retryTimer = setTimeout(() => { this._retryTimer = null; this._connect((waited || 0) + 50); }, 50);
+      return;
+    }
+    this.host.connect(this.gameID, this.ticket);
   },
 
   stop() {
@@ -75,7 +86,7 @@ const Watch = {
     this.status = 'Reconnecting…';
     this._retryTimer = setTimeout(() => {
       this._retryTimer = null;
-      if (this.active) this.host.connect(this.gameID, this.ticket);
+      this._connect();
     }, 2000);
   },
 
@@ -83,5 +94,7 @@ const Watch = {
   onError(msg) {
     this.status = msg.message || msg.error || 'Server error';
     this._failed = true;
+    // The menu is still up when the match never started, so say it plainly.
+    alert(this.status);
   }
 };
