@@ -229,7 +229,7 @@ html.atlas .orDivider::before, html.atlas .orDivider::after { background: var(--
 html.atlas #modeSeg { background: var(--a-paper-2); border-color: var(--a-line); }
 html.atlas .panel #modeSeg button { background: transparent; color: var(--a-ink-2); box-shadow: none; }
 html.atlas .panel #modeSeg button.active { background: var(--a-rubric); color: #fbeee0; }
-html.atlas :is(.mapOpts, .mapGen, .cfgNums > label, .menuCard, .olCard) { background: rgba(255, 250, 236, 0.4); border-color: var(--a-line); }
+html.atlas :is(.mapOpts, .mapGen, .cfgNums > label, .menuCard, .olCard, #joinLobby.isOpen .olSide) { background: rgba(255, 250, 236, 0.4); border-color: var(--a-line); }
 html.atlas .cfgHead { border-bottom-color: var(--a-line); }
 html.atlas .cfgHead::before { background: var(--a-rubric); }
 html.atlas .panel button.pickTile { background: rgba(255, 250, 236, 0.45); border-color: var(--a-line); color: var(--a-ink-2); box-shadow: none; }
