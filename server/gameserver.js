@@ -114,9 +114,26 @@ class GameServer {
     // Highest turn _tallyHashes has resolved. recordHash drops reports for
     // turns at or below it, so a straggler can't start an entry that never clears.
     this._hashTalliedThrough = -1;
+
+    // Admin watchers (GameManager.mintWatchTicket): sockets that receive the
+    // turn stream but are not clients, so no roster, hash tally, liveness or
+    // admin-page entry ever shows them.
+    this.observers = new Set();
   }
 
   // --- Roster ------------------------------------------------------------
+
+  // False in LOBBY, where there is no match to replay yet.
+  addObserver(ws) {
+    if (this.stage === Protocol.GAME_PHASE.LOBBY) return false;
+    this.observers.add(ws);
+    this._send(ws, Protocol.msg.start(this.turns, this.gameStartInfo, GameServer.OBSERVER_CLIENT_ID));
+    return true;
+  }
+
+  removeObserver(ws) {
+    this.observers.delete(ws);
+  }
 
   // `client` is an already-constructed Client(ws); `opts` is
   // { username, spectator } from the validated `join` message. Rejects once
@@ -644,6 +661,7 @@ class GameServer {
       // cap (Client.intentsThisTurn) for the next one.
       client.intentsThisTurn = 0;
     }
+    for (const ws of this.observers) this._send(ws, msg);
 
     // Every HASH_INTERVAL turns, tally the hashes for the turn HASH_INTERVAL
     // turns ago (see _tallyHashes). Skipped for turn 0.
@@ -691,6 +709,9 @@ class GameServer {
     }
   }
 }
+
+// myClientID an observer is sent: never on the roster, so the client has no nation.
+GameServer.OBSERVER_CLIENT_ID = 'observer';
 
 // How long a client can stay silent before _sweepLiveness treats it as
 // disconnected. Static and read at sweep time so tests can lower it.

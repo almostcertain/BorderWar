@@ -4,6 +4,7 @@
 // else closes it cleanly with a Protocol.msg.error and never crashes the process.
 'use strict';
 
+const crypto = require('crypto');
 const Protocol = require('../js/net/protocol.js');
 const Client = require('./client');
 const GameServer = require('./gameserver');
@@ -20,6 +21,11 @@ const FIRST_MESSAGE_TIMEOUT_MS = 10 * 1000;
 
 // How often the heartbeat line prints, and only while a match is ACTIVE.
 const HEARTBEAT_INTERVAL_MS = 60 * 1000;
+
+// Admin watch tickets (mintWatchTicket) stay valid this long, so the watch
+// page can reconnect with the same one.
+const WATCH_TICKET_TTL_MS = 2 * 60 * 60 * 1000;
+const WATCH_USERNAME_PREFIX = 'watch:';
 
 // Rotating open lobbies: one entry per map size, cycled in order.
 // `maxNations` is total Nation slots (bots + humans). small is excluded as
@@ -59,6 +65,9 @@ class GameManager {
     // Set by beginDrain(): the server is about to stop. No new lobbies, no
     // new matches; matches already ACTIVE play out (and can be rejoined).
     this.draining = false;
+
+    // ticket -> { gameID, expires }. Only the admin route mints them.
+    this._watchTickets = new Map();
 
     // unref() so this timer alone never keeps a Node process (or a test
     // script) alive — it's a housekeeping sweep, not load-bearing work.
@@ -196,6 +205,7 @@ class GameManager {
     for (const [gameID, game] of this.games) {
       if (game.stage === Protocol.GAME_PHASE.FINISHED) {
         this.games.delete(gameID);
+        for (const ws of game.observers) { try { ws.close(1000); } catch (e) { /* already closed */ } }
         log.info('game ' + gameID, 'reaped (finished)');
       } else if (game.stage === Protocol.GAME_PHASE.LOBBY && game.clients.size === 0 && !game.isAutoLobby) {
         // An auto lobby is meant to sit open and empty, so it is exempt from
@@ -204,6 +214,43 @@ class GameManager {
         log.info('game ' + gameID, 'reaped (empty lobby)');
       }
     }
+  }
+
+  // A ticket that lets an admin watch `gameID` unseen, or null if there is no
+  // such match in progress. The admin route is the only caller.
+  mintWatchTicket(gameID) {
+    const game = this.games.get(gameID);
+    if (!game || game.stage === Protocol.GAME_PHASE.LOBBY) return null;
+    const now = Date.now();
+    for (const [t, e] of this._watchTickets) if (e.expires <= now) this._watchTickets.delete(t);
+    const ticket = crypto.randomBytes(16).toString('hex');
+    this._watchTickets.set(ticket, { gameID: gameID, expires: now + WATCH_TICKET_TTL_MS });
+    return ticket;
+  }
+
+  // First message was a `join` whose username is `watch:<ticket>`. The watcher
+  // never gets a Client, so it is absent from the roster, counts and hash tally.
+  _handleWatch(ws, msg) {
+    const ticket = msg.username.slice(WATCH_USERNAME_PREFIX.length);
+    const entry = this._watchTickets.get(ticket);
+    if (!entry || entry.expires <= Date.now() || entry.gameID !== msg.gameID) {
+      Client.closeWithError(ws, 'bad-watch-ticket', 'This watch link has expired. Open it again from the admin page.');
+      return;
+    }
+    const game = this.getGame(msg.gameID);
+    if (!game || !game.addObserver(ws)) {
+      Client.closeWithError(ws, 'no-such-game', 'That game is not running.');
+      return;
+    }
+    log.info('game ' + msg.gameID, 'admin watching');
+    ws.on('message', (raw) => {
+      let m;
+      try { m = JSON.parse(raw); } catch (e) { return; }
+      if (m && m.type === 'ping') {
+        try { ws.send(JSON.stringify(Protocol.msg.ping())); } catch (e) { /* socket closing */ }
+      }
+    });
+    ws.on('close', () => game.removeObserver(ws));
   }
 
   // Entry point from server/index.js: a freshly-upgraded WebSocket, nothing
@@ -252,6 +299,11 @@ class GameManager {
         log.warn('server', 'rejected ' + msg.type + ': client build ' + msg.build + ' != server build ' + this.buildID);
         Client.closeWithError(ws, 'version-mismatch',
           'BorderWar has been updated. Refresh the page (Ctrl+Shift+R) to play.');
+        return;
+      }
+
+      if (msg.type === 'join' && msg.username.startsWith(WATCH_USERNAME_PREFIX)) {
+        this._handleWatch(ws, msg);
         return;
       }
 

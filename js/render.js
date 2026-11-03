@@ -1933,8 +1933,8 @@ const Render = {
   //     no vision group (spectator/replay; leave Game.me off the roster).
   fogActive() {
     if (!Game.fog || Game.winnerId !== null) return false;
-    // A replay shows the whole map unless the viewer asks for one player's fog.
-    if (Replay.active && Replay.revealAll) return false;
+    // A replay or admin watch shows the whole map unless the viewer asks for one player's fog.
+    if ((Replay.active && Replay.revealAll) || (Watch.active && Watch.revealAll)) return false;
     const me = Game.players[Game.me];
     return !!me && me.alive && Game.visionGroup(Game.me) >= 0;
   },

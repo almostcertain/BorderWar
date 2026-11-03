@@ -172,6 +172,7 @@ const UI = {
     this.setupNews();
     this.setupAccount();
     this.setupReplays();
+    this.setupWatch();
 
     // DEBUG BYPASS #1: dev-only gold cheats. These write straight into the
     // sim, which nothing else in this file may do (every player action is an
@@ -241,7 +242,7 @@ const UI = {
       }
       if (e.key === 'p' || e.key === 'P') { this.togglePause(); return; }
       if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'm') { this.toggleMusic(); return; }
-      if (Replay.active) return; // watching: nothing to build
+      if (Replay.active || Watch.active) return; // watching: nothing to build
       const u = Game.UNITS.find(x => x.hotkey === e.key);
       if (u) this.togglePlacing(u.type);
       // Only a fog match has the button, so only a fog match has the key.
@@ -281,7 +282,7 @@ const UI = {
   },
 
   openGameMenu() {
-    if (Replay.active || !Game.running || !Game.players[Game.me]) return;
+    if (Replay.active || Watch.active || !Game.running || !Game.players[Game.me]) return;
     if (!document.getElementById('overlay').classList.contains('hidden')) return;
     const showPause = this.debugAllowed() && Game.winnerId === null;
     const pauseRow = document.getElementById('gmPause');
@@ -300,6 +301,7 @@ const UI = {
   // Singleplayer only, and only while a match is live: LocalServer stops its
   // pump when paused, which freezes the sim since it advances on turn arrival.
   togglePause() {
+    if (Watch.active) return;
     if (Replay.active) { Replay.setPaused(Replay.ended() ? false : !Replay.paused); return; }
     if (!this.debugAllowed() || !Game.players[Game.me] || Game.winnerId !== null) return;
     // A tutorial holds the match itself while the player reads; it keeps the
@@ -939,7 +941,7 @@ const UI = {
   },
 
   onTap(sx, sy) {
-    if (Replay.active) return; // watching: a tap is not an order
+    if (Replay.active || Watch.active) return; // watching: a tap is not an order
     if (Game.spawning) {
       const tile = Render.screenToTile(sx, sy);
       if (tile < 0) return;
@@ -1254,7 +1256,7 @@ const UI = {
     if (this.specTile < 0) return;
     const b = Game.buildings.get(this.specTile);
     const me = Game.players[Game.me];
-    if (!b || !me || b.type !== 'city' || GameMap.owner[b.tile] !== Game.me || Replay.active) {
+    if (!b || !me || b.type !== 'city' || GameMap.owner[b.tile] !== Game.me || Replay.active || Watch.active) {
       this.closeSpecPanel();
       return;
     }
@@ -2212,7 +2214,7 @@ const UI = {
 
   showEnd(title, text) {
     // A replay has no result of its own to announce; its bar shows the end.
-    if (Replay.active) return;
+    if (Replay.active || Watch.active) return;
     Replay.noteResult(title);
     document.getElementById('endReplayRow').classList.toggle('hidden', !Replay.snapshot());
     document.getElementById('endTitle').textContent = title;
@@ -2658,6 +2660,41 @@ const UI = {
     }
     $('replaySpeed').textContent = Replay.speed + 'x';
     $('replayRevealRow').classList.toggle('hidden', !Game.fog);
+  },
+
+  setupWatch() {
+    const $ = (id) => document.getElementById(id);
+    $('watchView').addEventListener('change', () => Watch.setView(+$('watchView').value));
+    $('watchReveal').addEventListener('change', () => { Watch.revealAll = $('watchReveal').checked; });
+    $('watchExit').addEventListener('click', () => Watch.host.exit());
+  },
+
+  // Once a frame from main.js. Shows the bar only during an admin watch.
+  updateWatchBar() {
+    const $ = (id) => document.getElementById(id);
+    const bar = $('watchBar');
+    if (bar.classList.contains('hidden') === Watch.active) bar.classList.toggle('hidden', !Watch.active);
+    if (!Watch.active) { bar._match = null; return; }
+    // Humans only, rebuilt when a (re)connect starts a new match.
+    if (bar._match !== Game.players && Game.players.length) {
+      bar._match = Game.players;
+      const view = $('watchView');
+      view.innerHTML = '';
+      const humans = Game.players.filter((p) => p && p.isHuman);
+      for (const p of humans) {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name;
+        view.appendChild(opt);
+      }
+      view.value = Watch.viewAs;
+      view.classList.toggle('hidden', humans.length < 2);
+    }
+    $('watchReveal').checked = Watch.revealAll;
+    $('watchRevealRow').classList.toggle('hidden', !Game.fog);
+    const behind = Runner.pendingTurns();
+    $('watchInfo').textContent = Watch.status ||
+      'Watching ' + Watch.gameID + ' · ' + this.replayClock(Runner.currTurn) + (behind > 20 ? ' · catching up' : ' · live');
   },
 
   // --- Accounts (docs/accounts-auth.md §2.1) -----------------------------------

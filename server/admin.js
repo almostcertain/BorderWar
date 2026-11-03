@@ -6,6 +6,8 @@
 //   GET /admin/history[?since=ms]  one sample a minute for the page's charts
 //   POST /admin/drain[?maxMinutes=n]  stop taking new games, exit once active
 //                     matches finish (tools/drain-server.js); same token
+//   POST /admin/watch?game=ID  a ticket for watching a running match unseen;
+//                     the page opens /?watch=<ticket>&game=ID. Same token
 //   POST /admin/news  publish or remove the What's new post (server/news.js);
 //                     same token
 //   POST /admin/update?mode=update|restart  ask the host to restart the server,
@@ -321,6 +323,15 @@ function create(opts) {
       const m = /[?&]maxMinutes=(\d+(?:\.\d+)?)/.exec(req.url);
       return send(res, 200, 'application/json; charset=utf-8',
         JSON.stringify(opts.drain(m ? Number(m[1]) * 60000 : 0)));
+    }
+    if (urlPath === '/admin/watch') {
+      if (req.method !== 'POST') return send(res, 405, 'text/plain', 'Method not allowed');
+      if (!authorized(req)) return send(res, 401, 'application/json; charset=utf-8', '{"error":"unauthorized"}');
+      const m = /[?&]game=([A-Za-z0-9_-]{1,64})(?:&|$)/.exec(req.url);
+      const ticket = m ? gameManager.mintWatchTicket(m[1]) : null;
+      if (!ticket) return send(res, 404, 'application/json; charset=utf-8', '{"error":"no_such_game"}');
+      log.info('admin', 'watch ticket issued for game ' + m[1]);
+      return send(res, 200, 'application/json; charset=utf-8', JSON.stringify({ ticket: ticket }));
     }
     if (urlPath === '/admin/news') {
       if (!opts.news) return send(res, 404, 'text/plain', 'Not found');

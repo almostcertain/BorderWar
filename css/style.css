@@ -438,7 +438,7 @@ body.replaying #menuBtn { display: none !important; }
 /* --- Replay playback (js/replay.js) ----------------------------------------
    The bar sits where the HUD's controls would be. body.replaying is on for the
    whole of a replay and takes away everything that would let the viewer act. */
-#replayBar {
+#replayBar, #watchBar {
   position: fixed;
   left: 50%;
   bottom: calc(env(safe-area-inset-bottom) + 8px);
@@ -456,7 +456,7 @@ body.replaying #menuBtn { display: none !important; }
   font-variant-numeric: tabular-nums;
 }
 
-#replayBar button {
+#replayBar button, #watchBar button {
   padding: 6px 10px;
   font-size: 12px;
   font-weight: 700;
@@ -468,12 +468,14 @@ body.replaying #menuBtn { display: none !important; }
   white-space: nowrap;
 }
 
-#replayBar button:active { filter: brightness(0.85); }
+#replayBar button:active, #watchBar button:active { filter: brightness(0.85); }
 #replayPlay.paused { background: rgba(255, 190, 70, 0.95); color: #2a1a00; }
 #replaySeek { flex: 1; min-width: 60px; }
-#replayTime { white-space: nowrap; opacity: 0.85; }
+#replayTime, #watchInfo { white-space: nowrap; opacity: 0.85; }
+#watchBar { color: #fff; }
+#watchInfo { flex: 1; }
 
-#replayBar select {
+#replayBar select, #watchBar select {
   max-width: 120px;
   padding: 5px 6px;
   font-size: 12px;
@@ -483,13 +485,13 @@ body.replaying #menuBtn { display: none !important; }
   color: inherit;
 }
 
-#replayRevealRow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+#replayRevealRow, #watchRevealRow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 
 body.replaying #hud { bottom: calc(env(safe-area-inset-bottom) + 54px); background: none; }
 body.replaying :is(#ratioRow, #buildBar, #hint, #diploBanner, #spawnBanner, #pauseBtn, #debugToggle, #debugPanel) { display: none !important; }
 
 @media (max-width: 700px) {
-  #replayBar { flex-wrap: wrap; justify-content: center; }
+  #replayBar, #watchBar { flex-wrap: wrap; justify-content: center; }
   #replaySeek { order: -1; flex-basis: 100%; }
   body.replaying #hud { bottom: calc(env(safe-area-inset-bottom) + 84px); }
 }

@@ -131,6 +131,14 @@
   <button id="replayExit" type="button">Exit</button>
 </div>
 
+<!-- Admin live watch (js/watch.js, docs/admin-watch.md). UI.updateWatchBar shows it. -->
+<div id="watchBar" class="hidden">
+  <span id="watchInfo"></span>
+  <select id="watchView" class="hidden" title="Whose view to follow" aria-label="Whose view to follow"></select>
+  <label id="watchRevealRow" class="hidden" title="Show the whole map instead of what this player has discovered"><input id="watchReveal" type="checkbox" checked> Whole map</label>
+  <button id="watchExit" type="button">Exit</button>
+</div>
+
 <!-- Hover descriptions: UI.setupTips fills and places it. -->
 <div id="tip" class="hidden"></div>
 
@@ -643,7 +651,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'game/specialize', 'game/poi', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'render', 'input', 'account', 'progress-defs', 'progress', 'markup', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'game/specialize', 'game/poi', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'watch', 'render', 'input', 'account', 'progress-defs', 'progress', 'markup', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

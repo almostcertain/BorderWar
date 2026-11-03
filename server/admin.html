@@ -28,6 +28,7 @@
   .game .top { display:flex; gap:10px; flex-wrap:wrap; align-items:baseline; }
   .game .id { font-weight:600; font-family:ui-monospace, Consolas, monospace; }
   .game .meta { color:var(--dim); font-size:12px; }
+  .game .watch { padding:1px 8px; font-size:12px; margin-left:auto; }
   .tag { font-size:11px; border-radius:4px; padding:1px 6px; border:1px solid var(--line); color:var(--dim); }
   .tag.ACTIVE { color:var(--ok); border-color:var(--ok); }
   .tag.LOBBY { color:var(--warn); border-color:var(--warn); }
@@ -202,6 +203,21 @@
     return t;
   }
 
+  // The tab is opened inside the click so a popup blocker allows it, then pointed
+  // at the match once the server has issued a ticket.
+  function watchGame(gameID, btn) {
+    var tab = window.open('', '_blank');
+    btn.disabled = true;
+    fetch('/admin/watch?game=' + encodeURIComponent(gameID), { method: 'POST', cache: 'no-store', headers: { Authorization: 'Bearer ' + token } })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error(r.status === 404 ? 'That game is no longer running.' : 'Could not start watching (' + r.status + ').')); })
+      .then(function (d) {
+        var url = '/?watch=' + d.ticket + '&game=' + encodeURIComponent(gameID);
+        if (tab) tab.location.href = url; else window.location.href = url;
+      })
+      .catch(function (e) { if (tab) tab.close(); alert(e.message); })
+      .then(function () { btn.disabled = false; });
+  }
+
   function gameCard(g, now) {
     var card = el('div', 'game');
     var top = el('div', 'top');
@@ -223,6 +239,13 @@
       meta.push('starts in ' + dur(g.autoStartAt - now));
     }
     top.appendChild(el('span', 'meta', meta.join(' · ')));
+    if (g.stage === 'ACTIVE') {
+      var watch = el('button', 'watch', 'Watch');
+      watch.type = 'button';
+      watch.title = 'Open the match in a new tab, unseen by the players';
+      watch.addEventListener('click', function () { watchGame(g.gameID, watch); });
+      top.appendChild(watch);
+    }
     card.appendChild(top);
 
     var players = el('div', 'players');

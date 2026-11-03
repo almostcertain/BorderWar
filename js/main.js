@@ -157,6 +157,10 @@
   let fromQuickJoin = false; // entered via the main menu's open-game card
 
   Transport.onStatus = function(status) {
+    if (Watch.active) {
+      if (status === 'lost') Watch.onLinkLost();
+      return;
+    }
     if (!inLobby) return;
     if (status === 'open') {
       lobbyLinkOpened = true;
@@ -343,6 +347,14 @@
     joinLobby(inviteMatch[1].toUpperCase());
   }
 
+  // Admin page's Watch button (server/admin.html).
+  const watchTicket = /[?&]watch=([0-9a-f]{32})/.exec(location.search);
+  const watchGame = /[?&]game=([A-Za-z0-9_-]{1,64})/.exec(location.search);
+  if (watchTicket && watchGame) {
+    history.replaceState(null, '', location.pathname);
+    Watch.start(watchGame[1], watchTicket[1]);
+  }
+
   // The link is up. Nothing has arrived on it yet — `start` is the next thing
   // to be delivered — so this is where the things that must be empty *before*
   // the first turn lands get emptied. LocalServer.start announces the
@@ -377,6 +389,29 @@
       Transport.disconnect();
       Runner.reset();
       Replay.stop();
+      backToMenu();
+    }
+  };
+
+  // --- Admin live watch (js/watch.js, docs/admin-watch.md) --------------------
+  //
+  // An observer connection: the server's `join` handler reads the ticket out of
+  // the username. Every retry starts the match over from the full turn log.
+  Watch.host = {
+    connect(gameID, ticket) {
+      inLobby = false;
+      myRole = 'sp';
+      stopLobbyListPolling();
+      Transport.disconnect();
+      Runner.reset();
+      Transport.connect(onConnect, onServerMessage, {
+        local: false, gameID: gameID, username: 'watch:' + ticket, spectator: true
+      });
+    },
+    exit() {
+      Transport.disconnect();
+      Runner.reset();
+      Watch.stop();
       backToMenu();
     }
   };
@@ -422,6 +457,7 @@
     }
 
     if (msg.type === 'error') {
+      if (Watch.active) { Watch.onError(msg); return; }
       // e.g. `not-host` (a non-creator tried start_game) or `already-started`
       // — §4's `error` message. Surfaced on whichever lobby panel is open;
       // harmless if none is (the element simply sits hidden with old text).
@@ -469,7 +505,8 @@
 
         // A fresh match is recorded; a replay being played is not. Nor is a
         // tutorial: its free gold is not in the turns (js/tutorial.js).
-        if (Replay.active) Replay.onMatchReady();
+        if (Watch.active) Watch.onMatchReady();
+        else if (Replay.active) Replay.onMatchReady();
         else if (!Tutorial.active) Replay.begin(info, msg.myClientID, myPlayerId);
         Progress.beginMatch({ info: info, myPlayerId: myPlayerId, singleplayer: Transport.isLocal });
         Render.applyPatterns();
@@ -644,6 +681,7 @@
     UI.update();
     Tutorial.frame();
     UI.updateReplayBar();
+    UI.updateWatchBar();
     Perf.drawn(now, drawEnd - drawStart, performance.now() - drawEnd);
     Options.perfFrame(now);
     // Every frame: checkEndGame must notice this client's own defeat at once,

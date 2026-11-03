@@ -48,7 +48,7 @@ const Radial = {
   // of the diplomacy ones, so there's no living player to validate here.
   open(sx, sy, targetId, tile) {
     if (performance.now() - this.lastHide < this.REOPEN_MS) return;
-    if (Replay.active) return; // watching a replay: no orders to give
+    if (Replay.active || Watch.active) return; // watching: no orders to give
     if (targetId === Game.me) return;
     // Fog of war: no menu on the black; opening one would reveal whether the
     // tile is land, unclaimed or sea. UI.knows() keeps the menu from ever

@@ -259,7 +259,7 @@ const Progress = {
     this._boats.length = 0;
     this._silos.length = 0;
     this._siloMark.length = 0;
-    if (Replay.active || Tutorial.active) return;
+    if (Replay.active || Watch.active || Tutorial.active) return;
 
     const me = Game.players[Game.me];
     if (!me) return;
