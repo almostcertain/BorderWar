@@ -241,6 +241,8 @@ const Render = {
   mapStyle: 'atlas',
   ATLAS: {
     water: [164, 192, 192],
+    river: [164, 192, 192],          // narrow channels (riverMask): sea colour, no heavy coast ink
+    RIVER_REACH: 3,                  // a channel has land within this many tiles on both sides
     coast: [74, 56, 40],
     bare: [[232, 214, 166], [216, 190, 136], [190, 172, 140]],
     ink: [60, 40, 28],
@@ -353,7 +355,9 @@ const Render = {
     // Sea distance (land 0, open sea capped), for the sharp relief's coasts and ripples.
     const near = this.seaDistance(30), sd = new Float32Array(n);
     for (let i = 0; i < n; i++) sd[i] = own[i] !== WATER ? 0 : near[i] || 30;
-    this.reliefData = { hb, shade, forest, sd, vn, low, cold };
+    const rv = new Float32Array(n), rm = this.riverMask;
+    if (rm) for (let i = 0; i < n; i++) rv[i] = rm[i];
+    this.reliefData = { hb, shade, forest, sd, vn, low, cold, rv };
     this.placeTerrainGlyphs(hash, forest);
   },
 
@@ -515,7 +519,7 @@ const Render = {
     const c = document.createElement('canvas');
     c.width = c.height = N;
     const g = c.getContext('2d'), img = g.createImageData(N, N), px = new Uint32Array(img.data.buffer);
-    const { hb, shade, forest, sd, vn, low, cold } = D, col = [0, 0, 0];
+    const { hb, shade, forest, sd, vn, low, cold, rv } = D, col = [0, 0, 0];
     const ripW = 0.7 / k, coastW = 1.6 / k;
     for (let py = 0; py < N; py++) {
       let v = by * C + (py + 0.5) / k - 0.5;
@@ -536,6 +540,14 @@ const Render = {
           if (s < 0.5 + coastW) ink = 0.85;
           else for (let q = 0; q < A.RIPPLES.length; q++) if (Math.abs(s - A.RIPPLES[q]) < ripW) { ink = A.RIPPLE_INK[q]; break; }
           if (ink) { r += (A.coast[0] - r) * ink; gr += (A.coast[1] - gr) * ink; b += (A.coast[2] - b) * ink; }
+          // Rivers: blue with a thin bank line instead of the heavy shore.
+          const q = rv[i] * w00 + rv[i + 1] * w10 + rv[j] * w01 + rv[j + 1] * w11;
+          if (q > 0) {
+            let rr = A.river[0], rg = A.river[1], rb = A.river[2];
+            if (s < 0.5 + 0.7 / k) { rr += (A.coast[0] - rr) * 0.45; rg += (A.coast[1] - rg) * 0.45; rb += (A.coast[2] - rb) * 0.45; }
+            const t = q > 0.5 ? 1 : q * 2;
+            r += (rr - r) * t; gr += (rg - gr) * t; b += (rb - b) * t;
+          }
         } else {
           let e = hb[i] * w00 + hb[i + 1] * w10 + hb[j] * w01 + hb[j + 1] * w11;
           e = e < 0 ? 0 : e > 1 ? 1 : e;
@@ -985,6 +997,27 @@ const Render = {
     return d;
   },
 
+  // Water tiles with land within `reach` tiles on both sides, across or down:
+  // rivers and narrow straits, drawn as rivers rather than inked sea.
+  channelMask(reach) {
+    const w = GameMap.width, h = GameMap.height, own = GameMap.owner, m = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (own[i] !== WATER) continue;
+        let l = 0, r = 0, u = 0, d = 0;
+        for (let k = 1; k <= reach; k++) {
+          if (!l && x - k >= 0 && own[i - k] !== WATER) l = 1;
+          if (!r && x + k < w && own[i + k] !== WATER) r = 1;
+          if (!u && y - k >= 0 && own[i - k * w] !== WATER) u = 1;
+          if (!d && y + k < h && own[i + k * w] !== WATER) d = 1;
+        }
+        if ((l && r) || (u && d)) m[i] = 1;
+      }
+    }
+    return m;
+  },
+
   setMapStyle(style) {
     style = style === 'atlas' ? 'atlas' : 'classic';
     if (style === this.mapStyle) return;
@@ -1215,6 +1248,8 @@ const Render = {
     // ripple lines that follow it out to sea.
     const sea = atlas ? this.seaDistance(A.RIPPLES[A.RIPPLES.length - 1]) : null;
     const ripple = atlas ? A.RIPPLES.map((d, k) => this.mixRGB(A.water, A.coast, A.RIPPLE_INK[k])) : null;
+    this.riverMask = atlas ? this.channelMask(A.RIVER_REACH) : null;
+    const riverC = atlas ? this.packed(...A.river) : 0;
     // Per biome and tier. Atlas paper takes only a faint wash of the biome.
     const clim = this.climate(), biomeTone = [];
     for (let b = 0; b < this.BIOME_CLASSIC.length; b++) {
@@ -1228,7 +1263,8 @@ const Render = {
       let c = water;
       if (atlas) {
         const d = sea[i];
-        if (d === 1) c = coast;
+        if (this.riverMask[i]) c = riverC;
+        else if (d === 1) c = coast;
         else { const k = A.RIPPLES.indexOf(d); if (k >= 0) c = ripple[k]; }
       }
       ground[i] = c;
@@ -1603,11 +1639,13 @@ const Render = {
       const rel = this.altRel[o];
       color = edge ? this.altBorder[rel] : this.altFill[rel][GameMap.terrain[i]];
     } else {
+      // Atlas: no dark border against a river (riverMask), only the soft band.
+      const rm = this.riverMask;
       const edge =
-        (x > 0 && owner[i - 1] !== o) ||
-        (x < w - 1 && owner[i + 1] !== o) ||
-        (y > 0 && owner[i - w] !== o) ||
-        (y < h - 1 && owner[i + w] !== o);
+        (x > 0 && owner[i - 1] !== o && !(rm && rm[i - 1])) ||
+        (x < w - 1 && owner[i + 1] !== o && !(rm && rm[i + 1])) ||
+        (y > 0 && owner[i - w] !== o && !(rm && rm[i - w])) ||
+        (y < h - 1 && owner[i + w] !== o && !(rm && rm[i + w]));
       if (edge) {
         color = this.borderColor[o];
       } else if (this.mapStyle === 'atlas' && (

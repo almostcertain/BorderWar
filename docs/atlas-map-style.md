@@ -136,6 +136,11 @@ cost under 0.6 ms a frame; cache peaks around 21M px (~85 MB).
   inner border band is a second ring in `paintTile`, so in Atlas `showTile`
   repaints two rings around a changed tile instead of one. Grain, mottling
   and vignette are pattern fills in `drawPaper`. Fog uses `fogColor()`.
+- Rivers: water with land within `ATLAS.RIVER_REACH` tiles on both sides
+  (`channelMask`, kept as `riverMask`) is drawn in `ATLAS.river` (the sea colour)
+  with only a thin bank line instead of the coast ink. Territory against it gets only the soft inner band, not the dark
+  border, which used to bury a 1–2 tile river between two ink lines. Narrow
+  straits count as rivers too.
 - Steps 2 and 4 add static layers baked once per map. Land and water never
   change mid-match, so only the territory wash is repainted as borders move.
 - For the blend (step 4) the territory layer becomes translucent over a static
