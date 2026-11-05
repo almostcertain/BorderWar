@@ -650,15 +650,18 @@ const Progress = {
   // --- Cosmetics (docs/metaprogression.md §4, §6.3) --------------------------
 
   _cosmetics: [],   // by playerId: one id or null per cosmetic type, or undefined
+  _verified: [],    // by playerId: a subscription tier id, set by the server
 
   // The roster carries other players' loadouts in multiplayer and in replays
   // of it; a local match has only this browser's own.
   _readCosmetics(info) {
     this._cosmetics.length = 0;
+    this._verified.length = 0;
     const gsi = info && info.info;
     const players = (gsi && gsi.players) || [];
     for (let i = 0; i < players.length; i++) {
       const p = players[i];
+      if (p && Number.isInteger(p.playerId) && ShopDefs.tier(p.verified)) this._verified[p.playerId] = p.verified;
       if (!p || !Number.isInteger(p.playerId) || !p.cosmetics) continue;
       this._cosmetics[p.playerId] = ProgressDefs.sanitize({ equipped: p.cosmetics }).equipped;
     }
@@ -672,6 +675,9 @@ const Progress = {
     const id = c ? c[type] : null;
     return id ? ProgressDefs.COSMETICS[id] : null;
   },
+
+  // A verified player's tier colour (docs/monetization.md §4.1), or ''.
+  verifiedColor(playerId) { const t = ShopDefs.tier(this._verified[playerId]); return t ? t.color : ''; },
 
   // '' when the player has none.
   titleOf(playerId) { const c = this._cosmetic(playerId, 'title'); return c ? c.name : ''; },

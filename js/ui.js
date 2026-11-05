@@ -864,11 +864,13 @@ const UI = {
     const nameEl = document.getElementById('hpName');
     const title = Progress.titleOf(playerId);
     const flag = Progress.flagOf(playerId);
-    const nameKey = p.name + '\n' + title + '\n' + flag;
+    const tier = ShopDefs.tier(Progress._verified[playerId]);
+    const nameKey = p.name + '\n' + title + '\n' + flag + '\n' + (tier ? tier.name : '');
     if (nameEl._key !== nameKey) {
       nameEl._key = nameKey;
       nameEl.textContent = p.name;
       if (flag) nameEl.insertAdjacentHTML('afterbegin', `<img class="flagImg" src="${Render.swatchURL(flag)}" alt="">`);
+      if (tier) nameEl.insertAdjacentHTML('afterbegin', this.verifiedBadge(tier));
       if (title) nameEl.insertAdjacentHTML('beforeend', ` <small class="playerTitle">${escapeHtml(title)}</small>`);
     }
     // Runs every frame (refreshHoverPanel), so only rewritten on a change.
@@ -2944,6 +2946,16 @@ const UI = {
     Progress.accountChanged();
     const user = Account.user;
     document.getElementById('accountStatus').textContent = user ? 'Signed in as ' + user.email + ' ·' : 'Playing as guest ·';
+    // Subscribers: public lobbies and a verified name (docs/monetization.md §4).
+    const sub = user && user.subscription && user.subscription.active ? ShopDefs.tier(user.subscription.tier) : null;
+    const hostPublic = document.getElementById('hostPublic');
+    hostPublic.disabled = !sub;
+    if (!sub) hostPublic.checked = false;
+    document.getElementById('hostPublicNote').classList.toggle('hidden', !!sub);
+    const subEl = document.getElementById('accountTier');
+    subEl.classList.toggle('hidden', !sub);
+    subEl.innerHTML = sub ? ' ' + this.verifiedBadge(sub) + ' ' + escapeHtml(sub.name)
+      + (user.verifiedName ? ' · ' + escapeHtml(user.verifiedName) : '') + ' ·' : '';
     // Balances (docs/monetization.md); nothing spends them yet.
     const w = user && user.wallet;
     const walletEl = document.getElementById('accountWallet');
@@ -3689,6 +3701,8 @@ const UI = {
       if (title) li.insertAdjacentHTML('beforeend', ` <small class="playerTitle">${escapeHtml(title)}</small>`);
       const flag = Progress.flagId(p.cosmetics && p.cosmetics.flag);
       if (flag) li.insertAdjacentHTML('afterbegin', `<img class="flagImg" src="${Render.swatchURL(flag)}" alt="">`);
+      const tier = ShopDefs.tier(p.verified);
+      if (tier) li.insertAdjacentHTML('afterbegin', this.verifiedBadge(tier));
       if (swatches && !p.spectator) {
         const sw = document.createElement('span');
         sw.className = 'rosterSwatch';
@@ -3700,6 +3714,11 @@ const UI = {
       if (fresh && fresh.has(p.clientID)) li.classList.add('justJoined');
       ul.appendChild(li);
     }
+  },
+
+  // The verified badge as HTML, in the tier's colour (docs/monetization.md §4.1).
+  verifiedBadge(tier) {
+    return `<span class="verifiedBadge" style="background:${tier.color}" title="Verified · ${escapeHtml(tier.name)}">✓</span>`;
   },
 
   setLobbyError(msg) {

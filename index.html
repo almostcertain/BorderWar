@@ -348,7 +348,7 @@
 
     <!-- Optional accounts (docs/accounts-auth.md). Stays hidden unless the page
          is served by a server with accounts; UI.renderAccount fills it. -->
-    <div id="accountStrip" class="hidden"><span id="accountStatus"></span><span id="accountWallet" class="hidden"></span><button type="button" id="accountSignIn" class="linkBtn">Sign in</button><button type="button" id="accountVerify" class="linkBtn hidden">Confirm email</button><button type="button" id="accountManage" class="linkBtn hidden">Account</button><button type="button" id="accountSignOut" class="linkBtn hidden">Sign out</button></div>
+    <div id="accountStrip" class="hidden"><span id="accountStatus"></span><span id="accountTier" class="hidden"></span><span id="accountWallet" class="hidden"></span><button type="button" id="accountSignIn" class="linkBtn">Sign in</button><button type="button" id="accountVerify" class="linkBtn hidden">Confirm email</button><button type="button" id="accountManage" class="linkBtn hidden">Account</button><button type="button" id="accountSignOut" class="linkBtn hidden">Sign out</button></div>
 
     <!-- MP-2.3: mode choice above the existing singleplayer flow, which is
          otherwise untouched below (#mapSize/#botCount/#tribeCount/#startBtn
@@ -497,6 +497,7 @@
         <div class="menuCardTitle">Start your own</div>
         <div class="menuCardNote">You get a code to share. Pick the map and rules in the lobby.</div>
         <label class="checkboxLabel"><input id="hostPublic" type="checkbox"> Public (anyone can find it below)</label>
+        <div id="hostPublicNote" class="menuCardNote hidden">Hosting public lobbies needs a subscription. Anyone can still join them.</div>
         <button id="hostCreateBtn">Create lobby</button>
       </div>
 
@@ -653,7 +654,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'game/specialize', 'game/poi', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'watch', 'render', 'input', 'account', 'progress-defs', 'progress', 'markup', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'game/specialize', 'game/poi', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'watch', 'render', 'input', 'account', 'progress-defs', 'shop-defs', 'progress', 'markup', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

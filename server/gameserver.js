@@ -16,11 +16,12 @@ function who(client) {
   return name + ' (#' + client.clientID + ')';
 }
 
-// Adds `cosmetics` to a roster entry only when the client has some, so an
-// entry without any is unchanged on the wire.
+// Adds `cosmetics`, and `verified` (a subscription tier id), to a roster entry
+// only when the client has them, so an entry without any is unchanged on the wire.
 function withCosmetics(entry, client) {
   const c = client.cosmetics;
   if (c) entry.cosmetics = Object.assign({}, c);
+  if (client.verified) entry.verified = client.verified;
   return entry;
 }
 
@@ -157,6 +158,7 @@ class GameServer {
     client.spectator = !!opts.spectator;
     client.persistentID = opts.persistentID || null;
     client.cosmetics = opts.cosmetics || null;
+    client.verified = opts.verified || null;
     client.active = true;
     this.clients.set(clientID, client);
 

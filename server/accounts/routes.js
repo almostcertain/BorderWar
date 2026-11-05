@@ -11,6 +11,8 @@ const ratelimit = require('./ratelimit');
 const validate = require('./validate');
 const entitlements = require('./entitlements');
 const wallet = require('./wallet');
+const subscriptions = require('./subscriptions');
+const names = require('./names');
 const emailTokensModule = require('./emailtokens');
 const mailerModule = require('./mailer');
 const ProgressDefs = require('../../js/progress-defs.js');
@@ -55,7 +57,8 @@ function create(opts) {
     try { settings = JSON.parse(row.settings_json) || {}; } catch (e) { /* keep {} */ }
     return {
       id: row.id, email: row.email, emailVerified: !!row.email_verified_at, displayName: row.display_name,
-      tag: row.tag, settings, entitlements: entitlements.list(db, row.id), wallet: wallet.balances(db, row.id)
+      tag: row.tag, settings, entitlements: entitlements.list(db, row.id), wallet: wallet.balances(db, row.id),
+      subscription: subscriptions.summary(db, row.id, now()), verifiedName: names.verifiedName(db, row.id, now())
     };
   }
 
@@ -124,6 +127,20 @@ function create(opts) {
     return v;
   }
 
+  // Refuses a name another account has reserved. A subscriber's own new name
+  // is reserved for them (docs/monetization.md §4.1).
+  function claimName(userId, name) {
+    const owner = names.ownerOf(db, name, now());
+    if (owner !== null && owner !== userId) throw new ApiError(409, 'name-taken');
+    if (userId === null || !subscriptions.activeTier(db, userId, now())) return;
+    const r = names.reserve(db, userId, name, now());
+    if (r.error === 'too-soon') {
+      throw new ApiError(409, 'name-too-soon', 'You can change your verified name again on '
+        + new Date(r.until).toISOString().slice(0, 10) + '.');
+    }
+    if (!r.ok) throw new ApiError(409, 'name-taken');
+  }
+
   async function requirePassword(user, password) {
     if (!(await checkPassword(user, password))) throw new ApiError(403, 'bad-credentials', 'Wrong password');
   }
@@ -143,6 +160,7 @@ function create(opts) {
       const tag = body.tag === undefined ? '' : validate.tag(body.tag);
       if (tag === null) throw new ApiError(400, 'invalid', 'Tag must be up to 5 letters or digits');
       if (q.byEmail.get(email)) throw new ApiError(409, 'email-taken');
+      claimName(null, name);
 
       const hash = await passwords.hash(body.password, scrypt);
       let id;
@@ -197,6 +215,7 @@ function create(opts) {
       if (tag === null) throw new ApiError(400, 'invalid', 'Tag must be up to 5 letters or digits');
       const settings = body.settings === undefined ? user.settings_json : validate.settings(body.settings);
       if (settings === null) throw new ApiError(400, 'invalid', 'Bad settings');
+      if (name !== user.display_name) claimName(user.id, name);
       q.setProfile.run(name, tag, settings, user.id);
       return { body: { user: publicUser(q.byId.get(user.id)) } };
     },
@@ -348,6 +367,15 @@ function create(opts) {
     handle,
     // The signed-in user id for a request (e.g. the /ws upgrade), or null.
     userIdForRequest: (req) => sessions.userIdForRequest(req),
+    // Who sent a request (the /ws upgrade), for name and lobby checks; null for a guest.
+    identityForRequest(req) {
+      const id = sessions.userIdForRequest(req);
+      if (id === null) return null;
+      const t = now();
+      return { userId: id, packs: entitlements.list(db, id), tier: subscriptions.activeTier(db, id, t), verifiedName: names.verifiedName(db, id, t) };
+    },
+    // The account holding a reserved name, or null.
+    nameOwner: (name) => names.ownerOf(db, name, now()),
     // The packs owned by whoever sent a request; [] for a guest.
     entitlementsForRequest(req) {
       const id = sessions.userIdForRequest(req);

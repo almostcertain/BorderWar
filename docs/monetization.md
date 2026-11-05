@@ -249,6 +249,40 @@ New tables in the accounts database, all owned by one module
   required; it is kept in the ledger).
 - Tests: `server/accounts/wallet.test.js`.
 
+## 8.3 MO-5 as built (2026-11-05)
+
+- **Tier table:** `js/shop-defs.js` (tiers and BB packs), shared by client and
+  server. Changing a price or BB amount is one line there (plus Paddle, MO-6).
+- **Subscriptions** (`server/accounts/subscriptions.js`, schema v6): one row per
+  account with tier, status (`active`, `canceled`: runs to the period end,
+  `ended`: stopped now) and period end. `startPeriod` is called once per paid
+  period and grants that tier's BB, once per payment reference.
+- **Verified names** (`server/accounts/names.js`): folding drops case, the clan
+  tag, accents and separators, and maps look-alikes (Cyrillic/Greek letters,
+  `0→o`, `1/i/|→l`, `rn→m`…). A subscriber's display name is reserved when the
+  subscription starts and when they rename (once per 30 days; a change of case
+  is free). Held for 60 days after the subscription ends.
+- **Who is refused a reserved name:** sign-up and profile changes (`name-taken`),
+  and joining any lobby under it, guests included, unless the socket's account
+  owns it.
+- **Badge:** the server adds `verified: <tier>` to the player's lobby roster and
+  match-start entry only when the socket's account is subscribed and joined
+  under its verified name. Drawn as a disc in the tier colour with a white
+  tick: map labels, hover panel, lobby roster. Not in singleplayer (no server).
+- **Public lobbies:** with accounts on, opening a public lobby needs an active
+  subscription, and at most 1/2/3 open public lobbies per Scout/Warden/Sovereign.
+  Refused with `subscription-required` or `public-limit`. The host panel's Public
+  box is disabled with a note for non-subscribers. Without accounts (LAN or local
+  servers) nothing is gated. The rotating public lobby is unaffected.
+- **Menu strip:** a subscriber sees their badge, tier and verified name.
+- **Owner commands:** `admin.js subscribe <email> <tier> [days]` (stacks onto
+  the current period, grants the BB, reserves the name), `unsubscribe <email>`,
+  `release-name <name>`. Export and the admin user list include the tier.
+- **Not yet:** the leaderboard has no badge; tier extras beyond public lobbies
+  (custom lobby name, featured slot, monthly cosmetic, Marks boost) wait for the
+  store and Marks work.
+- Tests: `server/accounts/subscriptions.test.js`.
+
 ## 9. Task breakdown (proposed order)
 
 1. **MO-1 Email verification and password reset.** Prerequisite (§8.1).

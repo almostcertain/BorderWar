@@ -4794,8 +4794,8 @@ const Render = {
     let nIcons = 0;
     for (const [, bit] of this.LABEL_ICON_BITS) if (icons & bit) nIcons++;
     const iconStep = 1.3;
-    const emblem = sp.wantEmblem, flag = sp.wantFlag;
-    const nPrefix = nIcons + (emblem ? 1 : 0) + (flag ? 1 : 0);
+    const emblem = sp.wantEmblem, flag = sp.wantFlag, verified = sp.wantVerified;
+    const nPrefix = nIcons + (emblem ? 1 : 0) + (flag ? 1 : 0) + (verified ? 1 : 0);
     const name = sp.wantName.toUpperCase();
     const nameFont = 'bold ' + font + 'px ' + this.ATLAS_FONT, troopFont = 'bold ' +Math.round(font * 0.88) + 'px ' + this.ATLAS_FONT;
     const mc = this.measureCtx || (this.labelEm(''), this.measureCtx);
@@ -4847,6 +4847,10 @@ const Render = {
       this.drawFlag(g, flag, fx, fy, fw, fh);
       x += iconStep * font;
     }
+    if (verified) {
+      this.drawVerified(g, x + iconSize / 2, nameY, iconSize, verified, this.ATLAS_INK);
+      x += iconStep * font;
+    }
     g.font = nameFont;
     if (emblem) {
       g.textAlign = 'left';
@@ -4868,12 +4872,37 @@ const Render = {
     this.finishLabelSprite(sp, w, h, cx, cy, font, emblem, flag, missingIcon ? -1 : icons, now);
   },
 
+  // A subscriber's verified badge (docs/monetization.md §4.1): a disc in the
+  // tier colour with a white tick, centred on (cx, cy), `size` across.
+  drawVerified(g, cx, cy, size, color, outline) {
+    const r = size * 0.42;
+    g.save();
+    g.beginPath();
+    g.arc(cx, cy, r, 0, Math.PI * 2);
+    g.fillStyle = color;
+    g.fill();
+    g.lineWidth = Math.max(1, size * 0.08);
+    g.strokeStyle = outline;
+    g.stroke();
+    g.beginPath();
+    g.moveTo(cx - r * 0.45, cy + r * 0.02);
+    g.lineTo(cx - r * 0.1, cy + r * 0.38);
+    g.lineTo(cx + r * 0.5, cy - r * 0.35);
+    g.lineWidth = Math.max(1.5, size * 0.13);
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.strokeStyle = '#ffffff';
+    g.stroke();
+    g.restore();
+  },
+
   finishLabelSprite(sp, w, h, cx, cy, font, emblem, flag, icons, now) {
     sp.w = w; sp.h = h; sp.ox = cx; sp.oy = cy;
     sp.font = font;
     sp.name = sp.wantName;
     sp.emblem = emblem;
     sp.flag = flag;
+    sp.verified = sp.wantVerified;
     sp.troops = sp.wantTroops;
     sp.style = this.mapStyle;
     // An icon whose SVG hasn't loaded yet (icons -1) leaves the sprite marked
@@ -4898,8 +4927,8 @@ const Render = {
     this.labelEm('');
     const mc = this.measureCtx;
     mc.font = '600 ' + font + 'px system-ui, sans-serif';
-    const emblem = sp.wantEmblem, flag = sp.wantFlag;
-    const nameW = mc.measureText(sp.wantName).width + (nIcons + (emblem ? 1 : 0) + (flag ? 1 : 0)) * iconStep * font;
+    const emblem = sp.wantEmblem, flag = sp.wantFlag, verified = sp.wantVerified;
+    const nameW = mc.measureText(sp.wantName).width + (nIcons + (emblem ? 1 : 0) + (flag ? 1 : 0) + (verified ? 1 : 0)) * iconStep * font;
     mc.font = font + 'px system-ui, sans-serif';
     const troopsW = mc.measureText(sp.wantTroops).width;
     mc.font = '600 100px system-ui, sans-serif';
@@ -4942,6 +4971,11 @@ const Render = {
       g.fillStyle = 'rgba(0,0,0,0.7)';
       g.fillRect(fx - 1, fy - 1, fw + 2, fh + 2);
       this.drawFlag(g, flag, fx, fy, fw, fh);
+      g.fillStyle = '#ffffff';
+      x += iconStep * font;
+    }
+    if (verified) {
+      this.drawVerified(g, x + iconSize / 2, nameY, iconSize, verified, 'rgba(0,0,0,0.7)');
       g.fillStyle = '#ffffff';
       x += iconStep * font;
     }
@@ -5114,6 +5148,8 @@ const Render = {
       if (emblem) nIcons++;
       const flag = Progress.flagOf(p.id);
       if (flag) nIcons++;
+      const verified = Progress.verifiedColor(p.id);
+      if (verified) nIcons++;
       const nameW = (sp.nameEm + nIcons * 1.3) * font;   // icon (1.05em) + gap (0.25em), in ems
       const widest = Math.max(nameW, sp.troopsEm * font);
       if (widest > boxW * 0.92) {
@@ -5132,6 +5168,7 @@ const Render = {
       sp.wantName = p.name;
       sp.wantEmblem = emblem;
       sp.wantFlag = flag;
+      sp.wantVerified = verified;
       sp.px = px;
       sp.py = py;
       sp.usedAt = frame;
@@ -5141,7 +5178,7 @@ const Render = {
       // meantime the old sprite is stamped scaled to the new size, which is all
       // a nation growing a pixel needs. Growing past LABEL_UPSCALE_MAX (zooming
       // in) can't wait: an upscaled sprite is visibly blurry.
-      if (!sp.canvas || sp.style !== this.mapStyle || sp.icons !== icons || sp.name !== p.name || sp.emblem !== emblem || sp.flag !== flag || font > sp.font * this.LABEL_UPSCALE_MAX ||
+      if (!sp.canvas || sp.style !== this.mapStyle || sp.icons !== icons || sp.name !== p.name || sp.emblem !== emblem || sp.flag !== flag || sp.verified !== verified || font > sp.font * this.LABEL_UPSCALE_MAX ||
           ((sp.font !== font || sp.troops !== troops) && now - sp.drawnMs >= this.LABEL_REFRESH_MS)) stale.push(sp);
       L.font = font;
     }

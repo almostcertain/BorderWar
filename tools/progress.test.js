@@ -14,8 +14,10 @@ global.localStorage = {
 };
 global.Replay = { active: false };
 global.Tutorial = { active: false };
+global.Watch = { active: false };
 global.Fx = { killPopups: [] };
 global.ProgressDefs = require(path.join(__dirname, '..', 'js', 'progress-defs.js'));
+global.ShopDefs = require(path.join(__dirname, '..', 'js', 'shop-defs.js'));
 const Progress = require(path.join(__dirname, '..', 'js', 'progress.js'));
 const Defs = global.ProgressDefs;
 

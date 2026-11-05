@@ -11,6 +11,11 @@
 //   node server/accounts/admin.js wallet <email>            balances and the last 20 changes
 //   node server/accounts/admin.js adjust <email> <bb|marks> <+n|-n> <note>
 //                                                           add or take currency (support, refunds)
+//   node server/accounts/admin.js subscribe <email> <scout|warden|sovereign> [days]
+//                                                           start or extend a subscription (default 30
+//                                                           days) and grant that period's Border Bucks
+//   node server/accounts/admin.js unsubscribe <email>       end it now
+//   node server/accounts/admin.js release-name <name>       free a verified name (an abusive one)
 //
 // Safe to run while the server is up; SQLite handles the second connection.
 'use strict';
@@ -21,6 +26,9 @@ const passwords = require('./passwords');
 const validate = require('./validate');
 const entitlements = require('./entitlements');
 const wallet = require('./wallet');
+const subscriptions = require('./subscriptions');
+const names = require('./names');
+const ShopDefs = require('../../js/shop-defs.js');
 
 function findUser(db, email) {
   const clean = validate.email(email);
@@ -56,6 +64,8 @@ function exportUser(db, email, now) {
     progress: { unlocked: progress.unlocked || {}, counters: progress.counters || {}, equipped: parse(user.equipped_json) },
     entitlements: entitlements.history(db, user.id).map(e => ({ pack: e.sku, grantedAt: iso(e.granted_at), source: e.source, ref: e.ref })),
     wallet: wallet.balances(db, user.id),
+    subscription: subscriptions.summary(db, user.id, (now || Date.now)()),
+    verifiedName: names.verifiedName(db, user.id, (now || Date.now)()),
     ledger: wallet.history(db, user.id, 1000).map(l => Object.assign({}, l, { createdAt: iso(l.createdAt) })),
     sessions: sessions.map(s => ({ createdAt: iso(s.created_at), lastSeenAt: iso(s.last_seen_at), expiresAt: iso(s.expires_at) })),
     matches: matches.map(m => ({
@@ -129,6 +139,31 @@ function walletReport(db, email) {
   return lines.join('\n');
 }
 
+const DAY = 24 * 60 * 60 * 1000;
+
+// Starts or extends a subscription by `days` from today (or from its current
+// end, if later), grants that period's BB, and reserves the display name if
+// it is free. Returns a summary line, or null if there is no such account.
+function subscribe(db, email, tier, days, now) {
+  const user = findUser(db, email);
+  if (!user) return null;
+  const t = (now || Date.now)();
+  const sub = subscriptions.get(db, user.id);
+  const from = sub && sub.status !== 'ended' ? Math.max(t, sub.period_end) : t;
+  subscriptions.startPeriod(db, user.id, tier, from + days * DAY, { provider: 'admin', ref: 'admin-' + user.id + '-' + t, now: t });
+  const r = names.reserve(db, user.id, user.display_name, t);
+  const s = subscriptions.summary(db, user.id, t);
+  return ShopDefs.tier(tier).name + ' until ' + iso(s.periodEnd).slice(0, 10)
+    + '. Border Bucks: ' + wallet.balances(db, user.id).bb + '. '
+    + (r.ok ? 'Verified name: ' + user.display_name : 'Name not reserved (' + r.error + '); they can pick another in the menu.');
+}
+
+function unsubscribe(db, email, now) {
+  const user = findUser(db, email);
+  if (!user) return null;
+  return subscriptions.end(db, user.id, (now || Date.now)()) ? 'Ended. Their name stays reserved for 60 days.' : 'They had no subscription.';
+}
+
 const LIST_MAX = 200;
 
 // One page of accounts, newest first, for the admin page. `query` matches part
@@ -161,7 +196,8 @@ function listUsers(db, opts) {
       lastSeenAt: r.last_seen_at === null ? null : Number(r.last_seen_at),
       matches: Number(r.matches),
       packs: entitlements.list(db, r.id),
-      wallet: wallet.balances(db, r.id)
+      wallet: wallet.balances(db, r.id),
+      tier: subscriptions.activeTier(db, r.id, Date.now())
     }))
   };
 }
@@ -169,9 +205,11 @@ function listUsers(db, opts) {
 async function main(argv) {
   const [command, arg, pack] = argv;
   const usage = 'Usage: node server/accounts/admin.js stats | export <email> | reset-password <email> | revoke-sessions <email>|--all'
-    + ' | grant <email> <pack> | revoke <email> <pack> | wallet <email> | adjust <email> <bb|marks> <+n|-n> <note>';
+    + ' | grant <email> <pack> | revoke <email> <pack> | wallet <email> | adjust <email> <bb|marks> <+n|-n> <note>'
+    + ' | subscribe <email> <tier> [days] | unsubscribe <email> | release-name <name>';
   const packCommand = command === 'grant' || command === 'revoke';
-  if (!['stats', 'export', 'reset-password', 'revoke-sessions', 'grant', 'revoke', 'wallet', 'adjust'].includes(command) || (command !== 'stats' && !arg)) {
+  if (!['stats', 'export', 'reset-password', 'revoke-sessions', 'grant', 'revoke', 'wallet', 'adjust',
+    'subscribe', 'unsubscribe', 'release-name'].includes(command) || (command !== 'stats' && !arg)) {
     console.error(usage);
     return 2;
   }
@@ -186,6 +224,11 @@ async function main(argv) {
     console.error('Unknown pack. Known packs: ' + Object.keys(require('../../js/progress-defs.js').PACKS).join(', '));
     return 2;
   }
+  const days = argv[3] === undefined ? 30 : Number(argv[3]);
+  if (command === 'subscribe' && (!ShopDefs.tier(pack) || !Number.isInteger(days) || days < 1 || days > 3660)) {
+    console.error('Usage: subscribe <email> <' + Object.keys(ShopDefs.TIERS).join('|') + '> [days, default 30]');
+    return 2;
+  }
   const db = dbModule.open(process.env.BORDERWAR_DB);
   try {
     let out;
@@ -198,6 +241,12 @@ async function main(argv) {
     } else if (command === 'reset-password') {
       const temp = await resetPassword(db, arg);
       out = temp && 'Temporary password: ' + temp + '\nTheir sessions were ended. Ask them to change it after signing in.';
+    } else if (command === 'subscribe') {
+      out = subscribe(db, arg, pack, days);
+    } else if (command === 'unsubscribe') {
+      out = unsubscribe(db, arg);
+    } else if (command === 'release-name') {
+      out = names.release(db, argv.slice(1).join(' ')) ? 'Released.' : 'Nobody holds that name.';
     } else if (command === 'wallet') {
       out = walletReport(db, arg);
     } else if (command === 'adjust') {
@@ -228,4 +277,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { accountStats, adjustWallet, walletReport, exportUser, findUser, listUsers, resetPassword, revokeSessions, setEntitlement };
+module.exports = { accountStats, adjustWallet, walletReport, subscribe, unsubscribe, exportUser, findUser, listUsers, resetPassword, revokeSessions, setEntitlement };

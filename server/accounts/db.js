@@ -90,6 +90,23 @@ const MIGRATIONS = [
      currency TEXT NOT NULL,
      balance  INTEGER NOT NULL,
      PRIMARY KEY (user_id, currency)
+   );`,
+  // Subscriptions and verified names (docs/monetization.md §4). One row each
+  // per account. `folded` is the name with case and look-alikes folded away.
+  `CREATE TABLE subscriptions (
+     user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+     tier         TEXT NOT NULL,
+     status       TEXT NOT NULL,
+     period_end   INTEGER NOT NULL,
+     provider     TEXT NOT NULL,
+     provider_ref TEXT NOT NULL DEFAULT '',
+     updated_at   INTEGER NOT NULL
+   );
+   CREATE TABLE reserved_names (
+     user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+     folded       TEXT NOT NULL UNIQUE,
+     display_name TEXT NOT NULL,
+     reserved_at  INTEGER NOT NULL
    );`
 ];
 

@@ -10,6 +10,8 @@ const Client = require('./client');
 const GameServer = require('./gameserver');
 const log = require('./log');
 const { clean: cleanLoadout } = require('./loadouts');
+const ShopDefs = require('../js/shop-defs.js');
+const Names = require('./accounts/names');
 const { addressKey, MessageBudget, WindowCounter } = require('./floodguard');
 
 // How often the periodic reap runs (reap also runs inline on disconnect).
@@ -57,6 +59,10 @@ class GameManager {
     this.buildID = opts && opts.buildID;
     // Optional server/loadouts.js store: persistentID -> equipped cosmetics.
     this.loadouts = (opts && opts.loadouts) || null;
+    // `opts.names`: { ownerOf(username) -> userId|null } from the accounts
+    // module. Set only when accounts are on; it also turns on the
+    // subscriber-only rule for public lobbies (docs/monetization.md §4.2).
+    this.names = (opts && opts.names) || null;
     this.games = new Map(); // gameID -> GameServer
     this._rejoinRate = new WindowCounter({
       max: GameManager.MAX_REJOINS_PER_ADDRESS_PER_MINUTE, windowMs: 60 * 1000
@@ -257,8 +263,9 @@ class GameManager {
   // parsed yet. Waits for exactly one message and routes off it. `ip` is the
   // caller's address (CF-Connecting-IP behind the tunnel), for the per-address
   // caps; omitted or loopback means no caps. `packs` is the paid packs owned
-  // by the account the socket's session cookie belongs to.
-  handleConnection(ws, ip, packs) {
+  // by the account the socket's session cookie belongs to; `identity` is that
+  // account's { userId, tier, verifiedName }, or null for a guest.
+  handleConnection(ws, ip, packs, identity) {
     const addr = addressKey(ip);
 
     // ws already closes the socket on a protocol error, but emits 'error'
@@ -353,8 +360,30 @@ class GameManager {
           return;
         }
       }
+      identity = identity || null;
+      if (this.names) {
+        const owner = this.names.ownerOf(msg.username);
+        if (owner !== null && !(identity && identity.userId === owner)) {
+          log.warn('server', 'rejected join to "' + msg.gameID + '": reserved name');
+          Client.closeWithError(ws, 'name-taken', 'That name belongs to a verified player. Pick another name.');
+          return;
+        }
+        if (!existing && msg.public) {
+          const refusal = this._publicLobbyRefusal(identity);
+          if (refusal) {
+            log.warn('server', 'rejected public lobby "' + msg.gameID + '": ' + refusal.code);
+            Client.closeWithError(ws, refusal.code, refusal.message);
+            return;
+          }
+        }
+      }
+      const verified = identity && identity.tier && identity.verifiedName
+        && Names.fold(identity.verifiedName) === Names.fold(msg.username) ? identity.tier : null;
       const game = this.createGame(msg.gameID);
-      if (!existing) game.creatorAddr = addr;
+      if (!existing) {
+        game.creatorAddr = addr;
+        game.creatorUserId = identity ? identity.userId : null;
+      }
       const client = new Client(ws);
       client.addr = addr;
       client.packs = packs || [];
@@ -362,12 +391,29 @@ class GameManager {
       // proves that whoever posted it owned the pack.
       const clientID = game.joinClient(client, {
         username: msg.username, spectator: msg.spectator, public: msg.public,
-        persistentID: msg.persistentID,
+        persistentID: msg.persistentID, verified,
         cosmetics: this.loadouts ? cleanLoadout(this.loadouts.get(msg.persistentID), client.packs) : null
       });
       if (clientID === null) return; // joinClient already closed/errored it (mid-game join)
       this._wire(game, ws, clientID);
     });
+  }
+
+  // Why this account may not open another public lobby, or null if it may.
+  _publicLobbyRefusal(identity) {
+    const def = identity && ShopDefs.tier(identity.tier);
+    if (!def) {
+      return { code: 'subscription-required', message: 'Public lobbies need a BorderWar subscription. Untick Public to host a private game.' };
+    }
+    let open = 0;
+    for (const g of this.games.values()) {
+      if (g.creatorUserId === identity.userId && g.isPublic && g.stage === Protocol.GAME_PHASE.LOBBY) open++;
+    }
+    if (open >= def.publicLobbies) {
+      return { code: 'public-limit', message: 'Your ' + def.name + ' subscription allows ' + def.publicLobbies
+        + ' public ' + (def.publicLobbies === 1 ? 'lobby' : 'lobbies') + ' at once. Close one, or host this one as private.' };
+    }
+    return null;
   }
 
   _clientsFrom(game, addr) {

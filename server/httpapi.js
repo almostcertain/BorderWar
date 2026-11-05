@@ -12,6 +12,7 @@ const MESSAGES = {
   'rate-limited': 'Too many attempts, try again in a minute',
   'unauthorized': 'You are not signed in',
   'not-found': 'Not found',
+  'name-taken': 'That name belongs to a verified player. Pick another.',
   'bad-token': 'This link has expired or was already used.',
   'mail-unavailable': 'Email is not available on this server'
 };

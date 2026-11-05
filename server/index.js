@@ -175,7 +175,10 @@ const server = http.createServer((req, res) => {
 // is about 10 KB; ws's default would buffer and parse 100 MiB frames.
 const wss = new WebSocket.Server({ server, path: '/ws', maxPayload: 32 * 1024 });
 
-const gameManager = new GameManager({ buildID: JSON.parse(BUILD_INFO).id, loadouts: loadouts.store });
+const gameManager = new GameManager({
+  buildID: JSON.parse(BUILD_INFO).id, loadouts: loadouts.store,
+  names: accounts ? { ownerOf: (name) => accounts.nameOwner(name) } : null
+});
 
 // Singleplayer matches never reach the WS server; the page reports them here
 // so the admin page can count them (server/presence.js).
@@ -226,7 +229,8 @@ wss.on('connection', (ws, req) => {
 
   // GameManager waits for the first message (`join` or `rejoin`) and does
   // its own routing, validation and logging.
-  gameManager.handleConnection(ws, ip, accounts ? accounts.entitlementsForRequest(req) : []);
+  const identity = accounts ? accounts.identityForRequest(req) : null;
+  gameManager.handleConnection(ws, ip, identity ? identity.packs : [], identity);
 });
 
 // Non-loopback IPv4 addresses, so the startup line can say where LAN players
