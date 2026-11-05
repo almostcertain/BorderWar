@@ -1892,7 +1892,7 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 #optionsBtn:hover { opacity: 0.8; }
 body:has(#overlay.hidden) #optionsBtn { display: none; }
 
-#gameMenu, #optionsOverlay, #accountOverlay, #manageOverlay, #installGuide {
+#gameMenu, #optionsOverlay, #accountOverlay, #manageOverlay, #installGuide, #shopOverlay {
   position: fixed;
   inset: 0;
   z-index: 12;
@@ -1943,6 +1943,23 @@ body:has(#overlay.hidden) #optionsBtn { display: none; }
 #manageMenu.hidden, #manageFields.hidden { display: none; }
 #manageDone { font-size: 14px; text-align: center; }
 .panel button.dangerBtn { background: #b3363f; }
+
+/* Shop (docs/monetization.md). */
+#shopOverlay .optionsPanel { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 560px; max-height: 100%; overflow-y: auto; }
+#shopOverlay h3 { margin: 8px 0 0; font-size: 15px; }
+#shopTest, #shopSubNote { font-size: 13px; line-height: 1.4; padding: 8px 10px; border-radius: 8px; background: rgba(255, 210, 87, 0.12); }
+#shopTiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.shopTier { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.12); }
+.shopTier.isCurrent { border-color: rgba(255, 255, 255, 0.5); }
+.shopTier .tierName { font-weight: 700; font-size: 16px; }
+.shopTier .tierPrice { font-size: 14px; opacity: 0.85; }
+.shopTier ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.4; opacity: 0.85; flex: 1; }
+.panel .shopTier button, .panel #shopPacks button { margin: 0; }
+#shopPacks { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+#shopPacks button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px; }
+#shopPacks small { font-weight: 400; opacity: 0.8; }
+#shopError { color: #ff6b6b; font-size: 13px; text-align: center; }
+#shopLinks { display: flex; justify-content: space-between; }
 .panel button.dangerBtn:active { background: #8c282e; }
 #manageLinks .linkBtn { margin: 0 0 0 auto; }
 #manageLinks #manageBack { margin: 0; }

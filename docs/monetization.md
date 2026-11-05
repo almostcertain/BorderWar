@@ -283,6 +283,62 @@ New tables in the accounts database, all owned by one module
   store and Marks work.
 - Tests: `server/accounts/subscriptions.test.js`.
 
+## 8.4 MO-6 as built (2026-11-05)
+
+- **Catalog lives in Paddle.** `server/accounts/paddle-setup.js` creates one
+  product and price per item in `js/shop-defs.js`, tagged
+  `custom_data.borderwar_sku`. The server lists active prices at startup (retrying
+  every 5 minutes if Paddle is down) and maps them by that tag, so no price ids
+  are configured anywhere.
+- **Checkout:** Paddle.js overlay, loaded only when the Shop opens. The server's
+  `POST /api/checkout` returns the price id, the player's email and
+  `custom_data.user_id`. Changing that id in the browser only gifts the purchase.
+- **Webhook** `POST /api/paddle/webhook`: signature checked (HMAC-SHA256, 5-minute
+  window), then applied in one transaction (`paddle-events.js`):
+  - `transaction.completed`: BB packs credited; subscription payments start a
+    period (first, renewal, or upgrade). Keyed by transaction id, so retries are
+    harmless. Renewals find the account by Paddle subscription id.
+  - **Upgrades** grant only the BB difference from the last paid tier
+    (`paid_tier`, schema v7), whatever order Paddle's events arrive in.
+    **Downgrades** keep the higher tier until the next paid period.
+  - `subscription.*`: scheduled cancel → `canceled` (runs to period end);
+    canceled or paused → `ended`.
+  - `adjustment.*` (approved full refund or chargeback): takes back that
+    payment's BB (balance may go negative, §3). Partial refunds are logged for
+    the owner to settle with `admin.js adjust`.
+- **Shop dialog** (menu strip "Shop", signed in only): tier cards (Subscribe /
+  Upgrade / Switch / Your plan), five BB packs, Manage subscription (Paddle's
+  customer portal: cancel, resume, change card). Upgrade asks first and charges
+  the prorated difference now; Switch down applies from the next bill.
+- **Sandbox on the live server:** the shop is visible only to the emails in
+  `BORDERWAR_SHOP_TESTERS`; with none listed, nobody sees it. Locally (not
+  production) it is open to all.
+- **Server config** (`secrets.env`): `PADDLE_ENV` (`sandbox` or `production`),
+  `PADDLE_API_KEY`, `PADDLE_CLIENT_TOKEN`, `PADDLE_WEBHOOK_SECRET`,
+  `BORDERWAR_SHOP_TESTERS`. The shop is off unless the first three keys are set.
+- Tests: `server/accounts/paddle.test.js`.
+
+### Owner setup (sandbox first, then the same again in the live account)
+
+1. **API key:** Paddle → Developer tools → Authentication → API keys → New.
+   Copy it (shown once).
+2. **Client-side token:** same page → Client-side tokens → New. Copy it.
+3. **Create the catalog** from the dev PC (PowerShell, in the project folder):
+   `$env:PADDLE_API_KEY='<key>'; node server/accounts/paddle-setup.js; Remove-Item Env:PADDLE_API_KEY`
+4. **Webhook:** Developer tools → Notifications → New destination. URL
+   `https://borderwar.io/api/paddle/webhook`; events `transaction.completed`,
+   `subscription.created`, `subscription.updated`, `subscription.activated`,
+   `subscription.canceled`, `subscription.paused`, `subscription.resumed`,
+   `adjustment.created`, `adjustment.updated`. Copy its secret key.
+5. **Default payment link:** Checkout → Checkout settings → `https://borderwar.io/`.
+6. **On the box**, add to `secrets.env`: `PADDLE_ENV=sandbox`, the three keys, and
+   `BORDERWAR_SHOP_TESTERS=<your account email>`. Takes effect once this branch
+   is merged and deployed.
+7. **Before going live:** repeat 1–5 in the live Paddle account (after Paddle
+   approves the business and domain), switch `PADDLE_ENV=production` with the
+   live keys, remove `BORDERWAR_SHOP_TESTERS`, and finish MO-7 (terms and privacy
+   naming Paddle).
+
 ## 9. Task breakdown (proposed order)
 
 1. **MO-1 Email verification and password reset.** Prerequisite (§8.1).

@@ -313,6 +313,21 @@
   </form>
 </div>
 
+<!-- Subscriptions and Border Bucks (docs/monetization.md); UI.setupShop fills it. -->
+<div id="shopOverlay" class="hidden">
+  <div class="panel optionsPanel" role="dialog" aria-labelledby="shopTitle">
+    <h2 id="shopTitle">Shop</h2>
+    <div id="shopTest" class="hidden">Test mode: no real money. Pay with card 4242 4242 4242 4242, any future date, any CVC.</div>
+    <h3>Subscriptions</h3>
+    <div id="shopSubNote" class="hidden"></div>
+    <div id="shopTiers"></div>
+    <h3>Border Bucks</h3>
+    <div id="shopPacks"></div>
+    <div id="shopError" class="hidden"></div>
+    <div id="shopLinks"><button type="button" id="shopManage" class="linkBtn hidden">Manage subscription</button><button type="button" id="shopClose" class="linkBtn">Close</button></div>
+  </div>
+</div>
+
 <!-- The What's new post (server/news.js); UI.setupNews fills it. -->
 <div id="newsOverlay" class="hidden">
   <div class="panel optionsPanel" role="dialog" aria-labelledby="newsTitle">
@@ -348,7 +363,7 @@
 
     <!-- Optional accounts (docs/accounts-auth.md). Stays hidden unless the page
          is served by a server with accounts; UI.renderAccount fills it. -->
-    <div id="accountStrip" class="hidden"><span id="accountStatus"></span><span id="accountTier" class="hidden"></span><span id="accountWallet" class="hidden"></span><button type="button" id="accountSignIn" class="linkBtn">Sign in</button><button type="button" id="accountVerify" class="linkBtn hidden">Confirm email</button><button type="button" id="accountManage" class="linkBtn hidden">Account</button><button type="button" id="accountSignOut" class="linkBtn hidden">Sign out</button></div>
+    <div id="accountStrip" class="hidden"><span id="accountStatus"></span><span id="accountTier" class="hidden"></span><span id="accountWallet" class="hidden"></span><button type="button" id="accountSignIn" class="linkBtn">Sign in</button><button type="button" id="accountVerify" class="linkBtn hidden">Confirm email</button><button type="button" id="accountShop" class="linkBtn hidden">Shop</button><button type="button" id="accountManage" class="linkBtn hidden">Account</button><button type="button" id="accountSignOut" class="linkBtn hidden">Sign out</button></div>
 
     <!-- MP-2.3: mode choice above the existing singleplayer flow, which is
          otherwise untouched below (#mapSize/#botCount/#tribeCount/#startBtn

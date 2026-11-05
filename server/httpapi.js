@@ -80,4 +80,19 @@ function readJson(req) {
   });
 }
 
-module.exports = { ApiError, send, clientIp, checkOrigin, readJson };
+// The body as bytes, up to `limit`.
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) return reject(new ApiError(413, 'invalid', 'Request too large'));
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+module.exports = { ApiError, send, clientIp, checkOrigin, readJson, readRaw };

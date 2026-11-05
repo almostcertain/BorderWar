@@ -126,8 +126,20 @@ try {
     console: process.env.NODE_ENV !== 'production'
   });
   if (!mailer.enabled) log.warn('accounts', 'no RESEND_API_KEY: password reset and email verification are off');
+  // Paddle (docs/monetization.md MO-6). Off until all three keys are set.
+  const paddle = require('./accounts/paddle').create({
+    apiKey: process.env.PADDLE_API_KEY, clientToken: process.env.PADDLE_CLIENT_TOKEN,
+    webhookSecret: process.env.PADDLE_WEBHOOK_SECRET, environment: process.env.PADDLE_ENV, log
+  });
+  if (paddle.configured) paddle.start();
+  else log.warn('accounts', 'Paddle keys not set: the shop is off');
+  // A sandbox on the live server is for the owner's test purchases only:
+  // BORDERWAR_SHOP_TESTERS lists who sees it (comma-separated emails).
+  const testers = (process.env.BORDERWAR_SHOP_TESTERS || '').split(',').map((e) => e.trim()).filter(Boolean);
+  const shopTesters = testers.length ? testers
+    : (paddle.environment === 'sandbox' && process.env.NODE_ENV === 'production' ? [] : null);
   accounts = require('./accounts/routes').create({
-    dbPath: process.env.BORDERWAR_DB, log, mailer,
+    dbPath: process.env.BORDERWAR_DB, log, mailer, paddle, shopTesters,
     publicUrl: process.env.BORDERWAR_PUBLIC_URL || (process.env.NODE_ENV === 'production' ? 'https://borderwar.io' : null)
   });
   const dbFile = process.env.BORDERWAR_DB || require('./accounts/db').DEFAULT_PATH;

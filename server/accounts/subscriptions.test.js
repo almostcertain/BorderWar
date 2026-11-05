@@ -63,7 +63,7 @@ test('cancel runs to the end of the period; end stops now', () => {
   assert.strictEqual(subscriptions.summary(db, 1, T0 + 2 * DAY).status, 'canceled');
   subscriptions.end(db, 1, T0 + 3 * DAY);
   assert.strictEqual(subscriptions.activeTier(db, 1, T0 + 3 * DAY), null);
-  assert.deepStrictEqual(subscriptions.summary(db, 1, T0 + 3 * DAY), { tier: 'scout', status: 'ended', periodEnd: T0 + 3 * DAY, active: false });
+  assert.deepStrictEqual(subscriptions.summary(db, 1, T0 + 3 * DAY), { tier: 'scout', status: 'ended', periodEnd: T0 + 3 * DAY, active: false, manageable: false });
   db.close();
 });
 
@@ -150,7 +150,7 @@ test('routes: /api/me shows the subscription; reserved names are refused to othe
 
   admin.subscribe(s.accounts.db, 'ada@example.com', 'warden', 30, () => T0);
   me = (await a.get('me')).body.user;
-  assert.deepStrictEqual(me.subscription, { tier: 'warden', status: 'active', periodEnd: T0 + 30 * DAY, active: true });
+  assert.deepStrictEqual(me.subscription, { tier: 'warden', status: 'active', periodEnd: T0 + 30 * DAY, active: true, manageable: false });
   assert.strictEqual(me.verifiedName, 'Ada');
   assert.strictEqual(me.wallet.bb, 700);
 

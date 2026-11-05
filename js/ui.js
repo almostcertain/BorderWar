@@ -2834,6 +2834,7 @@ const UI = {
     });
 
     this.setupManageAccount();
+    this.setupShop();
     Account.init().then(() => {
       this.renderAccount();
       // Links from emails land as #reset=<token> or #verify=<token>. The token
@@ -2850,6 +2851,140 @@ const UI = {
           (err) => notice('Email not confirmed', err.message)
         );
       }
+    });
+  },
+
+  // --- Shop (docs/monetization.md MO-6) ---------------------------------------
+  //
+  // Subscriptions and Border Bucks packs, paid through Paddle's own checkout
+  // overlay. The server credits the account when Paddle's webhook arrives, so
+  // after a payment the page re-reads the account a few times.
+  setupShop() {
+    const $ = (id) => document.getElementById(id);
+    const overlay = $('shopOverlay');
+    const showError = (msg) => { $('shopError').textContent = msg || ''; $('shopError').classList.toggle('hidden', !msg); };
+    const close = () => overlay.classList.add('hidden');
+    let paddleReady = null, busy = false;
+
+    // Paddle.js loads only when someone opens the shop.
+    const loadPaddle = () => paddleReady || (paddleReady = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.paddle.com/paddle/v2/paddle.js';
+      s.onload = () => {
+        const info = Account.shopInfo;
+        if (info.environment === 'sandbox') Paddle.Environment.set('sandbox');
+        Paddle.Initialize({
+          token: info.clientToken,
+          eventCallback: (e) => { if (e && e.name === 'checkout.completed') afterPayment(); }
+        });
+        resolve();
+      };
+      s.onerror = () => { paddleReady = null; reject(new Error('Could not load the checkout. Check your connection.')); };
+      document.head.appendChild(s);
+    }));
+
+    // The webhook usually lands within seconds; keep looking for a while.
+    const afterPayment = () => {
+      const before = JSON.stringify([Account.user && Account.user.wallet, Account.user && Account.user.subscription]);
+      let n = 0;
+      const poll = () => Account.refresh().then(() => {
+        this.renderAccount();
+        if (!overlay.classList.contains('hidden')) render();
+        const now = JSON.stringify([Account.user && Account.user.wallet, Account.user && Account.user.subscription]);
+        if (now === before && ++n < 8) setTimeout(poll, 2500);
+      });
+      setTimeout(poll, 1500);
+    };
+
+    const run = (fn) => {
+      if (busy) return;
+      busy = true;
+      showError('');
+      Promise.resolve().then(fn).catch((err) => showError(err.message)).then(() => { busy = false; });
+    };
+
+    const buy = (sku) => run(() => Promise.all([Account.checkout(sku), loadPaddle()]).then(([c]) => {
+      Paddle.Checkout.open({
+        items: [{ priceId: c.priceId, quantity: 1 }],
+        customer: { email: c.email },
+        customData: c.customData,
+        settings: { displayMode: 'overlay', theme: 'dark', allowLogout: false }
+      });
+    }));
+
+    const change = (tier, upgrade) => {
+      const def = ShopDefs.tier(tier);
+      const msg = upgrade
+        ? 'Upgrade to ' + def.name + ' now? You pay the difference for the rest of this month today, and get the extra Border Bucks now.'
+        : 'Switch to ' + def.name + ' from your next bill? You keep your current tier until then.';
+      if (!confirm(msg)) return;
+      run(() => Account.changeTier(tier).then(() => afterPayment()));
+    };
+
+    const render = () => {
+      const info = Account.shopInfo;
+      const sub = Account.user && Account.user.subscription;
+      const cur = sub && sub.active ? ShopDefs.tier(sub.tier) : null;
+      $('shopTest').classList.toggle('hidden', info.environment !== 'sandbox');
+      const ending = cur && sub.status !== 'active';
+      $('shopSubNote').classList.toggle('hidden', !ending);
+      $('shopSubNote').textContent = ending ? 'Your ' + cur.name + ' subscription ends on '
+        + new Date(sub.periodEnd).toLocaleDateString() + '. To keep it, resume it in Manage subscription.' : '';
+      $('shopManage').classList.toggle('hidden', !(sub && sub.manageable));
+
+      const tiers = $('shopTiers');
+      tiers.innerHTML = '';
+      for (const id of info.tiers || []) {
+        const t = ShopDefs.tier(id);
+        const card = document.createElement('div');
+        card.className = 'shopTier' + (cur === t ? ' isCurrent' : '');
+        card.innerHTML = `<div class="tierName">${this.verifiedBadge(t)}${escapeHtml(t.name)}</div>`
+          + `<div class="tierPrice">$${t.priceMonthly.toFixed(2)} a month</div>`
+          + `<ul><li>${t.monthlyBB.toLocaleString()} Border Bucks every month</li><li>Verified name</li>`
+          + `<li>Host ${t.publicLobbies === 1 ? 'a public lobby' : 'up to ' + t.publicLobbies + ' public lobbies'}</li></ul>`;
+        const btn = document.createElement('button');
+        btn.className = 'primaryBtn';
+        if (cur === t) { btn.textContent = 'Your plan'; btn.disabled = true; }
+        else if (cur) {
+          const up = t.rank > cur.rank;
+          btn.textContent = up ? 'Upgrade' : 'Switch';
+          btn.disabled = ending || !sub.manageable;
+          btn.addEventListener('click', () => change(id, up));
+        } else {
+          btn.textContent = 'Subscribe';
+          btn.addEventListener('click', () => buy(id));
+        }
+        card.appendChild(btn);
+        tiers.appendChild(card);
+      }
+
+      const packs = $('shopPacks');
+      packs.innerHTML = '';
+      for (const id of info.packs || []) {
+        const p = ShopDefs.BB_PACKS[id];
+        const btn = document.createElement('button');
+        btn.innerHTML = `$${p.price}<small>${p.bb.toLocaleString()} BB</small>`;
+        btn.addEventListener('click', () => buy(id));
+        packs.appendChild(btn);
+      }
+    };
+
+    $('accountShop').addEventListener('click', () => {
+      showError('');
+      render();
+      overlay.classList.remove('hidden');
+    });
+    $('shopManage').addEventListener('click', () => {
+      // Opened before the request so the popup isn't blocked, then pointed at the portal.
+      const win = window.open('', '_blank');
+      run(() => Account.billingPortal().then((r) => {
+        if (win) win.location = r.url; else location.href = r.url;
+      }, (err) => { if (win) win.close(); throw err; }));
+    });
+    $('shopClose').addEventListener('click', close);
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !overlay.classList.contains('hidden')) close();
     });
   },
 
@@ -2964,6 +3099,15 @@ const UI = {
     document.getElementById('accountSignIn').classList.toggle('hidden', !!user);
     document.getElementById('accountVerify').classList.toggle('hidden', !user || !!user.emailVerified);
     document.getElementById('accountManage').classList.toggle('hidden', !user);
+    // Which shop the server offers depends on who is signed in.
+    const shopBtn = document.getElementById('accountShop');
+    shopBtn.classList.toggle('hidden', !user || !Account.shopInfo.open);
+    const shopKey = user ? user.id : null;
+    if (this._shopFor !== shopKey) {
+      this._shopFor = shopKey;
+      Account.shopInfo = { open: false };
+      if (user) Account.loadShop().then(() => shopBtn.classList.toggle('hidden', !Account.user || !Account.shopInfo.open));
+    }
     document.getElementById('accountSignOut').classList.toggle('hidden', !user);
   },
 

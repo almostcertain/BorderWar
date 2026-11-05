@@ -107,7 +107,14 @@ const MIGRATIONS = [
      folded       TEXT NOT NULL UNIQUE,
      display_name TEXT NOT NULL,
      reserved_at  INTEGER NOT NULL
-   );`
+   );`,
+  // The payment provider's customer id, for its billing portal (MO-6).
+  // `provider_ref` holds the provider's subscription id.
+  // `paid_tier` is the tier the latest payment was for, so an upgrade grants
+  // only the difference whatever order Paddle's events arrive in.
+  `ALTER TABLE subscriptions ADD COLUMN provider_customer TEXT NOT NULL DEFAULT '';
+   ALTER TABLE subscriptions ADD COLUMN paid_tier TEXT NOT NULL DEFAULT '';
+   CREATE INDEX subscriptions_ref ON subscriptions(provider, provider_ref);`
 ];
 
 function schemaVersion(db) {

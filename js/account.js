@@ -98,6 +98,29 @@ const Account = {
     return this._post('resend-verification');
   },
 
+  // The shop (docs/monetization.md MO-6). `shopInfo` is {open: false} until
+  // the server says the signed-in player may buy.
+  shopInfo: { open: false },
+
+  loadShop() {
+    return fetch('api/shop', { credentials: 'same-origin', cache: 'no-store' })
+      .then(r => r.ok ? r.json() : { open: false })
+      .catch(() => ({ open: false }))
+      .then(info => { this.shopInfo = info && info.open ? info : { open: false }; return this.shopInfo; });
+  },
+
+  // Re-reads /api/me (balances change when a payment webhook lands).
+  refresh() {
+    return fetch('api/me', { credentials: 'same-origin', cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data && 'user' in data) this.user = data.user; return this.user; })
+      .catch(() => this.user);
+  },
+
+  checkout(sku) { return this._post('checkout', { sku }); },
+  billingPortal() { return this._post('billing-portal'); },
+  changeTier(tier) { return this._post('change-tier', { tier }); },
+
   // Achievements and cosmetics (docs/metaprogression.md §6.4). Both resolve to
   // the account's {unlocked, counters, equipped} and reject like _post.
   getProgress() {

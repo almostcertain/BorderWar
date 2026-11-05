@@ -51,7 +51,7 @@ html.atlas :is(.panel h1, .panel h2, .optionsPanel h2, #modeTitle, .menuCardTitl
 }
 
 /* Dimmed backdrops behind dialogs. */
-html.atlas :is(#gameMenu, #optionsOverlay, #accountOverlay, #manageOverlay, #installGuide, #newsOverlay, #achOverlay) {
+html.atlas :is(#gameMenu, #optionsOverlay, #accountOverlay, #manageOverlay, #installGuide, #newsOverlay, #achOverlay, #shopOverlay) {
   background: var(--a-dim);
 }
 
@@ -176,7 +176,7 @@ html.atlas .panel button {
 html.atlas .panel button:active { background: var(--a-rubric-2); }
 html.atlas .linkBtn,
 html.atlas .panel button.linkBtn,
-html.atlas :is(#publicLobbyBrowser, #accountStrip, #accountLinks, #manageLinks, .mapOpts, #tutorial) .linkBtn,
+html.atlas :is(#publicLobbyBrowser, #accountStrip, #accountLinks, #manageLinks, #shopLinks, .mapOpts, #tutorial) .linkBtn,
 html.atlas #accountForgot,
 html.atlas .panel button#optCopyPerf { color: var(--a-rubric); background: none; box-shadow: none; }
 html.atlas :is(#newsBody a) { color: var(--a-rubric); }

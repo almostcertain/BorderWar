@@ -13,12 +13,14 @@ const entitlements = require('./entitlements');
 const wallet = require('./wallet');
 const subscriptions = require('./subscriptions');
 const names = require('./names');
+const paddleEvents = require('./paddle-events');
+const ShopDefs = require('../../js/shop-defs.js');
 const emailTokensModule = require('./emailtokens');
 const mailerModule = require('./mailer');
 const ProgressDefs = require('../../js/progress-defs.js');
-const { ApiError, send, clientIp, checkOrigin, readJson } = require('../httpapi');
+const { ApiError, send, clientIp, checkOrigin, readJson, readRaw } = require('../httpapi');
 
-// opts: { dbPath, db, log, now, scrypt, mailer, publicUrl } — all optional;
+// opts: { dbPath, db, log, now, scrypt, mailer, publicUrl, paddle, shopTesters } — all optional;
 // tests pass ':memory:' and cheaper scrypt parameters. `publicUrl` is the base
 // for emailed links; without it the request's own Origin is used (dev only,
 // since a forged Host could point a reset link at another site).
@@ -31,6 +33,10 @@ function create(opts) {
   const sessions = sessionsModule.create(db, now);
   const emailTokens = emailTokensModule.create(db, now);
   const mailer = opts.mailer || mailerModule.create({});
+  const paddle = opts.paddle || null;
+  // While Paddle is in sandbox on a public server, only these emails see the
+  // shop, so test cards can't buy real Border Bucks. null = everyone.
+  const shopTesters = opts.shopTesters ? new Set(opts.shopTesters.map((e) => validate.email(e)).filter(Boolean)) : null;
 
   const loginLimit = ratelimit.window(10, 60 * 1000, now);
   const registerLimit = ratelimit.window(3, 60 * 60 * 1000, now);
@@ -139,6 +145,40 @@ function create(opts) {
         + new Date(r.until).toISOString().slice(0, 10) + '.');
     }
     if (!r.ok) throw new ApiError(409, 'name-taken');
+  }
+
+  function shopOpenFor(user) {
+    if (!paddle || !paddle.ready()) return false;
+    return !shopTesters || (!!user && shopTesters.has(user.email));
+  }
+
+  function requireShop(req) {
+    const user = requireUser(req);
+    if (!shopOpenFor(user)) throw new ApiError(503, 'shop-closed', 'The shop is not open yet');
+    return user;
+  }
+
+  // Paddle's signed event. Raw bytes are needed for the signature, so this
+  // skips readJson; it is server-to-server, so it skips the Origin check too.
+  async function webhook(req, res) {
+    const raw = await readRaw(req, 512 * 1024);
+    if (!paddle || !paddle.verify(raw, req.headers['paddle-signature'])) {
+      log.warn('paddle', 'webhook with a bad signature');
+      return send(res, 401, { error: 'bad-signature' });
+    }
+    let event;
+    try { event = JSON.parse(raw.toString('utf8')); } catch (e) { return send(res, 400, { error: 'invalid' }); }
+    db.exec('BEGIN IMMEDIATE');
+    let outcome;
+    try {
+      outcome = paddleEvents.apply(db, event, paddle, now(), log);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;   // 500: Paddle retries
+    }
+    log.info('paddle', event.event_type + ' ' + (event.data && event.data.id) + ': ' + outcome);
+    return send(res, 200, { ok: true });
   }
 
   async function requirePassword(user, password) {
@@ -322,6 +362,48 @@ function create(opts) {
       return { body: { ok: true } };
     },
 
+    // What the client needs to open Paddle's checkout for one item. The
+    // user id rides in custom_data; changing it only gifts the purchase.
+    async checkout(req, body) {
+      const user = requireShop(req);
+      const sku = body.sku;
+      const priceId = typeof sku === 'string' ? paddle.priceFor(sku) : null;
+      if (!priceId) throw new ApiError(400, 'invalid', 'Unknown item');
+      if (ShopDefs.tier(sku) && subscriptions.activeTier(db, user.id, now())) {
+        throw new ApiError(409, 'already-subscribed', 'You already have a subscription. Change its tier instead.');
+      }
+      return { body: { priceId, customData: { user_id: user.id }, email: user.email } };
+    },
+
+    async 'billing-portal'(req) {
+      const user = requireShop(req);
+      const sub = subscriptions.get(db, user.id);
+      if (!sub || sub.provider !== 'paddle' || !sub.provider_customer) throw new ApiError(404, 'not-found', 'No subscription to manage');
+      const url = await paddle.portalUrl(sub.provider_customer, sub.provider_ref || null).catch((e) => {
+        log.warn('paddle', e.message);
+        throw new ApiError(502, 'provider', 'Could not reach the payment provider. Try again shortly.');
+      });
+      return { body: { url } };
+    },
+
+    async 'change-tier'(req, body) {
+      const user = requireShop(req);
+      const def = ShopDefs.tier(body.tier);
+      const sub = subscriptions.get(db, user.id);
+      const cur = ShopDefs.tier(subscriptions.activeTier(db, user.id, now()));
+      if (!def || !paddle.priceFor(body.tier)) throw new ApiError(400, 'invalid', 'Unknown tier');
+      if (!cur || sub.provider !== 'paddle' || !sub.provider_ref) throw new ApiError(404, 'not-found', 'No subscription to change');
+      if (sub.status !== 'active') throw new ApiError(409, 'canceling', 'Your subscription is set to end. Resume it from Manage subscription first.');
+      if (body.tier === sub.tier) return { body: { ok: true } };
+      const upgrade = def.rank > cur.rank;
+      await paddle.changePrice(sub.provider_ref, paddle.priceFor(body.tier), upgrade).catch((e) => {
+        log.warn('paddle', e.message);
+        throw new ApiError(502, 'provider', 'Could not change the subscription. Try again shortly.');
+      });
+      log.info('paddle', 'user ' + user.id + ' changed tier ' + sub.tier + ' -> ' + body.tier);
+      return { body: { ok: true, upgrade } };
+    },
+
     async 'delete-account'(req, body, origin) {
       const user = requireUser(req);
       await requirePassword(user, body.password);
@@ -338,6 +420,16 @@ function create(opts) {
       if (req.method === 'GET' && route === 'me') {
         const user = currentUser(req);
         return send(res, 200, { user: user ? publicUser(user) : null });
+      }
+      if (req.method === 'POST' && route === 'paddle/webhook') return await webhook(req, res);
+      if (req.method === 'GET' && route === 'shop') {
+        const user = currentUser(req);
+        const open = shopOpenFor(user);
+        return send(res, 200, open
+          ? { open: true, environment: paddle.environment, clientToken: paddle.clientToken,
+            packs: Object.keys(ShopDefs.BB_PACKS).filter((s) => paddle.priceFor(s)),
+            tiers: Object.keys(ShopDefs.TIERS).filter((s) => paddle.priceFor(s)) }
+          : { open: false });
       }
       if (req.method === 'GET' && route === 'progress') {
         return send(res, 200, publicProgress(storedProgress(requireUser(req))));
