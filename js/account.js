@@ -76,6 +76,28 @@ const Account = {
     return this._post('delete-account', { password }).then(d => this._signedIn(d));
   },
 
+  // Email links (docs/monetization.md MO-1). The server answers ok whether or
+  // not the email has an account.
+  forgotPassword(email) {
+    return this._post('forgot-password', { email });
+  },
+
+  // Signs in on success.
+  resetPassword(token, password) {
+    return this._post('reset-password', { token, password }).then(d => this._signedIn(d));
+  },
+
+  verifyEmail(token) {
+    return this._post('verify-email', { token }).then(d => {
+      if (this.user) this.user.emailVerified = true;
+      return d;
+    });
+  },
+
+  resendVerification() {
+    return this._post('resend-verification');
+  },
+
   // Achievements and cosmetics (docs/metaprogression.md §6.4). Both resolve to
   // the account's {unlocked, counters, equipped} and reject like _post.
   getProgress() {

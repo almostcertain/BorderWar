@@ -11,7 +11,9 @@ const MESSAGES = {
   'email-taken': 'That email already has an account',
   'rate-limited': 'Too many attempts, try again in a minute',
   'unauthorized': 'You are not signed in',
-  'not-found': 'Not found'
+  'not-found': 'Not found',
+  'bad-token': 'This link has expired or was already used.',
+  'mail-unavailable': 'Email is not available on this server'
 };
 
 class ApiError extends Error {

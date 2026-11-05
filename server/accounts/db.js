@@ -58,7 +58,18 @@ const MIGRATIONS = [
      source     TEXT NOT NULL,
      ref        TEXT NOT NULL DEFAULT '',
      PRIMARY KEY (user_id, sku)
-   );`
+   );`,
+  // Email verification and password reset (docs/monetization.md MO-1).
+  `ALTER TABLE users ADD COLUMN email_verified_at INTEGER;
+   CREATE TABLE email_tokens (
+     token_hash TEXT PRIMARY KEY,
+     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     purpose    TEXT NOT NULL,
+     email      TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     expires_at INTEGER NOT NULL
+   );
+   CREATE INDEX email_tokens_user ON email_tokens(user_id);`
 ];
 
 function schemaVersion(db) {

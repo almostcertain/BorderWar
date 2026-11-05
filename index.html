@@ -278,7 +278,9 @@
     <input id="accountEmail" type="email" placeholder="Email" autocomplete="username" maxlength="254" spellcheck="false">
     <input id="accountPassword" type="password" placeholder="Password" autocomplete="current-password" maxlength="128">
     <input id="accountConfirm" type="password" placeholder="Confirm password" autocomplete="new-password" maxlength="128" class="hidden">
-    <div id="accountNote" class="hidden">At least 8 characters. There's no password reset yet, so keep this somewhere safe.</div>
+    <div id="accountNote" class="hidden">At least 8 characters.</div>
+    <div id="accountInfo" class="hidden"></div>
+    <button type="button" id="accountForgot" class="linkBtn">Forgot password?</button>
     <label id="accountAge" class="optRow hidden"><input id="accountAgeBox" type="checkbox"> <span>I am 13 or older</span></label>
     <div id="accountPrivacy" class="hidden">By creating an account you agree to the <a href="terms.html" target="_blank" rel="noopener">Terms of Service</a> and <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</div>
     <div id="accountError" class="hidden"></div>
@@ -346,7 +348,7 @@
 
     <!-- Optional accounts (docs/accounts-auth.md). Stays hidden unless the page
          is served by a server with accounts; UI.renderAccount fills it. -->
-    <div id="accountStrip" class="hidden"><span id="accountStatus"></span><button type="button" id="accountSignIn" class="linkBtn">Sign in</button><button type="button" id="accountManage" class="linkBtn hidden">Account</button><button type="button" id="accountSignOut" class="linkBtn hidden">Sign out</button></div>
+    <div id="accountStrip" class="hidden"><span id="accountStatus"></span><button type="button" id="accountSignIn" class="linkBtn">Sign in</button><button type="button" id="accountVerify" class="linkBtn hidden">Confirm email</button><button type="button" id="accountManage" class="linkBtn hidden">Account</button><button type="button" id="accountSignOut" class="linkBtn hidden">Sign out</button></div>
 
     <!-- MP-2.3: mode choice above the existing singleplayer flow, which is
          otherwise untouched below (#mapSize/#botCount/#tribeCount/#startBtn

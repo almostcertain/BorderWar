@@ -2705,37 +2705,61 @@ const UI = {
     const $ = (id) => document.getElementById(id);
     const overlay = $('accountOverlay');
     const email = $('accountEmail'), pass = $('accountPassword'), confirm = $('accountConfirm');
-    const error = $('accountError'), submit = $('accountSubmit');
-    let creating = false, busy = false;
+    const error = $('accountError'), info = $('accountInfo'), submit = $('accountSubmit');
+    // signin | create | forgot | reset (from an emailed link) | notice (a message only)
+    const MODES = {
+      signin: { title: 'Sign in', submit: 'Sign in', toggle: 'Create account' },
+      create: { title: 'Create account', submit: 'Create account', toggle: 'I have an account' },
+      forgot: { title: 'Reset password', submit: 'Send reset link', toggle: 'Back to sign in' },
+      reset: { title: 'Choose a new password', submit: 'Save password', toggle: '' },
+      notice: { title: 'Account', submit: 'OK', toggle: '' }
+    };
+    let mode = 'signin', busy = false, resetToken = null;
 
     const showError = (msg) => {
       error.textContent = msg || '';
       error.classList.toggle('hidden', !msg);
     };
-    const setCreating = (on) => {
-      creating = on;
-      $('accountTitle').textContent = on ? 'Create account' : 'Sign in';
-      submit.textContent = on ? 'Create account' : 'Sign in';
-      $('accountToggle').textContent = on ? 'I have an account' : 'Create account';
-      confirm.classList.toggle('hidden', !on);
-      $('accountNote').classList.toggle('hidden', !on);
-      $('accountPrivacy').classList.toggle('hidden', !on);
-      $('accountAge').classList.toggle('hidden', !on);
+    const showInfo = (msg) => {
+      info.textContent = msg || '';
+      info.classList.toggle('hidden', !msg);
+    };
+    const setMode = (m, title) => {
+      mode = m;
+      const def = MODES[m];
+      $('accountTitle').textContent = title || def.title;
+      submit.textContent = def.submit;
+      $('accountToggle').textContent = def.toggle;
+      $('accountToggle').classList.toggle('hidden', !def.toggle);
+      email.classList.toggle('hidden', m === 'reset' || m === 'notice');
+      pass.classList.toggle('hidden', m === 'forgot' || m === 'notice');
+      confirm.classList.toggle('hidden', m !== 'create' && m !== 'reset');
+      pass.placeholder = m === 'reset' ? 'New password' : 'Password';
+      pass.autocomplete = m === 'signin' ? 'current-password' : 'new-password';
+      $('accountForgot').classList.toggle('hidden', m !== 'signin');
+      $('accountNote').classList.toggle('hidden', m !== 'create' && m !== 'reset');
+      $('accountPrivacy').classList.toggle('hidden', m !== 'create');
+      $('accountAge').classList.toggle('hidden', m !== 'create');
+      $('accountCancel').classList.toggle('hidden', m === 'notice');
       $('accountAgeBox').checked = false;
-      pass.autocomplete = on ? 'new-password' : 'current-password';
       showError('');
+      showInfo('');
+    };
+    const open = (m, title) => {
+      setMode(m, title);
+      overlay.classList.remove('hidden');
+      (m === 'reset' ? pass : email).focus();
     };
     const close = () => {
       overlay.classList.add('hidden');
       pass.value = confirm.value = '';
+      resetToken = null;
     };
+    const notice = (title, msg) => { open('notice', title); showInfo(msg); submit.focus(); };
 
-    $('accountSignIn').addEventListener('click', () => {
-      setCreating(false);
-      overlay.classList.remove('hidden');
-      email.focus();
-    });
-    $('accountToggle').addEventListener('click', () => setCreating(!creating));
+    $('accountSignIn').addEventListener('click', () => open('signin'));
+    $('accountToggle').addEventListener('click', () => setMode(mode === 'signin' ? 'create' : 'signin'));
+    $('accountForgot').addEventListener('click', () => { setMode('forgot'); email.focus(); });
     $('accountCancel').addEventListener('click', close);
     overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) close(); });
     document.addEventListener('keydown', (e) => {
@@ -2744,38 +2768,63 @@ const UI = {
     $('accountSignOut').addEventListener('click', () => {
       Account.logout().catch(() => {}).then(() => this.renderAccount());
     });
+    $('accountVerify').addEventListener('click', () => {
+      const btn = $('accountVerify');
+      if (btn.disabled) return;
+      btn.disabled = true;
+      Account.resendVerification().then(
+        () => notice('Confirm your email', 'We sent a link to ' + Account.user.email + '. It works for 24 hours.'),
+        (err) => notice('Confirm your email', err.message)
+      ).then(() => { btn.disabled = false; });
+    });
+
+    // The account's name and tag come to this browser on sign-in.
+    const adoptProfile = (user) => {
+      $('playerName').value = user.displayName;
+      $('playerTag').value = user.tag;
+      try {
+        localStorage.setItem('borderwar_username', user.displayName);
+        localStorage.setItem('borderwar_tag', user.tag);
+      } catch (err) { /* ignore */ }
+    };
 
     $('accountForm').addEventListener('submit', (e) => {
       e.preventDefault();
       if (busy) return;
+      if (mode === 'notice') return close();
       const addr = email.value.trim();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return showError('Enter a valid email address');
-      if (creating && pass.value.length < 8) return showError('Password must be at least 8 characters');
-      if (creating && pass.value !== confirm.value) return showError('The passwords do not match');
-      if (!pass.value) return showError('Enter your password');
-      if (creating && !$('accountAgeBox').checked) return showError('You must be 13 or older to create an account');
+      const needsEmail = mode !== 'reset';
+      if (needsEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return showError('Enter a valid email address');
+      const newPass = mode === 'create' || mode === 'reset';
+      if (newPass && pass.value.length < 8) return showError('Password must be at least 8 characters');
+      if (newPass && pass.value !== confirm.value) return showError('The passwords do not match');
+      if (mode !== 'forgot' && !pass.value) return showError('Enter your password');
+      if (mode === 'create' && !$('accountAgeBox').checked) return showError('You must be 13 or older to create an account');
 
-      // A new account starts with whatever is in the menu's name and tag fields.
-      const name = ($('playerName').value || '').trim();
-      const tag = ($('playerTag').value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5);
-      const request = creating
-        ? Account.register(addr, pass.value, /[\[\]]/.test(name) ? '' : name, tag)
-        : Account.login(addr, pass.value);
+      let request;
+      if (mode === 'create') {
+        // A new account starts with whatever is in the menu's name and tag fields.
+        const name = ($('playerName').value || '').trim();
+        const tag = ($('playerTag').value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5);
+        request = Account.register(addr, pass.value, /[\[\]]/.test(name) ? '' : name, tag);
+      } else if (mode === 'signin') request = Account.login(addr, pass.value);
+      else if (mode === 'forgot') request = Account.forgotPassword(addr);
+      else request = Account.resetPassword(resetToken, pass.value);
+
+      const was = mode;
       busy = true;
       submit.disabled = true;
       showError('');
-      request.then((user) => {
-        // Signing in brings the account's name and tag to this browser.
-        if (!creating) {
-          $('playerName').value = user.displayName;
-          $('playerTag').value = user.tag;
-          try {
-            localStorage.setItem('borderwar_username', user.displayName);
-            localStorage.setItem('borderwar_tag', user.tag);
-          } catch (err) { /* ignore */ }
+      request.then((result) => {
+        if (was === 'forgot') {
+          showInfo('If ' + addr + ' has an account, a reset link is on its way. It works for 1 hour.');
+          return;
         }
-        close();
+        if (was !== 'create') adoptProfile(result);
         this.renderAccount();
+        if (was === 'reset') notice('Password changed', 'You are signed in with your new password.');
+        else if (was === 'create') notice('Account created', 'We sent a link to ' + addr + ' to confirm it. Confirming lets you reset your password if you forget it.');
+        else close();
       }, (err) => showError(err.message)).then(() => {
         busy = false;
         submit.disabled = false;
@@ -2783,7 +2832,23 @@ const UI = {
     });
 
     this.setupManageAccount();
-    Account.init().then(() => this.renderAccount());
+    Account.init().then(() => {
+      this.renderAccount();
+      // Links from emails land as #reset=<token> or #verify=<token>. The token
+      // stays in the fragment so it never reaches a server log.
+      const m = /^#(reset|verify)=([A-Za-z0-9_-]{20,100})$/.exec(location.hash);
+      if (!m || !Account.available) return;
+      history.replaceState(null, '', location.pathname + location.search);
+      if (m[1] === 'reset') {
+        resetToken = m[2];
+        open('reset');
+      } else {
+        Account.verifyEmail(m[2]).then(
+          () => { this.renderAccount(); notice('Email confirmed', 'Thanks. You can now reset your password by email if you ever need to.'); },
+          (err) => notice('Email not confirmed', err.message)
+        );
+      }
+    });
   },
 
   // The signed-in "Account" dialog: change email, change password, delete
@@ -2794,7 +2859,7 @@ const UI = {
     const email = $('manageEmail'), current = $('manageCurrent'), next = $('manageNew'), confirm = $('manageConfirm');
     const error = $('manageError'), submit = $('manageSubmit');
     const MODES = {
-      email: { title: 'Change email', submit: 'Save email', note: '', done: 'Email changed.' },
+      email: { title: 'Change email', submit: 'Save email', note: '', done: 'Email changed. We sent a link to the new address to confirm it.' },
       password: { title: 'Change password', submit: 'Save password', note: 'At least 8 characters. This signs you out on your other devices.', done: 'Password changed.' },
       delete: { title: 'Delete account', submit: 'Delete my account', note: 'This permanently deletes your account and its stats. It cannot be undone.', done: 'Your account has been deleted.' }
     };
@@ -2880,6 +2945,7 @@ const UI = {
     const user = Account.user;
     document.getElementById('accountStatus').textContent = user ? 'Signed in as ' + user.email + ' ·' : 'Playing as guest ·';
     document.getElementById('accountSignIn').classList.toggle('hidden', !!user);
+    document.getElementById('accountVerify').classList.toggle('hidden', !user || !!user.emailVerified);
     document.getElementById('accountManage').classList.toggle('hidden', !user);
     document.getElementById('accountSignOut').classList.toggle('hidden', !user);
   },

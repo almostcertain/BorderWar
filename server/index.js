@@ -120,7 +120,16 @@ const BUILD_INFO = JSON.stringify(getBuildInfo());
 // 404 and the client hides its sign-in UI.
 let accounts = null;
 try {
-  accounts = require('./accounts/routes').create({ dbPath: process.env.BORDERWAR_DB, log });
+  // No Resend key: production sends no mail; dev prints it to the console.
+  const mailer = require('./accounts/mailer').create({
+    apiKey: process.env.RESEND_API_KEY, from: process.env.BORDERWAR_MAIL_FROM, log,
+    console: process.env.NODE_ENV !== 'production'
+  });
+  if (!mailer.enabled) log.warn('accounts', 'no RESEND_API_KEY: password reset and email verification are off');
+  accounts = require('./accounts/routes').create({
+    dbPath: process.env.BORDERWAR_DB, log, mailer,
+    publicUrl: process.env.BORDERWAR_PUBLIC_URL || (process.env.NODE_ENV === 'production' ? 'https://borderwar.io' : null)
+  });
   const dbFile = process.env.BORDERWAR_DB || require('./accounts/db').DEFAULT_PATH;
   if (dbFile !== ':memory:') {
     require('./accounts/backup').start(accounts.db, path.join(path.dirname(dbFile), 'backups'), { log });

@@ -54,7 +54,7 @@ Settled by the project owner on 2026-10-03.
 
 **A1 — Sign-in is email + password, and nothing else.** No Google/Apple/Discord.
 
-**A2 — No password recovery in v1.** Consequence: no email service is needed, so
+**A2 — No password recovery in v1.** *(Superseded 2026-11-04: email verification and password reset were added; see `monetization.md` §8.1.)* Consequence: no email service is needed, so
 emails are **not verified** — an email is just a login identifier, never shown to
 anyone and never mailed. **A forgotten password means the account and its stats are
 unreachable**; the only remedy is the owner resetting it by hand (§4, admin script).

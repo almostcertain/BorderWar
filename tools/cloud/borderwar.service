@@ -12,6 +12,9 @@ Group=borderwar
 WorkingDirectory=/opt/borderwar/server
 Environment=NODE_ENV=production
 Environment=PORT=8124
+# Secrets (RESEND_API_KEY, payment keys): owner-only file on the box, not in
+# git. Optional; see docs/monetization.md.
+EnvironmentFile=-/opt/borderwar/server/data/secrets.env
 ExecStart=/usr/bin/node index.js
 
 # A crash restarts the server. A drain (tools/cloud/update.sh) exits cleanly

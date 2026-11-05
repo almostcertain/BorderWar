@@ -10,11 +10,15 @@ const sessionsModule = require('./sessions');
 const ratelimit = require('./ratelimit');
 const validate = require('./validate');
 const entitlements = require('./entitlements');
+const emailTokensModule = require('./emailtokens');
+const mailerModule = require('./mailer');
 const ProgressDefs = require('../../js/progress-defs.js');
 const { ApiError, send, clientIp, checkOrigin, readJson } = require('../httpapi');
 
-// opts: { dbPath, db, log, now, scrypt } — all optional; tests pass ':memory:'
-// and cheaper scrypt parameters.
+// opts: { dbPath, db, log, now, scrypt, mailer, publicUrl } — all optional;
+// tests pass ':memory:' and cheaper scrypt parameters. `publicUrl` is the base
+// for emailed links; without it the request's own Origin is used (dev only,
+// since a forged Host could point a reset link at another site).
 function create(opts) {
   opts = opts || {};
   const db = opts.db || dbModule.open(opts.dbPath);
@@ -22,17 +26,24 @@ function create(opts) {
   const now = opts.now || Date.now;
   const scrypt = opts.scrypt || passwords.DEFAULT_PARAMS;
   const sessions = sessionsModule.create(db, now);
+  const emailTokens = emailTokensModule.create(db, now);
+  const mailer = opts.mailer || mailerModule.create({});
 
   const loginLimit = ratelimit.window(10, 60 * 1000, now);
   const registerLimit = ratelimit.window(3, 60 * 60 * 1000, now);
   const emailLock = ratelimit.lockout(10, 15 * 60 * 1000, now);
+  const forgotIpLimit = ratelimit.window(5, 60 * 60 * 1000, now);
+  const forgotEmailLimit = ratelimit.window(3, 60 * 60 * 1000, now);
+  const tokenLimit = ratelimit.window(10, 60 * 1000, now);
+  const resendLimit = ratelimit.window(3, 60 * 60 * 1000, now);
 
   const q = {
     byId: db.prepare('SELECT * FROM users WHERE id = ?'),
     byEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
     insert: db.prepare('INSERT INTO users (email, pass_hash, display_name, tag, created_at) VALUES (?, ?, ?, ?, ?)'),
     setProfile: db.prepare('UPDATE users SET display_name = ?, tag = ?, settings_json = ? WHERE id = ?'),
-    setEmail: db.prepare('UPDATE users SET email = ? WHERE id = ?'),
+    setEmail: db.prepare('UPDATE users SET email = ?, email_verified_at = NULL WHERE id = ?'),
+    setVerified: db.prepare('UPDATE users SET email_verified_at = ? WHERE id = ? AND email = ?'),
     setHash: db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?'),
     setProgress: db.prepare('UPDATE users SET progress_json = ?, equipped_json = ? WHERE id = ?'),
     remove: db.prepare('DELETE FROM users WHERE id = ?')
@@ -41,7 +52,10 @@ function create(opts) {
   function publicUser(row) {
     let settings = {};
     try { settings = JSON.parse(row.settings_json) || {}; } catch (e) { /* keep {} */ }
-    return { id: row.id, email: row.email, displayName: row.display_name, tag: row.tag, settings, entitlements: entitlements.list(db, row.id) };
+    return {
+      id: row.id, email: row.email, emailVerified: !!row.email_verified_at, displayName: row.display_name,
+      tag: row.tag, settings, entitlements: entitlements.list(db, row.id)
+    };
   }
 
   // The stored copy, re-checked against today's tables in case an ID was retired.
@@ -90,6 +104,25 @@ function create(opts) {
     return passwords.verify(password, user.pass_hash);
   }
 
+  const linkBase = (origin) => (opts.publicUrl || origin.origin).replace(/\/+$/, '');
+
+  // Best effort: a mail that fails to send never fails the request.
+  function sendVerify(user, origin) {
+    if (!mailer.enabled) return;
+    const token = emailTokens.issue(user.id, 'verify', user.email);
+    mailer.send(user.email, 'Confirm your BorderWar email',
+      'Confirm this address for your BorderWar account:\n\n' + linkBase(origin) + '/#verify=' + token
+      + '\n\nThe link works for 24 hours. If you did not create an account, ignore this email.');
+  }
+
+  function newPassword(v) {
+    if (typeof v !== 'string' || v.length < 8 || v.length > 128) {
+      throw new ApiError(400, 'invalid', 'Password must be 8 to 128 characters');
+    }
+    if (!validate.password(v)) throw new ApiError(400, 'invalid', 'That password is too common. Pick another.');
+    return v;
+  }
+
   async function requirePassword(user, password) {
     if (!(await checkPassword(user, password))) throw new ApiError(403, 'bad-credentials', 'Wrong password');
   }
@@ -120,7 +153,9 @@ function create(opts) {
         throw e;
       }
       log.info('accounts', 'sign-up user ' + id);
-      return { body: { user: publicUser(q.byId.get(id)) }, cookie: sessionCookie(id, origin) };
+      const created = q.byId.get(id);
+      sendVerify(created, origin);
+      return { body: { user: publicUser(created) }, cookie: sessionCookie(id, origin) };
     },
 
     async login(req, body, origin) {
@@ -180,29 +215,91 @@ function create(opts) {
       return { body: publicProgress(merged) };
     },
 
-    async email(req, body) {
+    async email(req, body, origin) {
       const user = requireUser(req);
       await requirePassword(user, body.password);
       const email = validate.email(body.email);
       if (!email) throw new ApiError(400, 'invalid', 'Enter a valid email address');
       const other = q.byEmail.get(email);
       if (other && other.id !== user.id) throw new ApiError(409, 'email-taken');
+      if (email === user.email) return { body: { user: publicUser(user) } };
       q.setEmail.run(email, user.id);
+      emailTokens.clear(user.id, 'reset');
       log.info('accounts', 'email changed for user ' + user.id);
-      return { body: { user: publicUser(q.byId.get(user.id)) } };
+      if (mailer.enabled) {
+        mailer.send(user.email, 'Your BorderWar email was changed',
+          'The email on your BorderWar account was just changed to another address.'
+          + '\n\nIf that was not you, contact support@borderwar.io.');
+      }
+      const updated = q.byId.get(user.id);
+      sendVerify(updated, origin);
+      return { body: { user: publicUser(updated) } };
     },
 
     async password(req, body, origin) {
       const user = requireUser(req);
       await requirePassword(user, body.current);
-      if (typeof body.next !== 'string' || body.next.length < 8 || body.next.length > 128) {
-        throw new ApiError(400, 'invalid', 'Password must be 8 to 128 characters');
-      }
-      if (!validate.password(body.next)) throw new ApiError(400, 'invalid', 'That password is too common. Pick another.');
+      newPassword(body.next);
       q.setHash.run(await passwords.hash(body.next, scrypt), user.id);
       sessions.endAll(user.id);
+      emailTokens.clear(user.id, 'reset');
       log.info('accounts', 'password changed for user ' + user.id);
       return { body: { user: publicUser(user) }, cookie: sessionCookie(user.id, origin) };
+    },
+
+    // Always answers ok, so it can't be used to find out which emails have
+    // accounts.
+    async 'forgot-password'(req, body, origin) {
+      if (!mailer.enabled) throw new ApiError(503, 'mail-unavailable', 'Password reset is not available on this server');
+      if (!forgotIpLimit.take(clientIp(req))) throw new ApiError(429, 'rate-limited', 'Too many requests, try again later');
+      const email = validate.email(body.email);
+      if (!email) throw new ApiError(400, 'invalid', 'Enter a valid email address');
+      const user = q.byEmail.get(email);
+      if (user && forgotEmailLimit.take(email)) {
+        const token = emailTokens.issue(user.id, 'reset', user.email);
+        mailer.send(user.email, 'Reset your BorderWar password',
+          'Someone asked to reset the password for your BorderWar account. To choose a new one, open:\n\n'
+          + linkBase(origin) + '/#reset=' + token
+          + '\n\nThe link works for 1 hour. If you did not ask for this, ignore this email; your password has not changed.');
+        log.info('accounts', 'reset link sent for user ' + user.id);
+      }
+      return { body: { ok: true } };
+    },
+
+    // Opening the link proves the player reads that mailbox, so the email
+    // counts as verified too.
+    async 'reset-password'(req, body, origin) {
+      if (!tokenLimit.take(clientIp(req))) throw new ApiError(429, 'rate-limited');
+      newPassword(body.password);
+      const t = emailTokens.consume(body.token, 'reset');
+      const user = t && q.byId.get(t.userId);
+      if (!user || user.email !== t.email) throw new ApiError(400, 'bad-token', 'This reset link has expired or was already used. Ask for a new one.');
+      q.setHash.run(await passwords.hash(body.password, scrypt), user.id);
+      q.setVerified.run(now(), user.id, user.email);
+      sessions.endAll(user.id);
+      emailLock.clear(user.email);
+      log.info('accounts', 'password reset for user ' + user.id);
+      return { body: { user: publicUser(q.byId.get(user.id)) }, cookie: sessionCookie(user.id, origin) };
+    },
+
+    // Works without being signed in, so the link opens on any device.
+    async 'verify-email'(req, body) {
+      if (!tokenLimit.take(clientIp(req))) throw new ApiError(429, 'rate-limited');
+      const t = emailTokens.consume(body.token, 'verify');
+      const user = t && q.byId.get(t.userId);
+      if (!user || user.email !== t.email) throw new ApiError(400, 'bad-token', 'This link has expired or was already used.');
+      q.setVerified.run(now(), user.id, user.email);
+      log.info('accounts', 'email verified for user ' + user.id);
+      return { body: { ok: true } };
+    },
+
+    async 'resend-verification'(req, body, origin) {
+      const user = requireUser(req);
+      if (!mailer.enabled) throw new ApiError(503, 'mail-unavailable', 'Email is not available on this server');
+      if (user.email_verified_at) return { body: { ok: true } };
+      if (!resendLimit.take(String(user.id))) throw new ApiError(429, 'rate-limited', 'Too many emails sent, try again later');
+      sendVerify(user, origin);
+      return { body: { ok: true } };
     },
 
     async 'delete-account'(req, body, origin) {
@@ -242,7 +339,8 @@ function create(opts) {
   // Expired sessions are also dropped when they are next presented; this
   // clears the ones that never come back.
   sessions.prune();
-  const pruneTimer = setInterval(() => sessions.prune(), 6 * 60 * 60 * 1000);
+  emailTokens.prune();
+  const pruneTimer = setInterval(() => { sessions.prune(); emailTokens.prune(); }, 6 * 60 * 60 * 1000);
   pruneTimer.unref();
 
   return {
@@ -254,6 +352,7 @@ function create(opts) {
       const id = sessions.userIdForRequest(req);
       return id === null ? [] : entitlements.list(db, id);
     },
+    mailEnabled: mailer.enabled,
     close() { clearInterval(pruneTimer); db.close(); },
     db
   };
