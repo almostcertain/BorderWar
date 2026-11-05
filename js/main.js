@@ -19,6 +19,11 @@
   // While seeking, draw at most this often so the sim keeps the frame.
   const SEEK_DRAW_MS = 250;
 
+  // Hidden tabs get no animation frames, so an online match is advanced from
+  // turn arrival instead (see runHidden). Without it the client stops
+  // simulating, never votes a winner, and the server match never ends.
+  const HIDDEN_BUDGET_MS = 50;
+
   // performance.now() at the moment the most recent turn finished executing.
   // Only ever used for render smoothing — see Game.renderElapsed below.
   let lastTurnAt = 0;
@@ -536,6 +541,7 @@
 
     if (msg.type === 'turn') {
       Runner.addTurn(msg.turn);
+      if (document.hidden && !Transport.isLocal) runHidden();
       return;
     }
 
@@ -604,20 +610,8 @@
   const SAVER_FRAME_MS = 30, CAM_SETTLE_MS = 250;
   let lastDrawAt = 0, lastCamMoveAt = 0, lastCamX = 0, lastCamY = 0, lastCamScale = 0, lastPlaceHover = -1;
 
-  function loop(now) {
-    requestAnimationFrame(loop);
-    // Perf.bench drives turns and frames itself (js/perf.js).
-    if (!Render.tileCanvas || Perf.benching) return;
-
-    // Clamped so a tab-switch's huge gap doesn't fling the camera on return.
-    const panDt = lastPanFrameAt ? Math.min(0.1, (now - lastPanFrameAt) / 1000) : 0;
-    lastPanFrameAt = now;
-    Input.updateKeyPan(panDt);
-
-    // A seeking replay refills the queue itself between turns rather than
-    // waiting on LocalServer's 5 ms pump, up to the turn it is heading for.
-    const seeking = Replay.seeking();
-    const budgetEnd = performance.now() + (seeking ? SEEK_BUDGET_MS : SIM_BUDGET_MS);
+  function runTurns(budgetMs, seeking) {
+    const budgetEnd = performance.now() + budgetMs;
     while (performance.now() < budgetEnd) {
       if (Runner.pendingTurns() === 0) {
         if (!seeking || Runner.currTurn >= Replay.seekTarget) break;
@@ -633,6 +627,29 @@
       // achievement tracking must see each one (js/progress.js).
       Progress.sample();
     }
+  }
+
+  // Sim and end-of-match check without drawing, for a hidden tab.
+  function runHidden() {
+    if (!Render.tileCanvas || Perf.benching || Replay.active) return;
+    runTurns(HIDDEN_BUDGET_MS, false);
+    UI.checkEndGame();
+  }
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+    // Perf.bench drives turns and frames itself (js/perf.js).
+    if (!Render.tileCanvas || Perf.benching) return;
+
+    // Clamped so a tab-switch's huge gap doesn't fling the camera on return.
+    const panDt = lastPanFrameAt ? Math.min(0.1, (now - lastPanFrameAt) / 1000) : 0;
+    lastPanFrameAt = now;
+    Input.updateKeyPan(panDt);
+
+    // A seeking replay refills the queue itself between turns rather than
+    // waiting on LocalServer's 5 ms pump, up to the turn it is heading for.
+    const seeking = Replay.seeking();
+    runTurns(seeking ? SEEK_BUDGET_MS : SIM_BUDGET_MS, seeking);
     Replay.frame();
     if (Replay.seeking() && now - lastDrawAt < SEEK_DRAW_MS) return;
 
