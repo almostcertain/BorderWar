@@ -10,6 +10,7 @@ const sessionsModule = require('./sessions');
 const ratelimit = require('./ratelimit');
 const validate = require('./validate');
 const entitlements = require('./entitlements');
+const wallet = require('./wallet');
 const emailTokensModule = require('./emailtokens');
 const mailerModule = require('./mailer');
 const ProgressDefs = require('../../js/progress-defs.js');
@@ -54,7 +55,7 @@ function create(opts) {
     try { settings = JSON.parse(row.settings_json) || {}; } catch (e) { /* keep {} */ }
     return {
       id: row.id, email: row.email, emailVerified: !!row.email_verified_at, displayName: row.display_name,
-      tag: row.tag, settings, entitlements: entitlements.list(db, row.id)
+      tag: row.tag, settings, entitlements: entitlements.list(db, row.id), wallet: wallet.balances(db, row.id)
     };
   }
 

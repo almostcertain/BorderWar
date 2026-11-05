@@ -69,7 +69,28 @@ const MIGRATIONS = [
      created_at INTEGER NOT NULL,
      expires_at INTEGER NOT NULL
    );
-   CREATE INDEX email_tokens_user ON email_tokens(user_id);`
+   CREATE INDEX email_tokens_user ON email_tokens(user_id);`,
+  // Currencies (docs/monetization.md §6). `ledger` is append-only; `wallets`
+  // caches each balance. A non-empty (source, ref) is applied once only.
+  `CREATE TABLE ledger (
+     id            INTEGER PRIMARY KEY,
+     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     currency      TEXT NOT NULL,
+     delta         INTEGER NOT NULL,
+     balance_after INTEGER NOT NULL,
+     reason        TEXT NOT NULL DEFAULT '',
+     source        TEXT NOT NULL,
+     ref           TEXT NOT NULL DEFAULT '',
+     created_at    INTEGER NOT NULL
+   );
+   CREATE INDEX ledger_user ON ledger(user_id, id);
+   CREATE UNIQUE INDEX ledger_ref ON ledger(source, ref) WHERE ref <> '';
+   CREATE TABLE wallets (
+     user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     currency TEXT NOT NULL,
+     balance  INTEGER NOT NULL,
+     PRIMARY KEY (user_id, currency)
+   );`
 ];
 
 function schemaVersion(db) {

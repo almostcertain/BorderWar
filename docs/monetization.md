@@ -230,6 +230,25 @@ New tables in the accounts database, all owned by one module
   notice names it). `privacy.html` must name Resend as a processor (MO-7).
 - Tests: `server/accounts/recovery.test.js`.
 
+## 8.2 MO-2 as built (2026-11-05)
+
+- `server/accounts/wallet.js` is the only code that changes a balance. Every
+  change is a `ledger` row (schema v5) with the balance after it; `wallets` caches
+  the balance. `wallet.consistent()` checks the two agree.
+- **Repeat-safe:** a row with a non-empty `(source, ref)` (e.g. `paddle`, a
+  transaction id) is applied once; a retried webhook gets `duplicate: true`.
+- **No overspending:** a take-away below zero is refused unless `allowNegative`,
+  which only refunds and admin adjustments use (a refund of BB already spent
+  leaves a negative balance; §3).
+- Runs in a savepoint, so a later store purchase can take BB and grant the item
+  in one transaction.
+- `/api/me` gains `wallet: {bb, marks}`; the menu strip shows both when signed in.
+  The account export and the admin page's user list include them.
+- **Owner commands:** `admin.js wallet <email>` (balances and the last 20
+  changes) and `admin.js adjust <email> <bb|marks> <+n|-n> <note>` (a note is
+  required; it is kept in the ledger).
+- Tests: `server/accounts/wallet.test.js`.
+
 ## 9. Task breakdown (proposed order)
 
 1. **MO-1 Email verification and password reset.** Prerequisite (§8.1).

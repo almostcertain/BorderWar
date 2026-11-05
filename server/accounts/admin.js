@@ -8,6 +8,9 @@
 //   node server/accounts/admin.js revoke-sessions --all     sign everyone out (docs/breach-response.md)
 //   node server/accounts/admin.js grant <email> <pack>      give an account a paid pack (docs/customization.md)
 //   node server/accounts/admin.js revoke <email> <pack>     take it away again (a refund)
+//   node server/accounts/admin.js wallet <email>            balances and the last 20 changes
+//   node server/accounts/admin.js adjust <email> <bb|marks> <+n|-n> <note>
+//                                                           add or take currency (support, refunds)
 //
 // Safe to run while the server is up; SQLite handles the second connection.
 'use strict';
@@ -17,6 +20,7 @@ const dbModule = require('./db');
 const passwords = require('./passwords');
 const validate = require('./validate');
 const entitlements = require('./entitlements');
+const wallet = require('./wallet');
 
 function findUser(db, email) {
   const clean = validate.email(email);
@@ -51,6 +55,8 @@ function exportUser(db, email, now) {
     },
     progress: { unlocked: progress.unlocked || {}, counters: progress.counters || {}, equipped: parse(user.equipped_json) },
     entitlements: entitlements.history(db, user.id).map(e => ({ pack: e.sku, grantedAt: iso(e.granted_at), source: e.source, ref: e.ref })),
+    wallet: wallet.balances(db, user.id),
+    ledger: wallet.history(db, user.id, 1000).map(l => Object.assign({}, l, { createdAt: iso(l.createdAt) })),
     sessions: sessions.map(s => ({ createdAt: iso(s.created_at), lastSeenAt: iso(s.last_seen_at), expiresAt: iso(s.expires_at) })),
     matches: matches.map(m => ({
       gameId: m.game_id, endedAt: iso(m.ended_at), durationTurns: m.duration_turns, map: m.map, mode: m.mode,
@@ -102,6 +108,27 @@ function setEntitlement(db, email, sku, on, now) {
   return entitlements.list(db, user.id);
 }
 
+// Admin change to a balance. May go below zero (taking back BB already spent).
+// Returns the wallet afterwards, or null if there is no such account.
+function adjustWallet(db, email, currency, delta, note, now) {
+  const user = findUser(db, email);
+  if (!user) return null;
+  wallet.apply(db, user.id, currency, delta, { reason: note, source: 'admin', allowNegative: true, now });
+  return wallet.balances(db, user.id);
+}
+
+function walletReport(db, email) {
+  const user = findUser(db, email);
+  if (!user) return null;
+  const b = wallet.balances(db, user.id);
+  const lines = ['Border Bucks: ' + b.bb + '   Marks: ' + b.marks];
+  for (const l of wallet.history(db, user.id, 20)) {
+    lines.push(iso(l.createdAt) + '  ' + (l.delta > 0 ? '+' : '') + l.delta + ' ' + l.currency
+      + '  -> ' + l.balanceAfter + '  ' + l.source + (l.ref ? ' ' + l.ref : '') + (l.reason ? '  "' + l.reason + '"' : ''));
+  }
+  return lines.join('\n');
+}
+
 const LIST_MAX = 200;
 
 // One page of accounts, newest first, for the admin page. `query` matches part
@@ -133,17 +160,26 @@ function listUsers(db, opts) {
       createdAt: Number(r.created_at),
       lastSeenAt: r.last_seen_at === null ? null : Number(r.last_seen_at),
       matches: Number(r.matches),
-      packs: entitlements.list(db, r.id)
+      packs: entitlements.list(db, r.id),
+      wallet: wallet.balances(db, r.id)
     }))
   };
 }
 
 async function main(argv) {
   const [command, arg, pack] = argv;
-  const usage = 'Usage: node server/accounts/admin.js stats | export <email> | reset-password <email> | revoke-sessions <email>|--all | grant <email> <pack> | revoke <email> <pack>';
+  const usage = 'Usage: node server/accounts/admin.js stats | export <email> | reset-password <email> | revoke-sessions <email>|--all'
+    + ' | grant <email> <pack> | revoke <email> <pack> | wallet <email> | adjust <email> <bb|marks> <+n|-n> <note>';
   const packCommand = command === 'grant' || command === 'revoke';
-  if (!['stats', 'export', 'reset-password', 'revoke-sessions', 'grant', 'revoke'].includes(command) || (command !== 'stats' && !arg)) {
+  if (!['stats', 'export', 'reset-password', 'revoke-sessions', 'grant', 'revoke', 'wallet', 'adjust'].includes(command) || (command !== 'stats' && !arg)) {
     console.error(usage);
+    return 2;
+  }
+  const delta = Number(argv[3]);
+  const note = argv.slice(4).join(' ').trim();
+  if (command === 'adjust' && (!wallet.known(pack) || !Number.isSafeInteger(delta) || delta === 0
+    || Math.abs(delta) > wallet.MAX_AMOUNT || !note)) {
+    console.error('Usage: adjust <email> <bb|marks> <+n|-n> <note>   e.g. adjust a@b.co bb +500 refund for lost match');
     return 2;
   }
   if (packCommand && !entitlements.known(pack)) {
@@ -162,6 +198,11 @@ async function main(argv) {
     } else if (command === 'reset-password') {
       const temp = await resetPassword(db, arg);
       out = temp && 'Temporary password: ' + temp + '\nTheir sessions were ended. Ask them to change it after signing in.';
+    } else if (command === 'wallet') {
+      out = walletReport(db, arg);
+    } else if (command === 'adjust') {
+      const b = adjustWallet(db, arg, pack, delta, note);
+      out = b && 'Border Bucks: ' + b.bb + '   Marks: ' + b.marks + '\nThey see the change the next time they load the page.';
     } else if (packCommand) {
       const packs = setEntitlement(db, arg, pack, command === 'grant');
       out = packs && 'Packs on this account: ' + (packs.join(', ') || 'none') + '\nThey see the change the next time they load the page.';
@@ -187,4 +228,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { accountStats, exportUser, findUser, listUsers, resetPassword, revokeSessions, setEntitlement };
+module.exports = { accountStats, adjustWallet, walletReport, exportUser, findUser, listUsers, resetPassword, revokeSessions, setEntitlement };

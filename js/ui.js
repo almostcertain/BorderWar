@@ -2944,6 +2944,11 @@ const UI = {
     Progress.accountChanged();
     const user = Account.user;
     document.getElementById('accountStatus').textContent = user ? 'Signed in as ' + user.email + ' ·' : 'Playing as guest ·';
+    // Balances (docs/monetization.md); nothing spends them yet.
+    const w = user && user.wallet;
+    const walletEl = document.getElementById('accountWallet');
+    walletEl.classList.toggle('hidden', !w);
+    if (w) walletEl.textContent = ' ' + w.bb.toLocaleString() + ' Border Bucks · ' + w.marks.toLocaleString() + ' Marks ·';
     document.getElementById('accountSignIn').classList.toggle('hidden', !!user);
     document.getElementById('accountVerify').classList.toggle('hidden', !user || !!user.emailVerified);
     document.getElementById('accountManage').classList.toggle('hidden', !user);

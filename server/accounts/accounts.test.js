@@ -252,7 +252,7 @@ test('routes: profile update', async () => {
   await b.post('register', { email: 'a@b.co', password: PASS });
   assert.strictEqual((await b.get('me')).body.user.displayName, 'Player');
   const up = await b.post('profile', { displayName: 'Ada', tag: 'xy', settings: { uiScale: 1.2 } });
-  assert.deepStrictEqual(up.body.user, { id: 1, email: 'a@b.co', emailVerified: false, displayName: 'Ada', tag: 'XY', settings: { uiScale: 1.2 }, entitlements: [] });
+  assert.deepStrictEqual(up.body.user, { id: 1, email: 'a@b.co', emailVerified: false, displayName: 'Ada', tag: 'XY', settings: { uiScale: 1.2 }, entitlements: [], wallet: { bb: 0, marks: 0 } });
   // Omitted fields are kept.
   assert.strictEqual((await b.post('profile', { tag: '' })).body.user.displayName, 'Ada');
   assert.strictEqual((await b.post('profile', { displayName: '[X] Ada' })).status, 400);
@@ -495,7 +495,7 @@ test('routes: progress needs a session and the usual POST checks', async () => {
   assert.strictEqual((await b.post('progress', {}, { Origin: 'https://evil.example' })).status, 403);
   assert.strictEqual((await b.post('progress', {}, { 'Content-Type': 'text/plain' })).status, 415);
   // /api/me stays as it was.
-  assert.deepStrictEqual(Object.keys((await b.get('me')).body.user), ['id', 'email', 'emailVerified', 'displayName', 'tag', 'settings', 'entitlements']);
+  assert.deepStrictEqual(Object.keys((await b.get('me')).body.user), ['id', 'email', 'emailVerified', 'displayName', 'tag', 'settings', 'entitlements', 'wallet']);
   s.close();
 });
 
