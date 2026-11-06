@@ -736,12 +736,36 @@ const GameMap = {
       this.elevation[i] = land ? magnitude : 0.48;
     }
 
+    this.widenChannels();
     this._labelRegions();
     this.pruneSmallLandmasses(this.MIN_LANDMASS_TILES);
     this.classifyTerrain();
     this.computeShoreDist();
     this.computeWaterComponents();
     return this.landTiles;
+  },
+
+  // One-tile rivers read as borders when zoomed out, so every water tile
+  // with land on both opposite sides takes one neighbour as water too. The
+  // neighbour is carved only if land lies beyond it, so no land strip is cut.
+  widenChannels() {
+    const w = this.width, h = this.height, o = this.owner, el = this.elevation;
+    const land = i => o[i] !== WATER;
+    const carve = i => { o[i] = WATER; el[i] = 0.48; this.roughness[i] = 0; };
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        if (land(i)) continue;
+        if (land(i - 1) && land(i + 1)) {
+          if (x < w - 2 && land(i + 2)) carve(i + 1);
+          else if (x > 1 && land(i - 2)) carve(i - 1);
+        }
+        if (land(i - w) && land(i + w)) {
+          if (y < h - 2 && land(i + 2 * w)) carve(i + w);
+          else if (y > 1 && land(i - 2 * w)) carve(i - w);
+        }
+      }
+    }
   },
 
   // Finds the sea level whose largest connected landmass lands closest to
