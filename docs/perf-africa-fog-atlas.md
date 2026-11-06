@@ -67,21 +67,15 @@ Options, cheapest first:
 Expected win: most of the 26–36% memcpy share on the game thread, and much of
 the GPU process load.
 
-**Status: option 1 implemented** (`Render.chunkCanvases`, `stampChunkCanvas`
-in `render.js`). It covers every `drawLayer` layer: tile, hover, relief,
-ground. It is on in Firefox only, decided per layer when the layer is built.
-Checked in the Browser pane with the flag forced on: all 256 Africa chunks are
-pixel-identical to the tile layer, hover works, dispose frees the canvases.
-The speed-up itself can only be confirmed in Firefox:
-
-1. Same setup as above (solo Africa, fog on, atlas), zoomed out, ~20 s.
-   Capture a Firefox profile.
-2. Pass: `memcpy` under `drawLayer → drawImage` mostly gone, and
-   `CanvasRenderer` in the GPU process well under 58%.
-3. A/B in one session: `Render.chunkCanvases = false` in the console, then
-   start a new match (layers read the flag when built).
-
-If Firefox still copies canvas-to-canvas draws, fall back to option 2.
+**Option 1 tried and reverted.** `0a071c3` gave every layer chunk its own
+canvas (~800 canvases on Africa: tile, hover, relief, ground). The next
+Firefox profile (08:24) dropped from 85 to 13 fps with the game thread at
+98%. The main canvas itself was rasterising in Skia on the CPU
+(`S32_alpha_D32_filter_DX`, `filter_scale`) in every draw path (paper, far
+glyphs, fronts, territory), where the first profile drew on the GPU. Most
+likely Firefox stops accelerating a tab's canvases once it has that many.
+Lesson: in Firefox, don't create hundreds of canvases. Any GPU-resident
+cache must be one or a few large canvases.
 
 ## Finding 2: the hitches are mostly sim spikes
 
