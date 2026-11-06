@@ -1335,8 +1335,8 @@ const Render = {
   // --- Chunked bitmap layers ---------------------------------------------------
   // tileCanvas and hoverCanvas are map-sized CPU canvases, and Firefox
   // copies such a canvas to its GPU process on every drawImage. So each
-  // layer is stamped from LAYER_CHUNK-sized ImageBitmaps (uploaded once,
-  // reused); only chunks whose pixels changed get a new one. A chunk
+  // layer is stamped from LAYER_CHUNK-sized ImageBitmaps (or, in Firefox,
+  // canvases: chunkCanvases); only chunks whose pixels changed get a new one. A chunk
   // waiting on its bitmap shows the old one for a frame.
   //
   // An opaque layer's bitmaps overlap their right and bottom neighbours by
@@ -1347,14 +1347,22 @@ const Render = {
   // all over a large map make one box cover everything.
   LAYER_CHUNK: 128,
 
+  // Firefox's remote canvas re-sends an ImageBitmap's pixels on every
+  // drawImage, so there each new bitmap is drawn once into a chunk canvas
+  // that stays in the GPU process, and frames draw that. Chromium may keep
+  // small canvases on the CPU, so it draws the bitmaps. Read at makeLayer.
+  // See docs/perf-africa-fog-atlas.md.
+  chunkCanvases: typeof navigator !== 'undefined' && /Firefox\//.test(navigator.userAgent),
+
   makeLayer(canvas, overlap) {
     const C = this.LAYER_CHUNK, w = canvas.width, h = canvas.height, o = overlap ? 1 : 0;
-    const layer = { canvas, cols: Math.ceil(w / C), rows: Math.ceil(h / C), chunks: [], alive: true, epoch: 0 };
+    const layer = { canvas, cols: Math.ceil(w / C), rows: Math.ceil(h / C), chunks: [], alive: true, epoch: 0,
+                    gpu: this.chunkCanvases };
     for (let cy = 0; cy < layer.rows; cy++) {
       for (let cx = 0; cx < layer.cols; cx++) {
         const x = cx * C, y = cy * C;
         layer.chunks.push({ x, y, w: Math.min(C + o, w - x), h: Math.min(C + o, h - y),
-                            bmp: null, bmpEpoch: 0, dirty: true, pending: false, put: false, at: 0 });
+                            bmp: null, cv: null, img: null, bmpEpoch: 0, dirty: true, pending: false, put: false, at: 0 });
       }
     }
     return layer;
@@ -1362,7 +1370,25 @@ const Render = {
 
   disposeLayer(layer) {
     layer.alive = false;
-    for (const c of layer.chunks) if (c.bmp) { c.bmp.close(); c.bmp = null; }
+    for (const c of layer.chunks) {
+      if (c.bmp) { c.bmp.close(); c.bmp = null; }
+      if (c.cv) { c.cv.width = 0; c.cv = null; }
+      c.img = null;
+    }
+  },
+
+  // Copies a chunk's new bitmap into its own canvas (layer.gpu).
+  stampChunkCanvas(c, bmp) {
+    if (!c.cv) {
+      c.cv = document.createElement('canvas');
+      c.cv.width = c.w;
+      c.cv.height = c.h;
+      // A lost-and-restored canvas comes back blank.
+      c.cv.addEventListener('contextrestored', () => { c.dirty = true; });
+    }
+    const g = c.cv.getContext('2d');
+    g.clearRect(0, 0, c.w, c.h);
+    g.drawImage(bmp, 0, 0);
   },
 
   // Flags every chunk whose bitmap covers any of tiles [minX..maxX]x[minY..maxY].
@@ -1422,7 +1448,7 @@ const Render = {
     const onMs = s < 1.5 ? this.REFRESH_MS_FAR : s < 3 ? this.REFRESH_MS_MID : 0;
     for (const c of layer.chunks) {
       if (!c.dirty || c.pending) continue;
-      if (layer.throttle && c.bmp) {
+      if (layer.throttle && c.img) {
         const off = c.x > vx1 || c.x + c.w < vx0 || c.y > vy1 || c.y + c.h < vy0;
         if (now - c.at < (off ? this.REFRESH_MS_OFFSCREEN : onMs)) continue;
         c.at = now;
@@ -1440,8 +1466,14 @@ const Render = {
       req.then(bmp => {
         c.pending = false;
         if (!layer.alive) { bmp.close(); return; }
-        if (c.bmp) c.bmp.close();
-        c.bmp = bmp;
+        if (layer.gpu) {
+          this.stampChunkCanvas(c, bmp);
+          bmp.close();
+          c.img = c.cv;
+        } else {
+          if (c.bmp) c.bmp.close();
+          c.bmp = c.img = bmp;
+        }
         c.bmpEpoch = epoch;
       }, () => { c.pending = false; layer.noBitmap = true; });
     }
@@ -1460,7 +1492,7 @@ const Render = {
       if (box && (c.x > box.maxX || c.x + c.w <= box.minX || c.y > box.maxY || c.y + c.h <= box.minY)) continue;
       // A bitmap from before the layer's last epoch (the hover moved to
       // another nation) would show the old tint as a chunk-sized square.
-      if (c.bmp && c.bmpEpoch !== layer.epoch) continue;
+      if (c.img && c.bmpEpoch !== layer.epoch) continue;
       if (layer.snap) {
         // A translucent layer's chunks can't overlap, so each edge lands on a
         // device pixel shared with its neighbour: a fractional edge would be
@@ -1469,9 +1501,9 @@ const Render = {
         const x0 = Math.round((ox + c.x) * s + hx), x1 = Math.round((ox + c.x + c.w) * s + hx);
         const y0 = Math.round((oy + c.y) * s + hy), y1 = Math.round((oy + c.y + c.h) * s + hy);
         const dx = (x0 - hx) / s, dy = (y0 - hy) / s, dw = (x1 - x0) / s, dh = (y1 - y0) / s;
-        if (c.bmp) ctx.drawImage(c.bmp, 0, 0, c.w, c.h, dx, dy, dw, dh);
+        if (c.img) ctx.drawImage(c.img, 0, 0, c.w, c.h, dx, dy, dw, dh);
         else ctx.drawImage(layer.canvas, c.x, c.y, c.w, c.h, dx, dy, dw, dh);
-      } else if (c.bmp) ctx.drawImage(c.bmp, ox + c.x, oy + c.y);
+      } else if (c.img) ctx.drawImage(c.img, ox + c.x, oy + c.y);
       else ctx.drawImage(layer.canvas, c.x, c.y, c.w, c.h, ox + c.x, oy + c.y, c.w, c.h);
     }
   },
