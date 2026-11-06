@@ -1044,17 +1044,15 @@ const GameMap = {
       river[i] = 1;
       dist[i] = down[i] < 0 ? 0 : dist[down[i]] + 1;
     }
-    // On the big maps a one-tile channel all but vanishes when zoomed out,
-    // so trunks are drawn two wide there. Widened tiles are flagged 2, not
-    // 1, so the estuary pass (which walks the channel itself) skips them.
-    if (w >= 1000) {
-      for (let k = 0; k < count; k++) {
-        const i = order[k];
-        if (!river[i] || acc[i] < chosen.get(mouth[i]) * this.ESTUARY_SHARE) continue;
-        const e = i % w < w - 1 ? i + 1 : -1, s = i + w < size ? i + w : -1;
-        const j = down[i] === e || down[i] === i - 1 ? s : e;
-        if (j >= 0 && owner[j] !== WATER && !river[j]) river[j] = 2;
-      }
+    // A one-tile channel reads as a border line when zoomed out, so every
+    // river is two wide. Widened tiles are flagged 2, not 1, so the estuary
+    // pass (which walks the channel itself) skips them.
+    for (let k = 0; k < count; k++) {
+      const i = order[k];
+      if (river[i] !== 1) continue;
+      const e = i % w < w - 1 ? i + 1 : -1, s = i + w < size ? i + w : -1;
+      const j = down[i] === e || down[i] === i - 1 ? s : e;
+      if (j >= 0 && owner[j] !== WATER && !river[j]) river[j] = 2;
     }
 
     // Estuaries: the trunk's last stretch widens, three wide for its seaward
