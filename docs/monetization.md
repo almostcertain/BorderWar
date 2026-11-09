@@ -317,6 +317,9 @@ New tables in the accounts database, all owned by one module
   `PADDLE_API_KEY`, `PADDLE_CLIENT_TOKEN`, `PADDLE_WEBHOOK_SECRET`,
   `BORDERWAR_SHOP_TESTERS`. The shop is off unless the first three keys are set.
 - Tests: `server/accounts/paddle.test.js`.
+- **Local shop:** `tools\dev-shop` starts the server with the sandbox keys from
+  `server/data/paddle-sandbox.env` (gitignored; asks for them the first time).
+  Payments complete but don't credit locally: the webhook goes to borderwar.io.
 
 ### Owner setup (sandbox first, then the same again in the live account)
 
