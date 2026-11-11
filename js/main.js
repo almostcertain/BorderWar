@@ -749,7 +749,7 @@
   // A singleplayer match never opens a socket, so the server can't see it.
   // While one is on screen, say so every 30 s; the admin page counts the pages
   // it has heard from lately, with the match's settings. The id is random, made
-  // per page load and stored nowhere; no account name is sent. Tutorials count;
+  // per page load and stored nowhere; the display name is sent, no account. Tutorials count;
   // replays, the menu and hidden tabs don't.
   const PRESENCE_MS = 30000;
   const presenceID = Array.from(crypto.getRandomValues(new Uint8Array(8)),
@@ -762,7 +762,7 @@
     if (!document.getElementById('overlay').classList.contains('hidden')) return;
     const m = presenceMatch || {};
     const body = JSON.stringify({
-      id: presenceID, map: m.map, mode: m.mode, bots: m.bots, tribes: m.tribes,
+      id: presenceID, name: UI.getPlayerName() || null, map: m.map, mode: m.mode, bots: m.bots, tribes: m.tribes,
       tutorial: !!m.tutorial, age: m.at ? Math.round((performance.now() - m.at) / 1000) : 0
     });
     fetch('presence', { method: 'POST', body: body, credentials: 'omit', cache: 'no-store' })

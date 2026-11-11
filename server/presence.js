@@ -1,7 +1,7 @@
 // Singleplayer presence. A singleplayer match runs entirely in the browser and
 // never opens a socket, so the server only knows about one if the page says so:
 //
-//   POST /presence   body: JSON {id, map, mode, bots, tribes, tutorial, age}
+//   POST /presence   body: JSON {id, name, map, mode, bots, tribes, tutorial, age}
 //                    (or just the bare id). js/main.js sends it every 30 s
 //                    while a singleplayer match is on screen; `age` is seconds
 //                    since the match began.
@@ -9,7 +9,7 @@
 // count() is how many different ids were heard from in the last TTL_MS;
 // matches() lists them with their settings. The admin page shows both
 // (server/admin.js). Ids and settings are held in memory until they expire and
-// are never logged or written to disk. No account or player name is sent.
+// are never logged or written to disk. The player's display name is sent; no account.
 //
 // Anyone can post made-up ids, so read the numbers as a headcount, not a fact.
 'use strict';
@@ -37,6 +37,7 @@ function parse(text) {
   return {
     id: j.id,
     info: {
+      name: typeof j.name === 'string' ? j.name.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 32) || null : null,
       map: MAP_SIZES.has(j.map) ? j.map : null,
       mode: typeof j.mode === 'string' && MODE_RE.test(j.mode) ? j.mode : null,
       bots: int(j.bots, 1000),
@@ -92,6 +93,7 @@ function create() {
       const i = e.info || {};
       out.push({
         ref: id.slice(0, 4),
+        name: i.name || null,
         map: i.map || null,
         mode: i.mode || null,
         bots: i.bots == null ? null : i.bots,

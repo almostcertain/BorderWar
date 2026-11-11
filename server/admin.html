@@ -270,6 +270,7 @@
     var card = el('div', 'game');
     var top = el('div', 'top');
     top.appendChild(el('span', 'id', m.ref));
+    top.appendChild(el('span', 'meta', m.name || '(unnamed)'));
     if (m.tutorial) top.appendChild(el('span', 'tag', 'tutorial'));
     var meta = [];
     if (m.map) meta.push(m.map + ' map');
