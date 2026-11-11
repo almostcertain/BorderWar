@@ -541,7 +541,10 @@ const Render = {
           else for (let q = 0; q < A.RIPPLES.length; q++) if (Math.abs(s - A.RIPPLES[q]) < ripW) { ink = A.RIPPLE_INK[q]; break; }
           if (ink) { r += (A.coast[0] - r) * ink; gr += (A.coast[1] - gr) * ink; b += (A.coast[2] - b) * ink; }
           // Rivers: blue with a thin bank line instead of the heavy shore.
-          const q = rv[i] * w00 + rv[i + 1] * w10 + rv[j] * w01 + rv[j + 1] * w11;
+          // River share of the water corners only: counting land as non-river
+          // let the brown shore ink show through at bends.
+          const ww = (sd[i] > 0 ? w00 : 0) + (sd[i + 1] > 0 ? w10 : 0) + (sd[j] > 0 ? w01 : 0) + (sd[j + 1] > 0 ? w11 : 0);
+          const q = ww > 0 ? (rv[i] * w00 + rv[i + 1] * w10 + rv[j] * w01 + rv[j + 1] * w11) / ww : 0;
           if (q > 0) {
             let rr = A.river[0], rg = A.river[1], rb = A.river[2];
             if (s < 0.5 + 0.7 / k) { rr += (A.coast[0] - rr) * 0.45; rg += (A.coast[1] - rg) * 0.45; rb += (A.coast[2] - rb) * 0.45; }
@@ -1001,20 +1004,38 @@ const Render = {
   // rivers and narrow straits, drawn as rivers rather than inked sea.
   channelMask(reach) {
     const w = GameMap.width, h = GameMap.height, own = GameMap.owner, m = new Uint8Array(w * h);
+    const land = (x, y) => x >= 0 && y >= 0 && x < w && y < h && own[y * w + x] !== WATER;
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const i = y * w + x;
         if (own[i] !== WATER) continue;
         let l = 0, r = 0, u = 0, d = 0;
         for (let k = 1; k <= reach; k++) {
-          if (!l && x - k >= 0 && own[i - k] !== WATER) l = 1;
-          if (!r && x + k < w && own[i + k] !== WATER) r = 1;
-          if (!u && y - k >= 0 && own[i - k * w] !== WATER) u = 1;
-          if (!d && y + k < h && own[i + k * w] !== WATER) d = 1;
+          l = l || land(x - k, y); r = r || land(x + k, y);
+          u = u || land(x, y - k); d = d || land(x, y + k);
         }
         if ((l && r) || (u && d)) m[i] = 1;
       }
     }
+    // The outer corner of a sharp bend fails both tests and would be inked
+    // as sea coast. Take it when it joins river on two adjacent sides and
+    // is pinched between land diagonally.
+    const add = [];
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        if (own[i] !== WATER || m[i]) continue;
+        const L = m[i - 1], R = m[i + 1], U = m[i - w], D = m[i + w];
+        if (!((L || R) && (U || D))) continue;
+        let nw = 0, se = 0, ne = 0, sw = 0;
+        for (let k = 1; k <= reach; k++) {
+          nw = nw || land(x - k, y - k); se = se || land(x + k, y + k);
+          ne = ne || land(x + k, y - k); sw = sw || land(x - k, y + k);
+        }
+        if ((nw && se) || (ne && sw)) add.push(i);
+      }
+    }
+    for (const i of add) m[i] = 1;
     return m;
   },
 
