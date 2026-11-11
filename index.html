@@ -241,6 +241,13 @@
       <input id="optMusicVol" type="range" min="0" max="1" step="0.05">
     </label>
     <label class="optRow">
+      <input id="optSfxOn" type="checkbox"> <span>Sound effects<small>Attacks, alarms, building, nukes and results</small></span>
+    </label>
+    <label class="optRow">
+      <span>Effects volume</span>
+      <input id="optSfxVol" type="range" min="0" max="1" step="0.05">
+    </label>
+    <label class="optRow">
       <span>Map style<small>Atlas is an early test of the parchment look</small></span>
       <select id="optMapStyle">
         <option value="classic">Classic</option>
@@ -269,6 +276,20 @@
     <div id="achLoadout" class="hidden"></div>
     <div id="achGuestNote" class="hidden">Sign in to keep these on every device.</div>
     <button type="button" id="achClose" class="primaryBtn">Done</button>
+  </div>
+</div>
+
+<!-- Daily Challenge (js/daily.js, docs/retention-pack.md). -->
+<div id="dailyOverlay" class="hidden">
+  <div class="panel optionsPanel" role="dialog" aria-labelledby="dailyTitle">
+    <h2 id="dailyTitle">Daily Challenge</h2>
+    <div id="dailyLabel"></div>
+    <div id="dailyMap" class="mapPreview"><canvas id="dailyMapCanvas" width="400" height="200"></canvas><span class="dailyFogNote">Fog of war: the map is hidden until you explore it</span></div>
+    <div id="dailyFacts"></div>
+    <div id="dailyBest" class="statGrid"></div>
+    <div id="dailyRules">Score: land held at your peak, nations you outlast, and a big bonus for winning fast. Play as often as you like; your best counts. Play every day to build a streak.</div>
+    <button type="button" id="dailyPlay" class="primaryBtn">Play today's challenge</button>
+    <div id="dailyLinks"><button type="button" id="dailyShare" class="linkBtn hidden">Share result</button><button type="button" id="dailyClose" class="linkBtn">Close</button></div>
   </div>
 </div>
 
@@ -386,6 +407,8 @@
          (UI.setupLobby); the tutorial row starts a guided first match
          (js/tutorial.js). Replays is a .modeTab too, down in #menuFoot. -->
     <div id="modeTabs">
+      <!-- Daily Challenge (js/daily.js): opens #dailyOverlay. -->
+      <button type="button" id="dailyBtn" class="menuRow"><span class="menuRowText"><b id="dailyRowTitle">Daily Challenge</b><small id="dailyRowSub"></small></span><span id="dailyStreak" class="hidden"></span></button>
       <button type="button" class="modeTab menuRow" data-mode="friends" data-title="Create game"><span class="menuRowText"><b>Join or host</b><small>Host a lobby or enter a code</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
       <button type="button" class="modeTab menuRow" data-mode="sp" data-title="Create game"><span class="menuRowText"><b>Solo</b><small>Pick the map and difficulty</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
       <button type="button" id="tutorialBtn" class="menuRow"><span class="menuRowText"><b>Tutorial</b><small>New here? Learn in a guided first match</small></span><span class="menuRowGo" aria-hidden="true">›</span></button>
@@ -615,6 +638,13 @@
     <h1 id="endTitle">Defeated</h1>
     <p id="endText"></p>
     <div id="endEarned" class="hidden"></div>
+    <!-- The match report (js/matchstats.js). -->
+    <div id="endStats" class="hidden">
+      <div id="endDaily" class="hidden"></div>
+      <div id="endChartWrap"><canvas id="endChart"></canvas><div id="endChartKey"><span class="keyMe">You</span><span class="keyRival">Strongest rival</span><span>share of the map</span></div></div>
+      <div id="endStatGrid" class="statGrid"></div>
+      <button id="endShareBtn" type="button" class="linkBtn">Share result</button>
+    </div>
     <button id="restartBtn">Play Again</button>
     <button id="endTutorialBtn" class="hidden">Play Tutorial</button>
     <button id="endMenuBtn">Main Menu</button>
@@ -651,7 +681,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'game/specialize', 'game/poi', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'watch', 'render', 'input', 'account', 'progress-defs', 'progress', 'markup', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'options', 'install', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'game/specialize', 'game/poi', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'watch', 'render', 'input', 'account', 'progress-defs', 'progress', 'markup', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'sfx', 'matchstats', 'daily', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

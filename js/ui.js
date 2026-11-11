@@ -209,7 +209,7 @@ const UI = {
 
     document.getElementById('debugToggle').addEventListener('click', () => {
       this.debugOpen = !this.debugOpen;
-      if (this.debugOpen) Progress.disqualify();
+      if (this.debugOpen) { Progress.disqualify(); Daily.disqualify(); }
     });
 
     document.getElementById('debugNukeAtom').addEventListener('click', () => this.armDebugNuke('atombomb'));
@@ -2226,6 +2226,9 @@ const UI = {
     // after an earlier Defeated) re-expands it; the minimize button collapses
     // it to just the title so the whole map is inspectable.
     const overlay = document.getElementById('endOverlay');
+    // One sting per match: a Game Over that follows a Defeated stays quiet.
+    if (title === 'Victory') Sfx.play('victory');
+    else if (overlay.classList.contains('hidden')) Sfx.play('defeat');
     const minBtn = document.getElementById('endMinBtn');
     const setMin = (min) => {
       overlay.classList.toggle('minimized', min);
@@ -2238,6 +2241,7 @@ const UI = {
     // The winner's victory banner, shown to everyone in the match.
     overlay.dataset.banner = Game.winnerId !== null ? Progress.bannerOf(Game.winnerId) : '';
     this.renderEndEarned();
+    MatchStats.onEnd(title);
   },
 
   // --- What's new (server/news.js) --------------------------------------------
@@ -2412,6 +2416,7 @@ const UI = {
       + `<span class="achText"><small>Achievement earned</small><b>${escapeHtml(def.name)}</b>${this.unlockLine(def)}</span>`;
     el.appendChild(row);
     el.classList.remove('hidden');
+    Sfx.play('achieve');
     // Matches the achToastFade animation length in style.css.
     setTimeout(() => {
       row.remove();

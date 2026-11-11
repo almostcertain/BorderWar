@@ -2175,3 +2175,57 @@ body.noHint #hint:not(.warn) { display: none; }
 #gameMenu .gmBtn { padding: 12px; font-size: 15px; font-weight: 700; border: 0; border-radius: 10px; background: rgba(255, 255, 255, 0.12); color: #fff; cursor: pointer; }
 #gameMenu .gmBtn:hover { background: rgba(255, 255, 255, 0.2); }
 #gameMenu .gmDanger.armed { background: rgba(215, 60, 60, 0.95); }
+
+/* --- Daily Challenge (js/daily.js) ------------------------------------------ */
+#dailyBtn { grid-column: 1 / -1; position: relative; border-color: rgba(255, 200, 80, 0.55); background: linear-gradient(180deg, rgba(255, 200, 80, 0.14), rgba(255, 200, 80, 0.04)); }
+#dailyStreak {
+  position: absolute;
+  top: -9px;
+  right: 10px;
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: #2e7d4f;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+#dailyStreak.atRisk { background: #c8443a; }
+#dailyOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 8, 16, 0.6);
+}
+#dailyOverlay .optionsPanel { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 420px; max-height: 100%; overflow-y: auto; }
+#dailyLabel { text-align: center; font-size: 16px; font-weight: 700; }
+#dailyFacts, #dailyRules { font-size: 13px; line-height: 1.45; opacity: 0.85; text-align: center; }
+#dailyMap .dailyFogNote { display: none; }
+#dailyMap.fogged canvas { display: none; }
+#dailyMap.fogged .dailyFogNote { display: block; padding: 22px 12px; border-radius: 6px; background: rgba(0, 0, 0, 0.35); font-size: 13px; text-align: center; }
+#dailyLinks { display: flex; justify-content: space-between; }
+#dailyLinks .linkBtn, #endShareBtn.linkBtn { margin: 0; padding: 0; background: transparent; border-radius: 0; font-size: 14px; font-weight: 400; color: #6b9bff; }
+#dailyLinks #dailyClose { margin-left: auto; }
+
+/* Three or four headline numbers in a row (daily panel, match report). */
+.statGrid { display: flex; gap: 6px; }
+.statGrid > div { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 2px; border-radius: 8px; background: rgba(255, 255, 255, 0.07); }
+.statGrid b { font-size: 15px; white-space: nowrap; }
+.statGrid small { font-size: 11px; opacity: 0.7; white-space: nowrap; }
+
+/* --- Match report on the end card (js/matchstats.js) ------------------------ */
+#endStats { display: flex; flex-direction: column; gap: 8px; }
+#endOverlay.minimized #endStats { display: none; }
+#endChart { display: block; width: 100%; height: 84px; }
+#endChartKey { display: flex; justify-content: center; gap: 10px; font-size: 11px; opacity: 0.75; }
+#endChartKey .keyMe::before { content: ''; display: inline-block; width: 10px; height: 3px; margin-right: 4px; vertical-align: middle; background: var(--me, currentColor); }
+#endChartKey .keyRival::before { content: ''; display: inline-block; width: 10px; margin-right: 4px; vertical-align: middle; border-top: 2px dashed currentColor; }
+#endDaily { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-radius: 8px; text-align: center; background: rgba(255, 200, 80, 0.14); border: 1px solid rgba(255, 200, 80, 0.5); }
+#endDaily b { font-size: 15px; }
+#endDaily small { font-size: 12px; opacity: 0.8; }
+#endStats #endShareBtn { align-self: center; }
+#endOverlay .panel { max-height: 100%; overflow-y: auto; }

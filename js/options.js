@@ -7,7 +7,7 @@ const Options = (function() {
   // Battery saver starts on for phones and tablets, off where there is a mouse.
   const touchDevice = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
   // Music starts off on a developer's own machine, on for players on the live site.
-  const DEFAULTS = { lowGfx: false, saveBattery: touchDevice, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false, musicOn: !UI.DEBUG_HOST, musicVol: 0.7, mapStyle: 'atlas' };
+  const DEFAULTS = { lowGfx: false, saveBattery: touchDevice, showPerf: false, hideHint: false, uiScale: 1, invertZoom: false, musicOn: !UI.DEBUG_HOST, musicVol: 0.7, sfxOn: !UI.DEBUG_HOST, sfxVol: 0.7, mapStyle: 'atlas' };
   const values = Object.assign({}, DEFAULTS);
 
   try {
@@ -33,6 +33,7 @@ const Options = (function() {
     perfEl.classList.toggle('hidden', !values.showPerf);
     if (!values.showPerf) { frames = 0; sampleStart = 0; }
     Music.set(values.musicOn, values.musicVol);
+    Sfx.set(values.sfxOn, values.sfxVol);
   }
 
   function set(key, value) {
@@ -58,7 +59,7 @@ const Options = (function() {
   }
 
   const overlayEl = document.getElementById('optionsOverlay');
-  const boxes = { lowGfx: 'optLowGfx', saveBattery: 'optSaveBattery', showPerf: 'optShowPerf', hideHint: 'optHideHint', invertZoom: 'optInvertZoom', musicOn: 'optMusicOn' };
+  const boxes = { lowGfx: 'optLowGfx', saveBattery: 'optSaveBattery', showPerf: 'optShowPerf', hideHint: 'optHideHint', invertZoom: 'optInvertZoom', musicOn: 'optMusicOn', sfxOn: 'optSfxOn' };
   for (const key in boxes) {
     const el = document.getElementById(boxes[key]);
     el.checked = values[key];
@@ -79,6 +80,13 @@ const Options = (function() {
   volEl.addEventListener('input', () => {
     Music.preview(true);
     set('musicVol', parseFloat(volEl.value));
+  });
+  // Each step of the slider plays a sound at the new level.
+  const sfxVolEl = document.getElementById('optSfxVol');
+  sfxVolEl.value = String(values.sfxVol);
+  sfxVolEl.addEventListener('input', () => {
+    set('sfxVol', parseFloat(sfxVolEl.value));
+    Sfx.play('build');
   });
 
   // Copies Perf.text() so numbers from a player's own machine can be pasted

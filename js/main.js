@@ -6,6 +6,8 @@
   Radial.setup();
   UI.setup();
   Tutorial.setup();
+  MatchStats.setup();
+  Daily.setup();
 
   // How long one frame may spend advancing the sim before handing back to the
   // renderer (docs/multiplayer-architecture.md §5). Turns normally arrive one
@@ -433,6 +435,25 @@
     }
   };
 
+  // --- Daily Challenge (js/daily.js) -------------------------------------------
+  //
+  // A singleplayer match on the day's fixed seed and settings.
+  Daily.host = {
+    start(config) {
+      inLobby = false;
+      myRole = 'sp';
+      stopLobbyListPolling();
+      Replay.finish();
+      Transport.disconnect();
+      Runner.reset();
+      Transport.connect(onConnect, onServerMessage, Object.assign({
+        local: true,
+        gameID: 'local',
+        username: UI.getPlayerName() || 'You'
+      }, config));
+    }
+  };
+
   // Everything a server says to us (§4's server->client table). Two messages
   // matter in Phase 1; `lobby_info` and `error` are MP-2.3's additions, live
   // only on a real (non-local) connection — LocalServer never emits either.
@@ -501,6 +522,8 @@
         else if (Replay.active) Replay.onMatchReady();
         else if (!Tutorial.active) Replay.begin(info, msg.myClientID, myPlayerId);
         Progress.beginMatch({ info: info, myPlayerId: myPlayerId, singleplayer: Transport.isLocal });
+        Daily.matchReady();
+        MatchStats.begin(myPlayerId);
         Render.applyPatterns();
 
         // The catch-up backlog. Empty at a fresh start; non-empty after a
@@ -632,6 +655,7 @@
       // Per turn, not per frame: a backlog runs many ticks in one frame and
       // achievement tracking must see each one (js/progress.js).
       Progress.sample();
+      MatchStats.sample();
     }
     Replay.frame();
     if (Replay.seeking() && now - lastDrawAt < SEEK_DRAW_MS) return;
@@ -671,6 +695,8 @@
     const drawEnd = performance.now();
     Render.noteDrawTime(drawEnd - drawStart);
     UI.update();
+    // Silent while a replay seeks or a rejoin works through its backlog.
+    Sfx.frame(seeking || Runner.pendingTurns() > 5);
     Tutorial.frame();
     UI.updateReplayBar();
     UI.updateWatchBar();
@@ -690,6 +716,8 @@
   // Straight into the next open lobby; the menu's list is stale after a match,
   // so ask the server afresh.
   document.getElementById('restartBtn').addEventListener('click', () => {
+    // After a daily, Play Again is another attempt at it.
+    if (Daily.active) { document.getElementById('endOverlay').classList.add('hidden'); Daily.start(); return; }
     backToMenu();
     Transport.fetchLobbyList()
       .catch(() => [])
@@ -701,6 +729,7 @@
   function leaveMatch() {
     document.getElementById('gameMenu').classList.add('hidden');
     Tutorial.stop();
+    MatchStats.abandon();
     Transport.disconnect();
     Runner.reset();
     backToMenu();
