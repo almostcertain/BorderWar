@@ -221,7 +221,8 @@ html.atlas .panel button#newsLink.unread::after { background: var(--a-rubric); }
 html.atlas #optionsBtn { background: var(--a-paper); border: 1px solid var(--a-line-strong); opacity: 0.85; }
 html.atlas #optionsBtn:hover { opacity: 1; }
 html.atlas #installBtn { background: var(--a-paper-3); border-color: var(--a-line); color: var(--a-ink); }
-html.atlas #licenseFooter, html.atlas #licenseFooter a { color: rgba(240, 230, 204, 0.75); }
+html.atlas #licenseFooter { color: var(--a-ink-2); opacity: 0.85; font-weight: 600; }
+html.atlas #licenseFooter a { color: var(--a-rubric); }
 html.atlas .orDivider { color: var(--a-ink-2); }
 html.atlas .orDivider::before, html.atlas .orDivider::after { background: var(--a-line); }
 
