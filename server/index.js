@@ -303,6 +303,8 @@ function onSignal(signal) {
   if (!stopping) log.info('server', 'press Ctrl+C again to stop now');
 }
 
+require('./devlifetime').start({ server, wss, stop: shutdown, log });
+
 process.on('SIGINT', () => onSignal('SIGINT'));
 process.on('SIGTERM', () => onSignal('SIGTERM'));
 
