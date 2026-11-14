@@ -56,7 +56,9 @@ function checkOrigin(req) {
   return origin;
 }
 
-function readJson(req) {
+// `limit` defaults to BODY_LIMIT; only the daily replay upload passes a larger one.
+function readJson(req, limit) {
+  limit = limit || BODY_LIMIT;
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
@@ -64,7 +66,7 @@ function readJson(req) {
       size += c.length;
       // Too big: answer now and stop keeping the rest. send() closes the
       // connection after a 413, so the upload can't go on.
-      if (size > BODY_LIMIT) return reject(new ApiError(413, 'invalid', 'Request too large'));
+      if (size > limit) return reject(new ApiError(413, 'invalid', 'Request too large'));
       chunks.push(c);
     });
     req.on('end', () => {

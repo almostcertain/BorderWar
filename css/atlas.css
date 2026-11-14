@@ -195,6 +195,7 @@ html.atlas #endOverlay .panel button#endMenuBtn:active { background: var(--a-pap
 html.atlas #endOverlay[data-banner="banner_warlord"] .panel { background: linear-gradient(rgba(214, 160, 140, 0.97), var(--a-paper) 55%); border-color: var(--a-rubric); }
 html.atlas #endOverlay[data-banner="banner_iron"] .panel { background: linear-gradient(rgba(196, 196, 186, 0.97), var(--a-paper) 55%); border-color: #6e6a60; }
 html.atlas #endOverlay[data-banner="banner_last_standing"] .panel { background: linear-gradient(rgba(226, 196, 120, 0.97), var(--a-paper) 55%); border-color: var(--a-brass); }
+html.atlas #endOverlay[data-banner="banner_dawn"] .panel { background: linear-gradient(rgba(232, 176, 150, 0.97), var(--a-paper) 55%); border-color: #b0603c; }
 
 /* --- Main menu ---------------------------------------------------------------- */
 html.atlas #overlay { background: #3b2c1c; }
@@ -285,3 +286,6 @@ html.atlas #endDaily { background: rgba(138, 100, 24, 0.14); border-color: var(-
 html.atlas #dailyMap.fogged .dailyFogNote { background: var(--a-wash); }
 
 html.atlas :is(#dailyLinks, #endStats) .linkBtn { color: var(--a-rubric); }
+html.atlas #dailyBoardHead .linkBtn { color: var(--a-rubric); }
+html.atlas .dbRow { background: var(--a-wash); }
+html.atlas .dbRow.me { background: rgba(138, 100, 24, 0.22); }

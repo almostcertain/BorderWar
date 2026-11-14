@@ -20,10 +20,12 @@ const ProgressDefs = {
     { id: 'first', name: 'First steps' },
     { id: 'mastery', name: 'Mastery' },
     { id: 'style', name: 'Style' },
+    { id: 'daily', name: 'Daily Challenge' },
     { id: 'hidden', name: 'Hidden' }
   ],
 
-  COUNTERS: ['wins'],
+  // dailyStreak holds the longest daily streak, so it only ever rises.
+  COUNTERS: ['wins', 'dailyStreak'],
 
   ACHIEVEMENTS: {
     first_blood:   { group: 'first', name: 'First Blood', desc: 'Eliminate a nation.' },
@@ -55,6 +57,11 @@ const ProgressDefs = {
     admiral:       { group: 'style', name: 'Admiral', desc: 'Sink 10 enemy boats with warships in one match.', n: 10, enabled: false, unlocks: 'title_admiral' },
     iron_dome:     { group: 'style', name: 'Iron Dome', desc: 'Shoot down 5 nukes with SAMs in one match.', n: 5, unlocks: 'emblem_shield' },
     driller:       { group: 'style', name: 'Driller', desc: 'Place the Drill and win.', unlocks: 'emblem_drill' },
+
+    daily_played:  { group: 'daily', name: 'Daily Recruit', desc: 'Post a result in the Daily Challenge.' },
+    daily_win:     { group: 'daily', name: 'Daily Victor', desc: 'Win a Daily Challenge.', unlocks: 'banner_dawn' },
+    daily_streak_7:  { group: 'daily', name: 'Devoted', desc: 'Play the Daily Challenge 7 days in a row.', counter: 'dailyStreak', n: 7, unlocks: 'emblem_sun' },
+    daily_streak_30: { group: 'daily', name: 'Ever Present', desc: 'Play the Daily Challenge 30 days in a row.', counter: 'dailyStreak', n: 30, unlocks: 'title_devoted' },
 
     so_close:      { group: 'hidden', name: 'So Close', desc: 'Be the last nation eliminated.', hidden: true },
     betrayed:      { group: 'hidden', name: 'Betrayed', desc: 'Be eliminated by a nation you were allied with in that match.', hidden: true, unlocks: 'title_betrayed' },
@@ -103,6 +110,7 @@ const ProgressDefs = {
     title_admiral:        { type: 'title', name: 'Admiral' },
     title_betrayed:       { type: 'title', name: 'the Betrayed' },
     title_kingmaker:      { type: 'title', name: 'Kingmaker' },
+    title_devoted:        { type: 'title', name: 'the Devoted' },
 
     emblem_anchor:        { type: 'emblem', name: 'Anchor', glyph: '⚓\uFE0E' },
     emblem_crown:         { type: 'emblem', name: 'Crown', glyph: '♛' },
@@ -112,10 +120,12 @@ const ProgressDefs = {
     emblem_shield:        { type: 'emblem', name: 'Shield', glyph: '🛡\uFE0E' },
     emblem_drill:         { type: 'emblem', name: 'Drill bit', glyph: '⛏\uFE0E' },
     emblem_flame:         { type: 'emblem', name: 'Flame', glyph: '🔥' },
+    emblem_sun:           { type: 'emblem', name: 'Sun', glyph: '☀︎' },
 
     banner_warlord:       { type: 'banner', name: 'Warlord' },
     banner_iron:          { type: 'banner', name: 'Iron' },
-    banner_last_standing: { type: 'banner', name: 'Last Standing' }
+    banner_last_standing: { type: 'banner', name: 'Last Standing' },
+    banner_dawn:          { type: 'banner', name: 'Dawn' }
   }
 };
 

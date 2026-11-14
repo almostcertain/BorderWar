@@ -11,6 +11,7 @@ const ratelimit = require('./ratelimit');
 const validate = require('./validate');
 const entitlements = require('./entitlements');
 const ProgressDefs = require('../../js/progress-defs.js');
+const DailyCore = require('../../js/daily-core.js');
 const { ApiError, send, clientIp, checkOrigin, readJson } = require('../httpapi');
 
 // opts: { dbPath, db, log, now, scrypt } — all optional; tests pass ':memory:'
@@ -34,7 +35,7 @@ function create(opts) {
     setProfile: db.prepare('UPDATE users SET display_name = ?, tag = ?, settings_json = ? WHERE id = ?'),
     setEmail: db.prepare('UPDATE users SET email = ? WHERE id = ?'),
     setHash: db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?'),
-    setProgress: db.prepare('UPDATE users SET progress_json = ?, equipped_json = ? WHERE id = ?'),
+    setProgress: db.prepare('UPDATE users SET progress_json = ?, equipped_json = ?, daily_json = ? WHERE id = ?'),
     remove: db.prepare('DELETE FROM users WHERE id = ?')
   };
 
@@ -54,7 +55,13 @@ function create(opts) {
     return p;
   }
 
-  const publicProgress = (p) => ({ unlocked: p.unlocked, counters: p.counters, equipped: p.equipped });
+  function storedDaily(row) {
+    let d = {};
+    try { d = JSON.parse(row.daily_json) || {}; } catch (e) { /* keep {} */ }
+    return DailyCore.sanitize(d, DailyCore.dayAt(now()));
+  }
+
+  const publicProgress = (p, daily) => ({ unlocked: p.unlocked, counters: p.counters, equipped: p.equipped, daily });
 
   function currentUser(req) {
     const id = sessions.userIdForRequest(req);
@@ -175,9 +182,12 @@ function create(opts) {
       const sentLoadout = body.equipped && typeof body.equipped === 'object';
       const merged = sentLoadout ? ProgressDefs.merge(stored, sent) : ProgressDefs.merge(sent, stored);
       merged.equipped = ProgressDefs.equippable(merged, entitlements.list(db, user.id));
+      // Daily Challenge progress (docs/daily-leaderboard.md §4), merged the same repeat-safe way.
+      let daily = storedDaily(user);
+      if (body.daily && typeof body.daily === 'object') daily = DailyCore.merge(daily, DailyCore.sanitize(body.daily, DailyCore.dayAt(now())));
       q.setProgress.run(JSON.stringify({ unlocked: merged.unlocked, counters: merged.counters }),
-        JSON.stringify(merged.equipped), user.id);
-      return { body: publicProgress(merged) };
+        JSON.stringify(merged.equipped), JSON.stringify(daily), user.id);
+      return { body: publicProgress(merged, daily) };
     },
 
     async email(req, body) {
@@ -223,11 +233,13 @@ function create(opts) {
         return send(res, 200, { user: user ? publicUser(user) : null });
       }
       if (req.method === 'GET' && route === 'progress') {
-        return send(res, 200, publicProgress(storedProgress(requireUser(req))));
+        const user = requireUser(req);
+        return send(res, 200, publicProgress(storedProgress(user), storedDaily(user)));
       }
       if (req.method === 'POST' && Object.prototype.hasOwnProperty.call(post, route)) {
         const origin = checkOrigin(req);
-        const body = await readJson(req);
+        // Progress carries up to 60 days of daily results.
+        const body = await readJson(req, route === 'progress' ? 16384 : undefined);
         const out = await post[route](req, body, origin);
         return send(res, 200, out.body, out.cookie);
       }

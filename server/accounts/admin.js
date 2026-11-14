@@ -12,6 +12,8 @@
 // Safe to run while the server is up; SQLite handles the second connection.
 'use strict';
 
+const DailyCore = require('../../js/daily-core.js');
+
 const crypto = require('crypto');
 const dbModule = require('./db');
 const passwords = require('./passwords');
@@ -49,7 +51,9 @@ function exportUser(db, email, now) {
       settings,
       createdAt: iso(user.created_at)
     },
-    progress: { unlocked: progress.unlocked || {}, counters: progress.counters || {}, equipped: parse(user.equipped_json) },
+    progress: { unlocked: progress.unlocked || {}, counters: progress.counters || {}, equipped: parse(user.equipped_json), daily: DailyCore.sanitize(parse(user.daily_json)) },
+    dailyScores: db.prepare('SELECT day, score, won, secs, place, nations, peak, at FROM daily_scores WHERE user_id = ? ORDER BY day').all(user.id)
+      .map(d => ({ day: d.day, score: d.score, won: !!d.won, secs: d.secs, place: d.place, nations: d.nations, peak: d.peak, postedAt: iso(d.at) })),
     entitlements: entitlements.history(db, user.id).map(e => ({ pack: e.sku, grantedAt: iso(e.granted_at), source: e.source, ref: e.ref })),
     sessions: sessions.map(s => ({ createdAt: iso(s.created_at), lastSeenAt: iso(s.last_seen_at), expiresAt: iso(s.expires_at) })),
     matches: matches.map(m => ({

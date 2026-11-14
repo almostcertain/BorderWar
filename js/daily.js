@@ -1,35 +1,16 @@
 // Daily Challenge: one singleplayer match a day, the same map, rules and bots
-// for every player, with a score, a personal best and a play streak kept in
-// this browser. Client-only: it picks a seed and settings and reads the result
-// MatchStats settles; the match itself is an ordinary singleplayer one
-// (docs/retention-pack.md §2).
+// for every player, with a score, a personal best and a play streak, synced to
+// the account when signed in, and a global board the server checks by re-running
+// the replay. The match itself is an ordinary singleplayer one
+// (docs/retention-pack.md §2, docs/daily-leaderboard.md).
 const Daily = {
   KEY: 'borderwar_daily',
-  DAY_MS: 86400000,
-  EPOCH: Date.UTC(2026, 10, 1),   // day 1 is 1 Nov 2026, UTC
-  KEEP_DAYS: 60,
+  // Settings, scoring and sync rules are shared with the server: js/daily-core.js.
+  get DAY_MS() { return DailyCore.DAY_MS; },
+  get EPOCH() { return DailyCore.EPOCH; },
+  get MIN_SECS() { return DailyCore.MIN_SECS; },
 
-  // Nations and tribes per size, at the Solo screen's density.
-  COUNTS: { small: [20, 100], medium: [46, 225] },
-  // By UTC weekday, Sunday first. Saturday is the long one.
-  WEEK: [
-    { difficulty: 'hard', size: 'small' }, { difficulty: 'easy', size: 'small' },
-    { difficulty: 'medium', size: 'small' }, { difficulty: 'medium', size: 'small' },
-    { difficulty: 'medium', size: 'small' }, { difficulty: 'hard', size: 'small' },
-    { difficulty: 'medium', size: 'medium' }
-  ],
-  LANDFORMS: ['continent', 'twin', 'continents', 'archipelago', 'pangaea', 'inland'],
-  LANDFORM_NAMES: { continent: 'Continent', twin: 'Twin continents', continents: 'Continents', archipelago: 'Archipelago', pangaea: 'Pangaea', inland: 'Inland sea' },
-  TERRAINS: ['normal', 'normal', 'flat', 'rugged', 'alpine'],
-  RIVERS: ['normal', 'normal', 'few', 'many'],
-
-  WIN_POINTS: 1000,
-  SPEED_POINTS: 1000,   // for a win, less one point per 3 s of match time
-  LAND_POINTS: 20,      // per 1% of the map held at the player's peak
-  OUTLAST_POINTS: 15,   // per nation that fell before the player did
-  MIN_SECS: 120,        // a loss shorter than this is not a result
-
-  state: { v: 1, streak: 0, bestStreak: 0, last: 0, days: {} },
+  state: { streak: 0, bestStreak: 0, last: 0, days: {} },
   active: false,        // the match on screen is a daily
   day: 0,               // which one
   result: null,         // this match's entry, once it has ended
@@ -37,51 +18,35 @@ const Daily = {
   _void: false,
   host: null,           // { start(config) }, set by main.js
 
-  today() { return Math.floor((Date.now() - this.EPOCH) / this.DAY_MS) + 1; },
-
-  // Everything about a day's match follows from its number alone.
-  challenge(day) {
-    const rnd = mulberry32(Math.imul(day, 0x9E3779B1) ^ 0xB0DE4);
-    const seed = Math.floor(rnd() * 0x100000000);
-    const pick = a => a[Math.floor(rnd() * a.length)];
-    const weekday = new Date(this.EPOCH + (day - 1) * this.DAY_MS).getUTCDay();
-    const base = this.WEEK[weekday];
-    const landform = pick(this.LANDFORMS);
-    const mapGen = Protocol.normalizeMapGen({ landform: landform, terrain: pick(this.TERRAINS), rivers: pick(this.RIVERS) });
-    const fog = rnd() < 0.35;
-    const counts = this.COUNTS[base.size];
-    const tags = [this.LANDFORM_NAMES[landform], base.difficulty[0].toUpperCase() + base.difficulty.slice(1)];
-    if (base.size === 'medium') tags.push('Big map');
-    if (fog) tags.push('Fog of war');
-    return {
-      day: day, label: tags.join(' · '),
-      config: {
-        seed: seed, map: 'procedural', mapSize: base.size, mapGen: mapGen,
-        bots: counts[0], tribes: counts[1], difficulty: base.difficulty,
-        gameMode: 'ffa', fogOfWar: fog, pointsOfInterest: true
-      }
-    };
-  },
+  today() { return DailyCore.dayAt(Date.now()); },
+  challenge(day) { return DailyCore.challenge(day); },
+  score(e) { return DailyCore.score(e); },
 
   init() {
-    try {
-      const raw = JSON.parse(localStorage.getItem(this.KEY) || 'null');
-      if (raw && typeof raw === 'object' && raw.days && typeof raw.days === 'object') {
-        this.state.streak = raw.streak | 0;
-        this.state.bestStreak = raw.bestStreak | 0;
-        this.state.last = raw.last | 0;
-        for (const k in raw.days) {
-          const d = raw.days[k];
-          if (/^\d+$/.test(k) && d && typeof d.score === 'number') this.state.days[k] = d;
-        }
-      }
-    } catch (e) { /* ignore */ }
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem(this.KEY) || 'null'); } catch (e) { /* ignore */ }
+    this.state = DailyCore.sanitize(raw, this.today());
   },
 
   save() {
-    const keys = Object.keys(this.state.days).map(Number).sort((a, b) => a - b);
-    while (keys.length > this.KEEP_DAYS) delete this.state.days[keys.shift()];
+    this._store();
+    Progress.sync();
+  },
+
+  _store() {
+    DailyCore._trim(this.state);
     try { localStorage.setItem(this.KEY, JSON.stringify(this.state)); } catch (e) { /* ignore */ }
+  },
+
+  // The account's copy after a sync (merged with ours), or null to forget this
+  // browser's copy because it belongs to an account that is no longer signed in.
+  adopt(raw) {
+    if (raw === undefined) return;
+    this.state = raw === null ? DailyCore.sanitize(null)
+      : DailyCore.merge(this.state, DailyCore.sanitize(raw, this.today()));
+    this._store();
+    if (this.state.bestStreak > 0) Progress.raise('dailyStreak', this.state.bestStreak);
+    this.renderRow();
   },
 
   // The streak as it stands now: it lapses once a whole day is missed.
@@ -90,12 +55,6 @@ const Daily = {
   },
 
   entry(day) { return this.state.days[day] || null; },
-
-  score(e) {
-    let s = Math.round(e.peakPct * this.LAND_POINTS) + Math.max(0, e.nations - e.place) * this.OUTLAST_POINTS;
-    if (e.won) s += this.WIN_POINTS + Math.max(0, this.SPEED_POINTS - Math.floor(e.secs / 3));
-    return s;
-  },
 
   start() {
     if (!this.host) return;
@@ -141,6 +100,122 @@ const Daily = {
     }
     this.save();
     this.renderRow();
+    Progress.unlock('daily_played');
+    if (res.won) Progress.unlock('daily_win');
+    Progress.raise('dailyStreak', st.bestStreak);
+    this.submit(res);
+  },
+
+  // --- Global leaderboard (docs/daily-leaderboard.md) ------------------------
+  // The server re-runs the replay and keeps the score it computes itself.
+
+  POLL_MS: 4000,
+  POLL_FOR_MS: 8 * 60000,
+  // { day, status: 'guest'|'checking'|'kept'|'done'|'rejected'|'error', message, rank, total, best }
+  post: null,
+  _poll: 0,
+
+  submit(res) {
+    clearTimeout(this._poll);
+    this.post = null;
+    if (typeof Account === 'undefined' || !Account.available) return;
+    const day = this.day;
+    if (!Account.user) { this.post = { day, status: 'guest' }; return; }
+    const replay = Replay.snapshot();
+    if (!replay) return;
+    this.post = { day, status: 'checking' };
+    fetch('api/daily/submit', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ day, claimed: res.score, replay })
+    }).then(r => r.json().catch(() => ({})).then(d => {
+      if (!r.ok) throw new Error(d.message || 'Could not reach the leaderboard.');
+      return d;
+    })).then(d => {
+      if (d.status === 'kept') this.post = { day, status: 'kept' };
+      this._watch(day, Date.now());
+    }, e => {
+      this.post = { day, status: 'error', message: e.message };
+      this._showPost();
+    });
+    this._showPost();
+  },
+
+  // Polls the board until the server has checked the submitted replay.
+  _watch(day, since) {
+    this.fetchBoard(day).then(b => {
+      if (!this.post || this.post.day !== day) return;
+      const c = b.check, mine = b.me;
+      if (this.post.status === 'checking' && c && c.status === 'checking' && Date.now() - since < this.POLL_FOR_MS) {
+        this._poll = setTimeout(() => this._watch(day, since), this.POLL_MS);
+        return;
+      }
+      if (this.post.status === 'checking' && c && c.status === 'rejected') this.post = { day, status: 'rejected', message: c.message };
+      else if (this.post.status === 'checking' && !(c && c.status === 'done')) this.post = { day, status: 'error', message: 'Still checking. Look at the board later.' };
+      else this.post = { day, status: this.post.status === 'kept' ? 'kept' : 'done', rank: mine && mine.rank, total: b.total, best: mine && mine.score };
+      this._showPost();
+    }, () => {
+      if (this.post && this.post.status === 'checking') this._poll = setTimeout(() => this._watch(day, since), this.POLL_MS * 2);
+    });
+  },
+
+  postText() {
+    const p = this.post;
+    if (!p) return '';
+    switch (p.status) {
+      case 'guest': return 'Sign in to put your score on the global board.';
+      case 'checking': return 'Checking your match for the global board…';
+      case 'kept': return p.rank ? 'Global board: #' + p.rank + ' of ' + p.total + ' with your best of ' + this.fmt(p.best) + '.' : 'Your best today is already on the global board.';
+      case 'done': return p.rank ? 'Global board: #' + p.rank + ' of ' + p.total + ' today.' : 'Posted to the global board.';
+      default: return p.message || 'Could not post to the global board.';
+    }
+  },
+
+  _showPost() {
+    const el = document.getElementById('endDailyBoard');
+    if (el) el.textContent = this.postText();
+    if (!document.getElementById('dailyOverlay').classList.contains('hidden')) this.loadBoard(this._boardDay);
+  },
+
+  fetchBoard(day) {
+    return fetch('api/daily/board?day=' + day, { credentials: 'same-origin', cache: 'no-store' })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('board ' + r.status)));
+  },
+
+  _boardDay: 0,
+
+  loadBoard(day) {
+    const wrap = document.getElementById('dailyBoard');
+    if (typeof Account === 'undefined' || !Account.available) { wrap.classList.add('hidden'); return; }
+    wrap.classList.remove('hidden');
+    this._boardDay = day;
+    const today = this.today();
+    document.getElementById('dailyBoardToday').classList.toggle('on', day === today);
+    document.getElementById('dailyBoardYesterday').classList.toggle('on', day !== today);
+    document.getElementById('dailyBoardYesterday').classList.toggle('hidden', today <= 1);
+    const list = document.getElementById('dailyBoardList');
+    this.fetchBoard(day).then(b => {
+      if (this._boardDay !== day) return;
+      list.innerHTML = this.boardHtml(b);
+    }, () => { list.innerHTML = '<div class="dbEmpty">The leaderboard can\'t be reached right now.</div>'; });
+  },
+
+  boardHtml(b) {
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const line = (r, me) => '<div class="dbRow' + (me ? ' me' : '') + '"><span class="dbRank">' + r.rank + '</span>' +
+      '<span class="dbName">' + esc(r.name) + '</span>' +
+      '<span class="dbHow">' + (r.won ? 'Won ' + MatchStats.clock(r.secs) : MatchStats.ordinal(r.place) + '/' + r.nations) + '</span>' +
+      '<span class="dbScore">' + this.fmt(r.score) + '</span></div>';
+    let html = '';
+    if (!b.top.length) html = '<div class="dbEmpty">No scores yet' + (b.day === b.today ? ' today. Be the first.' : '.') + '</div>';
+    const mine = b.me;
+    for (const r of b.top) html += line(r, mine && r.rank === mine.rank);
+    if (mine && mine.rank > b.top.length) html += '<div class="dbGap">…</div>' + line(mine, true);
+    const c = b.check;
+    if (c && c.status === 'checking') html += '<div class="dbNote">Checking your latest result…</div>';
+    else if (c && c.status === 'rejected') html += '<div class="dbNote">Your last result wasn\'t posted: ' + esc(c.message) + '</div>';
+    else if (!Account.user) html += '<div class="dbNote">Sign in to put your scores on the board.</div>';
+    if (b.total > b.top.length) html += '<div class="dbNote">' + this.fmt(b.total) + ' players on this board.</div>';
+    return html;
   },
 
   fmt(n) { return String(n).replace(/\B(?=(\d{3})+$)/g, ','); },
@@ -155,7 +230,8 @@ const Daily = {
     const best = this.entry(this.day);
     return '<b>Daily #' + this.day + ' · ' + this.points(r.score) + '</b>' +
       '<small>' + (r.best ? (r.tries > 1 ? 'New personal best' : 'First result of the day') : 'Your best today is ' + this.fmt(best.score)) +
-      ' · ' + this.streakText() + '</small>';
+      ' · ' + this.streakText() + '</small>' +
+      (this.post && this.post.day === this.day ? '<small id="endDailyBoard">' + this.postText() + '</small>' : '');
   },
 
   streakText() {
@@ -214,6 +290,7 @@ const Daily = {
     document.getElementById('dailyPlay').textContent = d ? 'Play again to beat ' + this.fmt(d.score) : 'Play today\'s challenge';
     document.getElementById('dailyShare').classList.toggle('hidden', !d);
     document.getElementById('dailyOverlay').classList.remove('hidden');
+    this.loadBoard(day);
     // A fog match hides its map until it is explored, here as in the Solo screen.
     const wrap = document.getElementById('dailyMap');
     wrap.classList.toggle('fogged', c.fogOfWar);
@@ -231,6 +308,8 @@ const Daily = {
     document.getElementById('dailyBtn').addEventListener('click', () => this.open());
     document.getElementById('dailyClose').addEventListener('click', () => this.close());
     document.getElementById('dailyPlay').addEventListener('click', () => this.start());
+    document.getElementById('dailyBoardToday').addEventListener('click', () => this.loadBoard(this.today()));
+    document.getElementById('dailyBoardYesterday').addEventListener('click', () => this.loadBoard(this.today() - 1));
     const share = document.getElementById('dailyShare');
     share.addEventListener('click', () => {
       this.day = this.today();

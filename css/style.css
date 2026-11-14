@@ -1853,6 +1853,7 @@ body:has(#overlay:not(.hidden)) :is(#game, #topbar, #hud, #topBtns, #hoverPanel,
 #endOverlay[data-banner="banner_warlord"] .panel { border-color: #c8443a; box-shadow: 0 0 0 2px rgba(200, 68, 58, 0.5), 0 10px 34px rgba(120, 20, 10, 0.7); background: linear-gradient(rgba(70, 14, 12, 0.95), rgba(10, 16, 30, 0.92) 55%); }
 #endOverlay[data-banner="banner_iron"] .panel { border-color: #b9c4d2; box-shadow: 0 0 0 2px rgba(185, 196, 210, 0.5), 0 10px 34px rgba(0, 0, 0, 0.7); background: linear-gradient(rgba(70, 78, 90, 0.95), rgba(10, 16, 30, 0.92) 55%); }
 #endOverlay[data-banner="banner_last_standing"] .panel { border-color: #ffc850; box-shadow: 0 0 0 2px rgba(255, 200, 80, 0.5), 0 10px 34px rgba(140, 90, 0, 0.7); background: linear-gradient(rgba(90, 62, 8, 0.95), rgba(10, 16, 30, 0.92) 55%); }
+#endOverlay[data-banner="banner_dawn"] .panel { border-color: #ff9a6b; box-shadow: 0 0 0 2px rgba(255, 154, 107, 0.5), 0 10px 34px rgba(150, 60, 40, 0.7); background: linear-gradient(rgba(96, 42, 52, 0.95), rgba(10, 16, 30, 0.92) 55%); }
 
 #achToast { display: flex; flex-direction: column; gap: 4px; }
 .achToastRow {
@@ -2210,6 +2211,20 @@ body.noHint #hint:not(.warn) { display: none; }
 #dailyLinks { display: flex; justify-content: space-between; }
 #dailyLinks .linkBtn, #endShareBtn.linkBtn { margin: 0; padding: 0; background: transparent; border-radius: 0; font-size: 14px; font-weight: 400; color: #6b9bff; }
 #dailyLinks #dailyClose { margin-left: auto; }
+#dailyBoard { display: flex; flex-direction: column; gap: 4px; }
+#dailyBoard.hidden { display: none; }
+#dailyBoardHead { display: flex; align-items: baseline; justify-content: space-between; font-size: 14px; }
+#dailyBoardHead span { display: flex; gap: 12px; }
+#dailyBoardHead .linkBtn { margin: 0; padding: 0; background: transparent; border-radius: 0; font-size: 13px; font-weight: 400; color: #6b9bff; opacity: 0.7; }
+#dailyBoardHead .linkBtn.on { opacity: 1; font-weight: 700; text-decoration: underline; }
+#dailyBoardList { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow-y: auto; font-size: 13px; }
+.dbRow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.05); }
+.dbRow.me { background: rgba(255, 200, 80, 0.18); font-weight: 700; }
+.dbRank { flex: 0 0 22px; text-align: right; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.dbName { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dbHow { flex: 0 0 auto; font-size: 11px; opacity: 0.7; }
+.dbScore { flex: 0 0 52px; text-align: right; font-variant-numeric: tabular-nums; }
+.dbEmpty, .dbNote, .dbGap { padding: 4px 8px; font-size: 12px; opacity: 0.75; text-align: center; }
 
 /* Three or four headline numbers in a row (daily panel, match report). */
 .statGrid { display: flex; gap: 6px; }

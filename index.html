@@ -287,6 +287,10 @@
     <div id="dailyMap" class="mapPreview"><canvas id="dailyMapCanvas" width="400" height="200"></canvas><span class="dailyFogNote">Fog of war: the map is hidden until you explore it</span></div>
     <div id="dailyFacts"></div>
     <div id="dailyBest" class="statGrid"></div>
+    <div id="dailyBoard" class="hidden">
+      <div id="dailyBoardHead"><b>Global board</b><span><button type="button" id="dailyBoardToday" class="linkBtn on">Today</button><button type="button" id="dailyBoardYesterday" class="linkBtn">Yesterday</button></span></div>
+      <div id="dailyBoardList"></div>
+    </div>
     <div id="dailyRules">Score: land held at your peak, nations you outlast, and a big bonus for winning fast. Play as often as you like; your best counts. Play every day to build a streak.</div>
     <button type="button" id="dailyPlay" class="primaryBtn">Play today's challenge</button>
     <div id="dailyLinks"><button type="button" id="dailyShare" class="linkBtn hidden">Share result</button><button type="button" id="dailyClose" class="linkBtn">Close</button></div>
@@ -681,7 +685,7 @@
   // server, and the local server stamps with Executor.LOCAL_CLIENT_ID, so this
   // is the dependency order even though — as everywhere else in net/ — every
   // one of those references is resolved at call time and not at load time.
-  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'game/specialize', 'game/poi', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'watch', 'render', 'input', 'account', 'progress-defs', 'progress', 'markup', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'sfx', 'matchstats', 'daily', 'options', 'install', 'main'].forEach(name => {
+  ['noise', 'map', 'fx', 'game/shared', 'game/core', 'game/structures', 'game/economy', 'game/diplomacy', 'game/teams', 'game/vision', 'game/attacks', 'game/combat', 'game/annex', 'game/seapath', 'game/naval', 'game/rail', 'game/trade', 'game/warships', 'game/scouts', 'game/nukes', 'game/sam', 'game/drill', 'game/specialize', 'game/poi', 'net/protocol', 'net/executor', 'net/hash', 'net/runner', 'net/localserver', 'net/transport', 'net/worldmap', 'replay', 'ai', 'perf', 'watch', 'render', 'input', 'account', 'progress-defs', 'daily-core', 'progress', 'markup', 'ui', 'radial', 'tutorial', 'menubg', 'music', 'sfx', 'matchstats', 'daily', 'options', 'install', 'main'].forEach(name => {
     document.write('<script src="js/' + name + '.js?v=' + V + '"><' + '/script>');
   });
 </script>

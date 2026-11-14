@@ -58,7 +58,23 @@ const MIGRATIONS = [
      source     TEXT NOT NULL,
      ref        TEXT NOT NULL DEFAULT '',
      PRIMARY KEY (user_id, sku)
-   );`
+   );`,
+  // Daily Challenge (docs/daily-leaderboard.md): synced progress, and each
+  // account's best server-checked score per day.
+  `ALTER TABLE users ADD COLUMN daily_json TEXT NOT NULL DEFAULT '{}';
+   CREATE TABLE daily_scores (
+     day        INTEGER NOT NULL,
+     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     score      INTEGER NOT NULL,
+     won        INTEGER NOT NULL,
+     secs       INTEGER NOT NULL,
+     place      INTEGER NOT NULL,
+     nations    INTEGER NOT NULL,
+     peak       REAL NOT NULL,
+     at         INTEGER NOT NULL,
+     PRIMARY KEY (day, user_id)
+   );
+   CREATE INDEX daily_scores_rank ON daily_scores(day, score DESC, at);`
 ];
 
 function schemaVersion(db) {

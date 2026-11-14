@@ -138,13 +138,8 @@ These are my calls; each is a one-line change if you disagree.
 
 ## 5. Not built, recommended next
 
-- **Global daily leaderboard.** The feature that would make the daily social.
-  Needs a server route and a view on trust: a client reports its own score, so
-  without replay verification the board can be faked. Replays already exist,
-  so the server could re-run a submitted one.
-- **Daily progress on accounts**, the way achievements sync.
-- **Daily achievements and a cosmetic** for a 7-day streak, to tie this into
-  the existing unlocks.
+- ~~Global daily leaderboard, daily progress on accounts, daily achievements
+  and a streak cosmetic~~: built 2026-11-13, see `daily-leaderboard.md`.
 - **A What's new post** announcing all three (posts live on the server).
 - **Minimap.** The large maps would benefit; left out to keep this change away
   from the renderer.

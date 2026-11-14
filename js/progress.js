@@ -70,6 +70,7 @@ const Progress = {
     if (owner && owner !== uid) {
       try { localStorage.removeItem(this.OWNER_KEY); } catch (e) { /* ignore */ }
       this._adopt(null);
+      if (typeof Daily !== 'undefined') Daily.adopt(null);
     }
     // Without the loadout, so the account's own choice is the one adopted.
     if (uid) this._push(false);
@@ -83,6 +84,7 @@ const Progress = {
     this._pushing = true;
     const uid = Account.user.id;
     const body = { unlocked: this.state.unlocked, counters: this.state.counters };
+    if (typeof Daily !== 'undefined') body.daily = Daily.state;
     if (withEquipped) body.equipped = this.state.equipped;
     Account.saveProgress(body).then(res => {
       if (!Account.user || Account.user.id !== uid) return;
@@ -90,6 +92,7 @@ const Progress = {
       const merged = ProgressDefs.merge(ProgressDefs.sanitize(this.state), ProgressDefs.sanitize(res));
       if (withEquipped) merged.equipped = this.state.equipped;
       this._adopt(merged);
+      if (typeof Daily !== 'undefined') Daily.adopt(res.daily);
       try { localStorage.setItem(this.OWNER_KEY, String(uid)); } catch (e) { /* ignore */ }
     }, () => { /* offline or signed out: the next change retries */ }).then(() => {
       this._pushing = false;
@@ -162,6 +165,18 @@ const Progress = {
     this.save();
     this._checkCounters();
   },
+
+  // Lifts a counter to `value` if it is below it: for counters that hold a best.
+  raise(counter, value) {
+    if (!ProgressDefs.COUNTERS.includes(counter) || !Number.isFinite(value)) return;
+    if ((this.state.counters[counter] || 0) >= value) return;
+    this.state.counters[counter] = Math.floor(value);
+    this.save();
+    this._checkCounters();
+  },
+
+  // Sends local progress (daily included) to the account, if signed in.
+  sync() { this._push(true); },
 
   _checkCounters() {
     const A = ProgressDefs.ACHIEVEMENTS;

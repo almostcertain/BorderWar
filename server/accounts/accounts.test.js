@@ -491,7 +491,7 @@ test('routes: progress needs a session and the usual POST checks', async () => {
   assert.strictEqual(get.body.error, 'unauthorized');
   assert.strictEqual((await b.post('progress', { unlocked: { victory: 5 } })).status, 401);
   await b.post('register', { email: 'a@b.co', password: PASS });
-  assert.deepStrictEqual((await b.get('progress')).body, { unlocked: {}, counters: {}, equipped: NO_LOADOUT });
+  assert.deepStrictEqual((await b.get('progress')).body, { unlocked: {}, counters: {}, equipped: NO_LOADOUT, daily: { streak: 0, bestStreak: 0, last: 0, days: {} } });
   assert.strictEqual((await b.post('progress', {}, { Origin: 'https://evil.example' })).status, 403);
   assert.strictEqual((await b.post('progress', {}, { 'Content-Type': 'text/plain' })).status, 415);
   // /api/me stays as it was.
@@ -508,7 +508,7 @@ test('routes: progress merges, drops junk and is repeat-safe', async () => {
   const first = { unlocked: { victory: 500, sea_legs: 600, bogus: 1 }, counters: { wins: 3, bogus: 9 },
     equipped: { title: 'title_veteran', emblem: 'emblem_anchor', banner: 'emblem_anchor' } };
   const want = { unlocked: { victory: 500, sea_legs: 600 }, counters: { wins: 3 },
-    equipped: { title: null, emblem: 'emblem_anchor', banner: null, flag: null, pattern: null } };   // title_veteran is still locked
+    equipped: { title: null, emblem: 'emblem_anchor', banner: null, flag: null, pattern: null }, daily: { streak: 0, bestStreak: 0, last: 0, days: {} } };   // title_veteran is still locked
   const r1 = await b.post('progress', first);
   assert.strictEqual(r1.status, 200);
   assert.deepStrictEqual(r1.body, want);
@@ -521,7 +521,7 @@ test('routes: progress merges, drops junk and is repeat-safe', async () => {
 
   // A later date and a smaller counter lose; a loadout left out is kept.
   const r2 = await b.post('progress', { unlocked: { victory: 900, wins_5: 800 }, counters: { wins: 1 } });
-  assert.deepStrictEqual(r2.body, { unlocked: { victory: 500, sea_legs: 600, wins_5: 800 }, counters: { wins: 3 }, equipped: want.equipped });
+  assert.deepStrictEqual(r2.body, { unlocked: { victory: 500, sea_legs: 600, wins_5: 800 }, counters: { wins: 3 }, equipped: want.equipped, daily: want.daily });
   // A loadout that is sent replaces the stored one whole.
   const r3 = await b.post('progress', { counters: { wins: 5 }, equipped: { title: 'title_veteran' } });
   assert.deepStrictEqual(r3.body.equipped, { title: 'title_veteran', emblem: null, banner: null, flag: null, pattern: null });
@@ -540,6 +540,22 @@ test('routes: progress merges, drops junk and is repeat-safe', async () => {
 
   const admin = require('./admin');
   assert.deepStrictEqual(admin.exportUser(s.accounts.db, 'a@b.co').progress, (await b.get('progress')).body);
+  assert.deepStrictEqual(admin.exportUser(s.accounts.db, 'a@b.co').dailyScores, []);
+  s.close();
+});
+
+test('routes: daily progress merges per day and joins streaks (docs/daily-leaderboard.md)', async () => {
+  const t = require('../../js/daily-core.js').EPOCH + 3.5 * 86400000;   // day 4
+  const s = await startServer({ now: () => t });
+  const b = s.browser();
+  await b.post('register', { email: 'a@b.co', password: PASS });
+  const day = (score) => ({ score, won: false, secs: 600, place: 3, nations: 21, peak: 9, tries: 1 });
+  let d = (await b.post('progress', { daily: { last: 3, streak: 2, bestStreak: 2, days: { 2: day(100), 3: day(300), 900: day(5) } } })).body.daily;
+  assert.deepStrictEqual(Object.keys(d.days), ['2', '3'], 'a day not yet reached is dropped');
+  d = (await b.post('progress', { daily: { last: 4, streak: 1, bestStreak: 1, days: { 3: day(200), 4: day(50) } } })).body.daily;
+  assert.deepStrictEqual([d.last, d.streak, d.bestStreak, d.days[3].score], [4, 3, 3, 300]);
+  assert.deepStrictEqual((await b.post('progress', {})).body.daily, d);
+
   s.close();
 });
 

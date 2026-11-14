@@ -13,7 +13,7 @@ const MatchStats = {
   _every: 50,
   _t0: -1,              // Game.elapsed when the spawn phase ended
   _series: [],          // [seconds, my land %, strongest rival's land %] triples, flat
-  _peakPct: 0,
+  _tr: null,            // DailyCore's tracker: peak land and the settled result
   _bestRank: 0,
   _peakTroops: 0,
 
@@ -26,7 +26,7 @@ const MatchStats = {
     this._every = this.SAMPLE_TICKS;
     this._t0 = -1;
     this._series.length = 0;
-    this._peakPct = 0;
+    this._tr = DailyCore.tracker();
     this._bestRank = 0;
     this._peakTroops = 0;
     document.getElementById('endStats').classList.add('hidden');
@@ -35,6 +35,13 @@ const MatchStats = {
   // Once per executed turn.
   sample() {
     if (!this.active || this.ended || Game.spawning) return;
+    DailyCore.step(this._tr, Game, GameMap, this._me);
+    // A daily settles on the turn it ends, as the server's re-run does. The end
+    // card can show many turns later when a backlog is being caught up.
+    if (Daily.active) {
+      const title = DailyCore.endTitle(Game, this._me);
+      if (title) { this._settle(title); return; }
+    }
     if (this._t0 < 0) this._t0 = Game.elapsed;
     if (Game.ticks < this._nextAt) return;
     this._nextAt = Game.ticks + this._every;
@@ -53,7 +60,6 @@ const MatchStats = {
       if (n > mine) ahead++;
     }
     const pct = mine * 100 / GameMap.landTiles;
-    if (pct > this._peakPct) this._peakPct = pct;
     // Everyone starts level, so a rank means nothing in the first minute.
     if (me.alive && Game.elapsed - this._t0 >= this.RANK_AFTER_S && (this._bestRank === 0 || ahead + 1 < this._bestRank)) this._bestRank = ahead + 1;
     if (me.troops > this._peakTroops) this._peakTroops = me.troops;
@@ -71,34 +77,20 @@ const MatchStats = {
   // the numbers; a later one (Game Over after Defeated) only redraws.
   onEnd(title) {
     if (!this.active) return;
-    if (!this.ended) {
-      this._point();
-      const me = Game.players[this._me];
-      const won = title === 'Victory';
-      const fell = Game.placements.get(this._me);
-      let place = won ? 1 : fell !== undefined ? fell : null;
-      if (place === null && me && title === this.LEFT) {
-        // Walking out counts as falling now: every nation still alive outlasts you.
-        place = 0;
-        for (const p of Game.players) if (p.alive && !p.isTribe) place++;
-      } else if (place === null && me) {
-        let ahead = 0;
-        for (const p of Game.players) if (p !== me && p.alive && !p.isTribe && p.tiles.size > me.tiles.size) ahead++;
-        place = Math.max(2, ahead + 1);
-      }
-      this.ended = {
-        won: won,
-        secs: Math.max(0, Math.round(Game.elapsed - Math.max(0, this._t0))),
-        peakPct: this._peakPct,
-        bestRank: won ? 1 : this._bestRank || place,
-        place: place,
-        nations: Game.nationCount,
-        peakTroops: this._peakTroops,
-        difficulty: Game.difficulty
-      };
-      Daily.onEnd(this.ended);
-    }
+    if (!this.ended) this._settle(title);
     if (title !== this.LEFT) this.render();
+  },
+
+  // Scored exactly as the server scores a submitted daily (js/daily-core.js).
+  _settle(title) {
+    this._point();
+    const e = DailyCore.settle(this._tr, Game, GameMap, this._me, title);
+    this.ended = Object.assign(e, {
+      bestRank: e.won ? 1 : this._bestRank || e.place,
+      peakTroops: this._peakTroops,
+      difficulty: Game.difficulty
+    });
+    Daily.onEnd(this.ended);
   },
 
   // The player left a match that was still undecided (main.js leaveMatch).

@@ -129,6 +129,12 @@ try {
   log.warn('accounts', 'disabled: ' + (e && e.message || e));
 }
 
+// Daily Challenge leaderboard (server/daily.js). Needs accounts: only
+// signed-in players are ranked.
+const daily = accounts ? require('./daily').create({
+  db: accounts.db, log, build: JSON.parse(BUILD_INFO).id, userIdForRequest: (req) => accounts.userIdForRequest(req)
+}) : null;
+
 // Equipped cosmetics (server/loadouts.js). Not part of accounts: guests have
 // them too, so this answers even when accounts are disabled.
 const loadouts = require('./loadouts').createRoute({
@@ -139,6 +145,7 @@ const loadouts = require('./loadouts').createRoute({
 const server = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0];
   if (urlPath === '/api/loadout') return loadouts.handle(req, res);
+  if (daily && urlPath.startsWith('/api/daily/')) return daily.handle(req, res);
   if (urlPath.startsWith('/api/')) {
     if (accounts) return accounts.handle(req, res);
     res.writeHead(404, { 'Content-Type': 'text/plain' });

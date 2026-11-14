@@ -14,6 +14,7 @@ global.localStorage = {
 };
 global.Replay = { active: false };
 global.Tutorial = { active: false };
+global.Watch = { active: false };
 global.Fx = { killPopups: [] };
 global.ProgressDefs = require(path.join(__dirname, '..', 'js', 'progress-defs.js'));
 const Progress = require(path.join(__dirname, '..', 'js', 'progress.js'));
@@ -47,7 +48,7 @@ const earns = (id, over) => Progress.evaluate(summary(over)).includes(id);
 test('init: missing storage gives an empty state', () => {
   fresh();
   assert.deepStrictEqual(Progress.state, {
-    v: 1, unlocked: {}, counters: { wins: 0 }, equipped: { title: null, emblem: null, banner: null, flag: null, pattern: null }
+    v: 1, unlocked: {}, counters: { wins: 0, dailyStreak: 0 }, equipped: { title: null, emblem: null, banner: null, flag: null, pattern: null }
   });
 });
 
@@ -77,7 +78,7 @@ test('init: unknown ids and bad values are dropped, good ones kept', () => {
     equipped: { title: 'title_veteran', emblem: 'banner_iron', banner: 'no_such', hat: 'x' }
   });
   assert.deepStrictEqual(Progress.state.unlocked, { victory: 1700000000000 });
-  assert.deepStrictEqual(Progress.state.counters, { wins: 3 });
+  assert.deepStrictEqual(Progress.state.counters, { wins: 3, dailyStreak: 0 });
   assert.deepStrictEqual(Progress.state.equipped, { title: 'title_veteran', emblem: null, banner: null, flag: null, pattern: null });
   assert.strictEqual(Progress.has('toString'), false);
 });
@@ -155,7 +156,7 @@ test('bump ignores unknown counters and bad amounts', () => {
   Progress.bump('losses', 3);
   Progress.bump('wins', -2);
   Progress.bump('wins', NaN);
-  assert.deepStrictEqual(Progress.state.counters, { wins: 0 });
+  assert.deepStrictEqual(Progress.state.counters, { wins: 0, dailyStreak: 0 });
 });
 
 test('list covers every enabled achievement in table order, with counter progress', () => {
@@ -975,4 +976,18 @@ test('wins: one multiplayer match counts once on this browser', () => {
   assert.strictEqual(Progress._firstWin('g2'), true);
   assert.strictEqual(Progress._firstWin(null), true);
   assert.strictEqual(Progress._firstWin(null), true);
+});
+
+test('raise: the daily streak counter only rises and unlocks the streak achievements', () => {
+  fresh();
+  Progress.raise('dailyStreak', 6);
+  assert.strictEqual(Progress.has('daily_streak_7'), false);
+  Progress.raise('dailyStreak', 7);
+  assert.strictEqual(Progress.has('daily_streak_7'), true);
+  Progress.raise('dailyStreak', 3);
+  assert.strictEqual(Progress.state.counters.dailyStreak, 7);
+  Progress.raise('bogus', 50);
+  assert.strictEqual(Progress.state.counters.bogus, undefined);
+  assert.strictEqual(Defs.ACHIEVEMENTS.daily_streak_7.unlocks, 'emblem_sun');
+  assert.strictEqual(Defs.COSMETICS.emblem_sun.type, 'emblem');
 });
